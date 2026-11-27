@@ -5,12 +5,13 @@ import { useState, useTransition } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useReturnFocus } from "@/components/use-return-focus";
 import type { ClientTag } from "@/lib/types/database";
+import { actionFailureMessage, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type Props = {
   clientId: string;
   tags: ClientTag[];
-  addAction: (formData: FormData) => Promise<void>;
-  removeAction: (formData: FormData) => Promise<void>;
+  addAction: (formData: FormData) => Promise<ActionResult>;
+  removeAction: (formData: FormData) => Promise<ActionResult>;
 };
 
 export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Props) {
@@ -38,11 +39,15 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
     setError(null);
     startTransition(async () => {
       try {
-        await addAction(fd);
+        const result = await addAction(fd);
+        if (!result.ok) {
+          setError(result.error); // the typed tag stays
+          return;
+        }
         setLabel("");
         setAdding(false);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to add tag.");
+        setError(actionFailureMessage(err, "Could not add the tag. Check your connection and try again."));
       }
     });
   }
@@ -71,14 +76,18 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
     setError(null);
     startTransition(async () => {
       try {
-        await removeAction(fd);
+        const result = await removeAction(fd);
+        if (!result.ok) {
+          setError(result.error); // dialog stays open so the failure is read and retryable
+          return;
+        }
         // Success only — the catch below leaves the dialog open and the
         // opener on screen, where the primitive's restoration is correct.
         armHeadingFocus();
         setRemoveTarget(null);
       } catch (err) {
         // Dialog stays open so the failure is read and retryable.
-        setError(err instanceof Error ? err.message : "Failed to remove tag.");
+        setError(actionFailureMessage(err, "Could not remove the tag. Check your connection and try again."));
       }
     });
   }

@@ -20,6 +20,8 @@ import {
   PULSE_DELAY_RANGE_ERROR,
 } from "@/lib/constants";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 const VALID_MODES: ReadonlyArray<ElectrolysisMode> = ["thermo", "galv", "blend"];
 
@@ -445,14 +447,14 @@ export async function addElectrolysisEntryAction(
   return { ok: true, entryId, observationChips };
 }
 
-export async function addLaserEntryAction(formData: FormData): Promise<void> {
+export async function addLaserEntryAction(formData: FormData): Promise<ActionResult> {
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
   const zone = nullableString(formData.get("zone"));
 
-  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
-  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
-  if (!zone) throw new Error("Zone is required.");
+  if (typeof sessionId !== "string" || !sessionId) return actionFailed("That session could not be found. Reload the page and try again.");
+  if (typeof clientId !== "string" || !clientId) return actionFailed("That client could not be found. Reload the page and try again.");
+  if (!zone) return actionFailed("Enter the treatment zone, then add the entry again.");
 
   const { studio } = await getCurrentPractitionerWithStudio();
   await assertSessionVisible(studio.id, clientId, sessionId);
@@ -491,9 +493,10 @@ export async function addLaserEntryAction(formData: FormData): Promise<void> {
     p_observation_notes: nullableString(formData.get("observation_notes")),
   });
 
-  if (error) throw new Error(`Failed to add entry: ${dbErrorCode(error)}`);
+  if (error) return actionFailed(userFacingDbFailure("add the entry", error, "add_laser_entry_failed"));
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
+  return ACTION_OK;
 }
 
 // Migration 0114: a treatment PASS (an electrolysis_entries / laser_entries row)
@@ -697,12 +700,12 @@ export async function updateNextSessionNoteAction(
 
 export async function updateSessionPerformerAction(
   formData: FormData,
-): Promise<void> {
+): Promise<ActionResult> {
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
   const performerId = formData.get("performer_id");
-  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
-  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
+  if (typeof sessionId !== "string" || !sessionId) return actionFailed("That session could not be found. Reload the page and try again.");
+  if (typeof clientId !== "string" || !clientId) return actionFailed("That client could not be found. Reload the page and try again.");
 
   const { studio } = await getCurrentPractitionerWithStudio();
   await assertSessionVisible(studio.id, clientId, sessionId);
@@ -722,9 +725,10 @@ export async function updateSessionPerformerAction(
     p_client_id: clientId,
     p_performer_id: newPerformerId,
   });
-  if (error) throw new Error(`Failed to update performer: ${mapSessionCommandError(error)}`);
+  if (error) return actionFailed(mapSessionCommandError(error)); // already a safe, specific sentence
   revalidatePath(`/clients/${clientId}/sessions/${sessionId}`);
   revalidatePath(`/clients/${clientId}`);
+  return ACTION_OK;
 }
 
 export type EditStartedAtResult =
@@ -827,22 +831,22 @@ export async function editSessionStartedAtAction(
   return { ok: true };
 }
 
-export async function softDeleteSessionAction(formData: FormData): Promise<void> {
+export async function softDeleteSessionAction(formData: FormData): Promise<ActionResult> {
   const sessionId = formData.get("session_id");
   const clientId = formData.get("client_id");
   const reasonRaw = formData.get("delete_reason");
 
-  if (typeof sessionId !== "string" || !sessionId) throw new Error("Missing session.");
-  if (typeof clientId !== "string" || !clientId) throw new Error("Missing client.");
+  if (typeof sessionId !== "string" || !sessionId) return actionFailed("That session could not be found. Reload the page and try again.");
+  if (typeof clientId !== "string" || !clientId) return actionFailed("That client could not be found. Reload the page and try again.");
 
   const reason = typeof reasonRaw === "string" ? reasonRaw.trim() : "";
   if (reason.length < 10) {
-    throw new Error("Reason must be at least 10 characters.");
+    return actionFailed("Write a reason of at least 10 characters, then delete the session again.");
   }
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   if (!practitioner.active) {
-    throw new Error("Inactive practitioners cannot delete sessions.");
+    return actionFailed("Your account is not active, so you cannot delete sessions. Ask the studio owner.");
   }
   await assertSessionVisible(studio.id, clientId, sessionId);
 
@@ -853,7 +857,7 @@ export async function softDeleteSessionAction(formData: FormData): Promise<void>
     p_client_id: clientId,
     p_reason: reason,
   });
-  if (error) throw new Error(`Failed to delete session: ${mapSessionCommandError(error)}`);
+  if (error) return actionFailed(mapSessionCommandError(error)); // already a safe, specific sentence
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");

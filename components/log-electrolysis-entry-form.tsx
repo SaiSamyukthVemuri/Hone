@@ -39,6 +39,7 @@ import { appendComment } from "@/lib/comments";
 import { pickSavedLabel } from "@/lib/saved-label";
 import { ChipSelector } from "./chip-selector";
 import { MultiChipSelector } from "./multi-chip-selector";
+import { actionFailureMessage, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type FormState = {
   areas: string[];
@@ -126,7 +127,7 @@ type Props = {
   lastEntry: ElectrolysisEntry | null;
   /** Sticky defaults for probe_type + machine_frequency (latest in-session entry). */
   stickyDefaults: StickyDefaults;
-  action: (formData: FormData) => Promise<void>;
+  action: (formData: FormData) => Promise<{ ok: true } | { ok: false; error: string } | void>;
 };
 
 const PROBE_SIZE_OPTIONS: ReadonlyArray<string> = [...PROBE_SIZES, "Other"];
@@ -200,13 +201,17 @@ export function LogElectrolysisEntryForm({
 
     startTransition(async () => {
       try {
-        await action(fd);
+        const result = await action(fd);
+        if (result && !result.ok) {
+          setError(result.error); // everything typed stays
+          return;
+        }
         // After save, reset everything except the sticky pair.
         setState((s) => blankStateWithStickyFrom(s));
         setSavedLabel(pickSavedLabel());
         window.setTimeout(() => setSavedLabel(null), 1500);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to add entry.");
+        setError(actionFailureMessage(err, "Could not add the entry, and it may not have saved. Check the session before adding it again."));
       }
     });
   }

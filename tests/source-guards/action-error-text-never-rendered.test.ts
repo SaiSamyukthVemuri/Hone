@@ -19,18 +19,10 @@ const NOT_YET_CONVERTED: Record<string, string> = {
   "app/(app)/settings/calendar/StudioDisplayPreferencesForm.tsx": "B-group fallback catch; its action also returns 'Failed to update display preferences: <code>'",
   // payments: held until #1821 (Stripe onboarding rework) merges
   "app/(app)/settings/payments/PaymentsSettings.tsx": "payments PR: waits for #1821 onboarding rework",
-  // client cards and logging forms: PR-3 (prop actions typed Promise<void>, so they can only throw)
-  "components/add-pricing-form.tsx": "client cards PR-3: action is Promise<void>",
-  "components/client-pinned-notes-card.tsx": "client cards PR-3: actions are Promise<void>/unknown",
-  "components/client-tags-card.tsx": "client cards PR-3: actions are Promise<void>",
-  "components/log-electrolysis-entry-form.tsx": "client cards PR-3: action is Promise<void>",
-  "components/log-laser-entry-form.tsx": "client cards PR-3: action is Promise<void>",
-  "components/session-performer-line.tsx": "client cards PR-3: action is Promise<void>",
-  "app/(app)/clients/[id]/sessions/[sessionId]/DeleteSessionForm.tsx": "client cards PR-3: softDeleteSessionAction throws",
   // outside item 19: the sign-in provider's own message, a different surface
   "app/(auth)/login/page.tsx": "auth provider message; not a settings/client server action",
 };
-const CEILING = 13;
+const CEILING = 6;
 
 // err/e/error/ex/caught . message, or `instanceof Error ? x.message`, after comments are removed.
 const LEAK = /\b(?:err|e|error|ex|caught)(?: as [A-Za-z]+)?\.message\b/;

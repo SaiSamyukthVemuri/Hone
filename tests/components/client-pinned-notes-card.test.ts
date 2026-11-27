@@ -26,7 +26,7 @@ function note(text: string, id = "note-1"): ClientPinnedNote {
   return { id, text } as unknown as ClientPinnedNote;
 }
 
-const noop = async () => undefined;
+const noop = async () => ({ ok: true as const, data: undefined });
 
 describe("PinnedNoteField: the whole note is visible while editing", () => {
   const html = renderToStaticMarkup(

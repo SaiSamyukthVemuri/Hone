@@ -14,9 +14,12 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export const ACTION_OK: ActionResult = { ok: true };
 
-export function actionFailed(error: string): ActionResult {
+export function actionFailed(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
+
+/** A result that carries the saved record back to the caller (so it can be drawn without waiting for a refreshed page). */
+export type DataResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /** The sentence when nothing more specific is known: names the next action, never the cause. */
 export const GENERIC_SAVE_FAILURE = "Could not save. Check your connection and try again. If it keeps happening, contact support.";

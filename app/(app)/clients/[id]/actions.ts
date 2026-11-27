@@ -23,6 +23,8 @@ import {
   type PossibleDuplicate,
 } from "@/lib/clients/possible-duplicate";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 async function assertClientVisible(
   studioId: string,
@@ -476,22 +478,22 @@ export async function unarchiveClientAction(formData: FormData): Promise<void> {
   redirect(`/clients/${clientId}`);
 }
 
-export async function addClientPricingAction(formData: FormData): Promise<void> {
+export async function addClientPricingAction(formData: FormData): Promise<ActionResult> {
   const clientId = formData.get("client_id");
   if (typeof clientId !== "string" || !clientId)
-    throw new Error("Missing client id.");
+    return actionFailed("That client could not be found. Reload the page and try again.");
 
   const serviceName = nullableString(formData.get("service_name"));
-  if (!serviceName) throw new Error("Service is required.");
+  if (!serviceName) return actionFailed("Enter the service name, then add the price again.");
 
   const priceCents = dollarsToCents(formData.get("price"));
-  if (priceCents == null) throw new Error("Price must be a non-negative number.");
+  if (priceCents == null) return actionFailed("Enter the price as a number that is zero or more, for example 85 or 85.50.");
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   // HON-44 (Sam decision 12): client prices are owner-only. The role comes from
   // the authenticated practitioner. APP half; client_pricing RLS admits any
   // member until 0254.
-  if (practitioner.role !== "owner") throw new Error("Only the studio owner can change prices.");
+  if (practitioner.role !== "owner") return actionFailed("Only the studio owner can change prices.");
   await assertClientVisible(studio.id, clientId);
 
   const supabase = await createClient();
@@ -503,8 +505,9 @@ export async function addClientPricingAction(formData: FormData): Promise<void> 
     notes: nullableString(formData.get("notes")),
   });
 
-  if (error) throw new Error(`Failed to add pricing: ${dbErrorCode(error)}`);
+  if (error) return actionFailed(userFacingDbFailure("add the price", error, "add_client_pricing_failed"));
   revalidatePath(`/clients/${clientId}`);
+  return ACTION_OK;
 }
 
 export async function deleteClientPricingAction(formData: FormData): Promise<void> {
@@ -532,14 +535,14 @@ export async function deleteClientPricingAction(formData: FormData): Promise<voi
   revalidatePath(`/clients/${clientId}`);
 }
 
-export async function addClientTagAction(formData: FormData): Promise<void> {
+export async function addClientTagAction(formData: FormData): Promise<ActionResult> {
   const clientId = formData.get("client_id");
   const label = nullableString(formData.get("label"));
   if (typeof clientId !== "string" || !clientId) {
-    throw new Error("Missing client id.");
+    return actionFailed("That client could not be found. Reload the page and try again.");
   }
-  if (!label) throw new Error("Tag label is required.");
-  if (label.length > 60) throw new Error("Tag label must be 60 characters or fewer.");
+  if (!label) return actionFailed("Enter a tag, then add it again.");
+  if (label.length > 60) return actionFailed("Shorten the tag to 60 characters or fewer, then add it again.");
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   await assertClientVisible(studio.id, clientId);
@@ -551,16 +554,17 @@ export async function addClientTagAction(formData: FormData): Promise<void> {
     label,
     created_by: practitioner.id,
   });
-  if (error) throw new Error(`Failed to add tag: ${dbErrorCode(error)}`);
+  if (error) return actionFailed(userFacingDbFailure("add the tag", error, "add_client_tag_failed"));
   revalidatePath(`/clients/${clientId}`);
+  return ACTION_OK;
 }
 
-export async function removeClientTagAction(formData: FormData): Promise<void> {
+export async function removeClientTagAction(formData: FormData): Promise<ActionResult> {
   const tagId = formData.get("tag_id");
   const clientId = formData.get("client_id");
-  if (typeof tagId !== "string" || !tagId) throw new Error("Missing tag id.");
+  if (typeof tagId !== "string" || !tagId) return actionFailed("That tag could not be found. Reload the page and try again.");
   if (typeof clientId !== "string" || !clientId) {
-    throw new Error("Missing client id.");
+    return actionFailed("That client could not be found. Reload the page and try again.");
   }
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -577,6 +581,7 @@ export async function removeClientTagAction(formData: FormData): Promise<void> {
     .eq("studio_id", studio.id)
     .eq("client_id", clientId)
     .is("deleted_at", null);
-  if (error) throw new Error(`Failed to remove tag: ${dbErrorCode(error)}`);
+  if (error) return actionFailed(userFacingDbFailure("remove the tag", error, "remove_client_tag_failed"));
   revalidatePath(`/clients/${clientId}`);
+  return ACTION_OK;
 }

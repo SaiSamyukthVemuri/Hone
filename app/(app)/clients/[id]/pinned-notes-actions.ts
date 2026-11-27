@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
-import { dbErrorCode } from "@/lib/logging/error-class";
 import type { ClientPinnedNote } from "@/lib/types/database";
+import { ACTION_OK, actionFailed, type ActionResult, type DataResult } from "@/lib/actions/action-result";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
 const MAX_PINNED_NOTE_LENGTH = 200;
 
@@ -18,15 +19,13 @@ function trimmedString(value: FormDataEntryValue | null): string {
 
 export async function addClientPinnedNoteAction(
   formData: FormData,
-): Promise<SavedPinnedNote> {
+): Promise<DataResult<SavedPinnedNote>> {
   const clientId = trimmedString(formData.get("client_id"));
   const text = trimmedString(formData.get("text"));
-  if (!clientId) throw new Error("Missing client id.");
-  if (!text) throw new Error("Note text is required.");
+  if (!clientId) return actionFailed("That client could not be found. Reload the page and try again.");
+  if (!text) return actionFailed("Write the note, then save it again.");
   if (text.length > MAX_PINNED_NOTE_LENGTH) {
-    throw new Error(
-      `Note must be ${MAX_PINNED_NOTE_LENGTH} characters or fewer.`,
-    );
+    return actionFailed(`Shorten the note to ${MAX_PINNED_NOTE_LENGTH} characters or fewer, then save it again.`);
   }
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
@@ -41,8 +40,8 @@ export async function addClientPinnedNoteAction(
     .eq("id", clientId)
     .eq("studio_id", studio.id)
     .maybeSingle();
-  if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
-  if (!client) throw new Error("Client not found.");
+  if (clientErr) return actionFailed(userFacingDbFailure("load the client", clientErr, "pinned_note_load_client_failed"));
+  if (!client) return actionFailed("That client could not be found. Reload the page and try again.");
 
   const { data: saved, error } = await supabase
     .from("client_pinned_notes")
@@ -54,30 +53,28 @@ export async function addClientPinnedNoteAction(
     })
     .select("id, text, created_by_practitioner_id")
     .single();
-  if (error || !saved) throw new Error(`Failed to pin note: ${error ? dbErrorCode(error) : "no row"}`);
+  if (error || !saved) return actionFailed(userFacingDbFailure("pin the note", error, "pin_client_note_failed"));
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
-  return { id: saved.id, text: saved.text, created_by_practitioner_id: saved.created_by_practitioner_id };
+  return { ok: true, data: { id: saved.id, text: saved.text, created_by_practitioner_id: saved.created_by_practitioner_id } };
 }
 
 export async function editClientPinnedNoteAction(
   formData: FormData,
-): Promise<SavedPinnedNote> {
+): Promise<DataResult<SavedPinnedNote>> {
   const noteId = trimmedString(formData.get("note_id"));
   const clientId = trimmedString(formData.get("client_id"));
   const text = trimmedString(formData.get("text"));
   // Optimistic-concurrency token: the text that was on screen when the editor
   // opened. The update only lands if the row STILL holds this text.
   const originalText = trimmedString(formData.get("original_text"));
-  if (!noteId) throw new Error("Missing note id.");
-  if (!clientId) throw new Error("Missing client id.");
-  if (!originalText) throw new Error("Missing original note text.");
-  if (!text) throw new Error("Note text is required.");
+  if (!noteId) return actionFailed("That note could not be found. Reload the page and try again.");
+  if (!clientId) return actionFailed("That client could not be found. Reload the page and try again.");
+  if (!originalText) return actionFailed("That note could not be checked against the latest version. Reload the page and try again.");
+  if (!text) return actionFailed("Write the note, then save it again.");
   if (text.length > MAX_PINNED_NOTE_LENGTH) {
-    throw new Error(
-      `Note must be ${MAX_PINNED_NOTE_LENGTH} characters or fewer.`,
-    );
+    return actionFailed(`Shorten the note to ${MAX_PINNED_NOTE_LENGTH} characters or fewer, then save it again.`);
   }
 
   // Authorization: an active practitioner of the CURRENT studio (throws /
@@ -112,31 +109,29 @@ export async function editClientPinnedNoteAction(
     update = update.eq("created_by_practitioner_id", practitioner.id);
   }
   const { data, error } = await update.select("id, text, created_by_practitioner_id").maybeSingle();
-  if (error) throw new Error("Could not update the note. Please try again.");
+  if (error) return actionFailed("Could not update the note. Try again, and contact support if it keeps happening.");
   if (!data) {
-    throw new Error(
-      "That note changed or is no longer available. Refresh and try again.",
-    );
+    return actionFailed("That note changed or is no longer available. Reload the page and try again.");
   }
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
-  return { id: data.id, text: data.text, created_by_practitioner_id: data.created_by_practitioner_id };
+  return { ok: true, data: { id: data.id, text: data.text, created_by_practitioner_id: data.created_by_practitioner_id } };
 }
 
 export async function removeClientPinnedNoteAction(
   formData: FormData,
-): Promise<void> {
+): Promise<ActionResult> {
   const noteId = trimmedString(formData.get("note_id"));
   const clientId = trimmedString(formData.get("client_id"));
-  if (!noteId) throw new Error("Missing note id.");
-  if (!clientId) throw new Error("Missing client id.");
+  if (!noteId) return actionFailed("That note could not be found. Reload the page and try again.");
+  if (!clientId) return actionFailed("That client could not be found. Reload the page and try again.");
 
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   // HON-44 (Sam decision 12): only the owner deletes a pinned caution. APP half;
   // the client_pinned_notes DELETE policy admits any member until 0254.
   if (practitioner.role !== "owner") {
-    throw new Error("Only the studio owner can remove a pinned note.");
+    return actionFailed("Only the studio owner can remove a pinned note.");
   }
 
   const supabase = await createClient();
@@ -146,8 +141,9 @@ export async function removeClientPinnedNoteAction(
     .eq("id", noteId)
     .eq("studio_id", studio.id)
     .eq("client_id", clientId);
-  if (error) throw new Error(`Failed to remove note: ${dbErrorCode(error)}`);
+  if (error) return actionFailed(userFacingDbFailure("remove the note", error, "remove_client_note_failed"));
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
+  return ACTION_OK;
 }
