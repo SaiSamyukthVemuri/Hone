@@ -11,8 +11,8 @@ import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { PaymentCountry } from "@/lib/billing/payment-jurisdiction";
 import { inferStripeLivemode } from "./server";
-import { requireStripeForStudio } from "./studio-platform";
-import { connectedAccountCreateParams } from "./account-create-params";
+import { requireStripeForStudio, resolveStudioPlatform } from "./studio-platform";
+import { connectedAccountCreateParams, usAccountCreateParams } from "./account-create-params";
 import { dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 function logInternalStripeError(event: string, detail: unknown) {
@@ -122,10 +122,19 @@ export async function createOrLoadConnectedAccountForStudio(
   // idempotency key so retries collapse on Stripe's side.
   let account: Stripe.Account;
   try {
-    account = await stripe.accounts.create(
-      connectedAccountCreateParams(country, studioId),
-      { idempotencyKey: claim.out_idempotency_key ?? undefined },
-    );
+    if (country === "CA") {
+      // Canada: the legacy v1 Express creation, unchanged and pinned byte-for-byte.
+      account = await stripe.accounts.create(
+        connectedAccountCreateParams("CA", studioId),
+        { idempotencyKey: claim.out_idempotency_key ?? undefined },
+      );
+    } else {
+      // US (HON-90 Option A): Accounts v2, then the v1 view of the same account, which is what the rest of Hone reads and records.
+      const created = await stripe.v2.core.accounts.create(usAccountCreateParams(studioId), {
+        idempotencyKey: claim.out_idempotency_key ?? undefined,
+      });
+      account = await stripe.accounts.retrieve(created.id);
+    }
   } catch (err) {
     logInternalStripeError("stripe_accounts_create_failed", {
       studioId,
@@ -376,10 +385,16 @@ export async function createConnectOnboardingLink(params: {
 // charges_enabled || payouts_enabled is true; Stripe rejects login
 // link requests for accounts that haven't completed onboarding.
 // ---------------------------------------------------------------------------
+export const FULL_DASHBOARD_SIGN_IN_URL = "https://dashboard.stripe.com/login";
+
 export async function createExpressDashboardLoginLink(
   studioId: string,
   stripeAccountId: string,
 ): Promise<string> {
+  // US accounts are Option A: a FULL Stripe Dashboard. Stripe has no Express login link for them (createLoginLink is refused), so the
+  // studio signs in at Stripe directly. Canada is the unchanged Express login link below.
+  const route = await resolveStudioPlatform(studioId, "existing_account");
+  if (route.ok && route.platform === "US") return FULL_DASHBOARD_SIGN_IN_URL;
   const stripe = await requireStripeForStudio(studioId, "existing_account");
   try {
     const link = await stripe.accounts.createLoginLink(stripeAccountId);

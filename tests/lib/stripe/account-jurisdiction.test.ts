@@ -22,6 +22,8 @@ const h = vi.hoisted(() => ({
   claim: null as Record<string, unknown> | null,
   stamp: { data: { payment_country: "US" }, error: null } as { data: unknown; error: unknown },
   createCalls: [] as Array<Record<string, unknown>>,
+  v2Calls: [] as Array<Record<string, unknown>>,
+  v2Options: [] as Array<Record<string, unknown>>,
   createdAccount: { id: "acct_new", country: "US", default_currency: "usd" } as Record<string, unknown>,
   retrieved: {
     id: "acct_bound",
@@ -52,8 +54,10 @@ vi.mock("@/lib/stripe/server", () => ({
         h.createCalls.push(params);
         return h.createdAccount;
       },
-      retrieve: async () => h.retrieved,
+      // The v1 view of a just-created account is the created Account; any other id is the status-refresh account.
+      retrieve: async (id: string) => (id === h.createdAccount.id ? h.createdAccount : h.retrieved),
     },
+    v2: { core: { accounts: { create: async (params: Record<string, unknown>, options: Record<string, unknown>) => { h.v2Calls.push(params); h.v2Options.push(options); return { id: h.createdAccount.id }; } } } },
   }),
 }));
 
@@ -115,6 +119,8 @@ beforeEach(() => {
   h.claim = { ...OWN_CLAIM };
   h.stamp = { data: { payment_country: "US" }, error: null };
   h.createCalls = [];
+  h.v2Calls = [];
+  h.v2Options = [];
   h.createdAccount = { id: "acct_new", country: "US", default_currency: "usd" };
   h.retrieved = {
     id: "acct_bound",
@@ -130,10 +136,16 @@ beforeEach(() => {
 });
 
 describe("P1-A: accounts.create uses the claim's stamped payment_country", () => {
-  it("a US-stamped claim creates a US account, not the deployment's CA", async () => {
+  it("a US-stamped claim creates a US account through Accounts v2 (Option A), never the v1 create and never the deployment's CA", async () => {
     await createOrLoadConnectedAccountForStudio(STUDIO);
-    expect(h.createCalls).toHaveLength(1);
-    expect(h.createCalls[0].country).toBe("US");
+    expect(h.createCalls).toEqual([]);
+    expect(h.v2Calls).toHaveLength(1);
+    expect(h.v2Calls[0]).toMatchObject({
+      identity: { country: "us" },
+      dashboard: "full",
+      defaults: { currency: "usd", responsibilities: { fees_collector: "stripe", losses_collector: "stripe" } },
+    });
+    expect(h.v2Options[0]).toHaveProperty("idempotencyKey");
   });
 
   it("a CA-stamped claim creates a CA account", async () => {
@@ -141,6 +153,7 @@ describe("P1-A: accounts.create uses the claim's stamped payment_country", () =>
     h.createdAccount = { id: "acct_new", country: "CA", default_currency: "cad" };
     await createOrLoadConnectedAccountForStudio(STUDIO);
     expect(h.createCalls[0].country).toBe("CA");
+    expect(h.v2Calls).toEqual([]); // Canada never uses Accounts v2
   });
 
   it("the stamp is read for THIS attempt AND THIS claim token", async () => {
