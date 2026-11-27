@@ -107,6 +107,7 @@ export async function startStripeConnectOnboardingAction(): Promise<void> {
   let url: string;
   try {
     url = await createConnectOnboardingLink({
+      studioId: studio.id,
       stripeAccountId,
       appOrigin: getAppOrigin(),
     });
@@ -220,7 +221,7 @@ export async function openStripeDashboardAction(): Promise<void> {
 
   let url: string;
   try {
-    url = await createExpressDashboardLoginLink(settings.stripe_account_id);
+    url = await createExpressDashboardLoginLink(studio.id, settings.stripe_account_id);
   } catch (err) {
     if (isNextRedirect(err)) throw err;
     logInternal("open_dashboard_failed", {

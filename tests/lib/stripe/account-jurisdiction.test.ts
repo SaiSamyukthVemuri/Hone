@@ -36,6 +36,11 @@ const h = vi.hoisted(() => ({
   rpc: {} as Record<string, { data: unknown; error: unknown } | Error>,
 }));
 
+// HON-90: the studio's platform is resolved from its verified jurisdiction row. These tests are about a Canadian studio, whose
+// resolution is the existing CA client (mocked below), so every assertion here is the Willow behaviour, unchanged.
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({ ok: true, jurisdiction: { country: "CA", currency: "cad" } }),
+}));
 vi.mock("@/lib/stripe/server", () => ({
   // Deliberately CA: a creator that still reads the deployment constant
   // creates a CA account for the US-stamped claim below.

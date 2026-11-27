@@ -10,7 +10,8 @@
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { PaymentCountry } from "@/lib/billing/payment-jurisdiction";
-import { getStripe, inferStripeLivemode } from "./server";
+import { inferStripeLivemode } from "./server";
+import { requireStripeForStudio } from "./studio-platform";
 import { dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 function logInternalStripeError(event: string, detail: unknown) {
@@ -50,7 +51,8 @@ export async function createOrLoadConnectedAccountForStudio(
   studioId: string,
 ): Promise<CreateOrLoadResult> {
   const admin = createAdminClient();
-  const stripe = getStripe();
+  // The studio's own platform account (HON-90): resolved from its verified jurisdiction row, never the CA client by default.
+  const stripe = await requireStripeForStudio(studioId);
   const livemode = inferStripeLivemode();
 
   const { data: claimRows, error: claimErr } = await admin.rpc(
@@ -350,10 +352,11 @@ export async function recordAccountJurisdiction(
 // server action that called this helper.
 // ---------------------------------------------------------------------------
 export async function createConnectOnboardingLink(params: {
+  studioId: string;
   stripeAccountId: string;
   appOrigin: string;
 }): Promise<string> {
-  const stripe = getStripe();
+  const stripe = await requireStripeForStudio(params.studioId);
   try {
     const link = await stripe.accountLinks.create({
       account: params.stripeAccountId,
@@ -383,9 +386,10 @@ export async function createConnectOnboardingLink(params: {
 // link requests for accounts that haven't completed onboarding.
 // ---------------------------------------------------------------------------
 export async function createExpressDashboardLoginLink(
+  studioId: string,
   stripeAccountId: string,
 ): Promise<string> {
-  const stripe = getStripe();
+  const stripe = await requireStripeForStudio(studioId);
   try {
     const link = await stripe.accounts.createLoginLink(stripeAccountId);
     return link.url;
@@ -421,7 +425,7 @@ export async function refreshAccountStatusFromStripe(params: {
   studioId: string;
   stripeAccountId: string;
 }): Promise<AccountStatusSnapshot> {
-  const stripe = getStripe();
+  const stripe = await requireStripeForStudio(params.studioId);
   const livemode = inferStripeLivemode();
 
   let account: Stripe.Account;

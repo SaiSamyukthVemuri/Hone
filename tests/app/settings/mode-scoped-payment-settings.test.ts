@@ -100,7 +100,7 @@ describe("live runtime can never touch the other mode's account id", () => {
     // additionally pin that the Stripe calls only ever receive the loaded
     // settings row's account id (no other acct source in this file).
     expect(src).toMatch(/stripeAccountId: settings\.stripe_account_id/);
-    expect(src).toMatch(/createExpressDashboardLoginLink\(settings\.stripe_account_id\)/);
+    expect(src).toMatch(/createExpressDashboardLoginLink\(studio\.id, settings\.stripe_account_id\)/);
   });
 
   it("the onboarding return page syncs the current-mode account only", () => {
