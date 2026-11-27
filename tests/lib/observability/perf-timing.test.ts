@@ -175,6 +175,7 @@ describe("records duration without PII", () => {
       "outcome",
       "seq",
       "span",
+      "start_ms",
     ]);
   });
 
@@ -504,11 +505,11 @@ describe("control flow is untouched", () => {
 
 describe("buildPerfSummary", () => {
   const request = [
-    { span: "shell.identity", seq: 1, duration_ms: 40, outcome: "ok" },
-    { span: "shell.memberships", seq: 2, duration_ms: 35, outcome: "ok" },
-    { span: "shell.support-reads", seq: 3, duration_ms: 22, outcome: "ok" },
-    { span: "client-profile.identity", seq: 4, duration_ms: 38, outcome: "ok" },
-    { span: "client-profile.domain", seq: 5, duration_ms: 210, outcome: "ok" },
+    { span: "shell.identity", seq: 1, duration_ms: 40, startedAt: 1010, outcome: "ok" },
+    { span: "shell.memberships", seq: 2, duration_ms: 35, startedAt: 1020, outcome: "ok" },
+    { span: "shell.support-reads", seq: 3, duration_ms: 22, startedAt: 1030, outcome: "ok" },
+    { span: "client-profile.identity", seq: 4, duration_ms: 38, startedAt: 1040, outcome: "ok" },
+    { span: "client-profile.domain", seq: 5, duration_ms: 210, startedAt: 1050, outcome: "ok" },
   ] as const;
 
   it("counts how many times ONE request resolved identity", () => {
@@ -533,8 +534,8 @@ describe("buildPerfSummary", () => {
   it("does not count a nested span twice: a 100 ms window holding an 80 ms nested span totals 100", () => {
     const summary = buildPerfSummary(
       [
-        { span: "shell.support-reads", seq: 1, duration_ms: 100, outcome: "ok" },
-        { span: "shell.waitlist-nav", seq: 2, duration_ms: 80, outcome: "ok" },
+        { span: "shell.support-reads", seq: 1, duration_ms: 100, startedAt: 1010, outcome: "ok" },
+        { span: "shell.waitlist-nav", seq: 2, duration_ms: 80, startedAt: 1020, outcome: "ok" },
       ],
       0,
       "2026-08-20T00:00:00Z",
@@ -566,7 +567,7 @@ describe("buildPerfSummary", () => {
 
   it("falls back to the shell when no page span was recorded", () => {
     const summary = buildPerfSummary(
-      [{ span: "shell.identity", seq: 1, duration_ms: 5, outcome: "ok" }],
+      [{ span: "shell.identity", seq: 1, duration_ms: 5, startedAt: 1010, outcome: "ok" }],
       0,
       "2026-08-20T00:00:00Z",
     );
@@ -583,5 +584,46 @@ describe("buildPerfSummary", () => {
     const summary = buildPerfSummary([], 0, "2026-08-20T00:00:00Z");
     expect(summary.span_count).toBe(0);
     expect(summary.identity_resolutions).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HON-109: start_ms. One integer per span, relative to the earliest-starting span of THIS request. The raw start never leaves the module.
+// ---------------------------------------------------------------------------
+describe("start_ms", () => {
+  const rec = (span: "shell.identity" | "clients.domain" | "records.domain", seq: number, startedAt: number, duration_ms: number) =>
+    ({ span, seq, duration_ms, startedAt, outcome: "ok" }) as const;
+  const spansOf = (s: Record<string, unknown>) => s.spans as { span: string; start_ms: number; duration_ms: number }[];
+
+  it("is a non-negative integer and the earliest-starting span is 0, whatever order they completed in", () => {
+    // seq 1 COMPLETED first but started last: the minimum is over start times, not over completion order.
+    const out = spansOf(buildPerfSummary([rec("shell.identity", 1, 5000.4, 10), rec("clients.domain", 2, 4980.7, 90)], 0, "2026-08-20T00:00:00Z"));
+    expect(out.map((x) => x.start_ms)).toEqual([20, 0]);
+    for (const x of out) { expect(Number.isInteger(x.start_ms)).toBe(true); expect(x.start_ms).toBeGreaterThanOrEqual(0); }
+  });
+
+  it("shows a parallel pair as overlapping and a serial pair as not", () => {
+    const parallel = spansOf(buildPerfSummary([rec("clients.domain", 1, 100, 80), rec("records.domain", 2, 105, 80)], 0, "t"));
+    expect(parallel[1].start_ms).toBeLessThan(parallel[0].start_ms + parallel[0].duration_ms);
+    const serial = spansOf(buildPerfSummary([rec("clients.domain", 1, 100, 80), rec("records.domain", 2, 180, 80)], 0, "t"));
+    expect(serial[1].start_ms).toBeGreaterThanOrEqual(serial[0].start_ms + serial[0].duration_ms);
+  });
+
+  it("emits exactly {span, seq, duration_ms, start_ms, outcome} and never the raw start", () => {
+    const out = buildPerfSummary([rec("shell.identity", 1, 123456.789, 10)], 0, "t");
+    expect(Object.keys(spansOf(out)[0]).sort()).toEqual(["duration_ms", "outcome", "seq", "span", "start_ms"]);
+    expect(JSON.stringify(out)).not.toContain("startedAt");
+    expect(JSON.stringify(out)).not.toContain("123456");
+  });
+
+  it("is computed from performance.now(), not Date.now(): the wall clock is irrelevant, the monotonic clock decides", async () => {
+    const wall = vi.spyOn(Date, "now").mockReturnValue(4102444800000); // year 2100: an epoch-derived value would be huge
+    const mono = vi.spyOn(performance, "now").mockReturnValueOnce(7000).mockReturnValueOnce(7050);
+    await timed("shell.identity", async () => "a");
+    mono.mockRestore();
+    wall.mockRestore();
+    const span = onlySpan(emitted()[0]);
+    expect(span.duration_ms).toBe(50);
+    expect(span.start_ms).toBe(0);
   });
 });

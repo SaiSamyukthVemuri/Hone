@@ -230,6 +230,11 @@ type PerfSpanRecord = {
   /** 1-based order of completion within the request. */
   seq: number;
   duration_ms: number;
+  /**
+   * INTERNAL ONLY, never emitted: the span's `performance.now()` start (the same monotonic source as the duration, never `Date.now()`). It exists so
+   * buildPerfSummary can derive the one emitted value, `start_ms`, relative to the earliest span of THIS request.
+   */
+  startedAt: number;
   outcome: PerfOutcome;
 };
 
@@ -333,6 +338,8 @@ export function buildPerfSummary(
   dropped: number,
   timestamp: string,
 ): Record<string, unknown> {
+  // The minimum is taken over THIS request's own spans only: no module-level or cross-request state.
+  const earliestStart = spans.reduce((min, record) => Math.min(min, record.startedAt), Number.POSITIVE_INFINITY);
   let identityResolutions = 0;
   let membershipResolutions = 0;
   let identityTotalMs = 0;
@@ -393,6 +400,9 @@ export function buildPerfSummary(
       span: record.span,
       seq: record.seq,
       duration_ms: record.duration_ms,
+      // Milliseconds from the earliest-starting span of this request to this span's start: a small non-negative integer, relative, so it carries no
+      // wall-clock time and cannot be compared across requests. The raw `startedAt` is not emitted.
+      start_ms: Math.round(record.startedAt - earliestStart),
       outcome: record.outcome,
     })),
     timestamp,
@@ -451,6 +461,7 @@ function scheduleFlush(store: PerfStore): void {
 
 function record(
   span: PerfSpanId,
+  startedAt: number,
   durationMs: number,
   outcome: PerfOutcome,
 ): void {
@@ -468,6 +479,7 @@ function record(
       // sub-millisecond precision, and a rounded integer keeps the log line
       // small and diffable.
       duration_ms: Math.round(durationMs),
+      startedAt,
       outcome,
     });
     scheduleFlush(store);
@@ -590,10 +602,10 @@ export async function timed<T>(
   const startedAt = performance.now();
   try {
     const result = await runWithSentrySpan(span, fn);
-    record(span, performance.now() - startedAt, "ok");
+    record(span, startedAt, performance.now() - startedAt, "ok");
     return result;
   } catch (err) {
-    record(span, performance.now() - startedAt, "threw");
+    record(span, startedAt, performance.now() - startedAt, "threw");
     throw err;
   }
 }
@@ -638,7 +650,7 @@ export function startPerfSpan(span: PerfSpanId): PerfSpanHandle {
       if (ended) return;
       ended = true;
       endInactiveSentrySpan(sentrySpan);
-      record(span, performance.now() - startedAt, "ok");
+      record(span, startedAt, performance.now() - startedAt, "ok");
     },
   };
 }
