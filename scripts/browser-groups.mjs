@@ -486,6 +486,7 @@ export const BROWSER_GROUPS = {
     specs: [
       "marketing-homepage.spec.ts",
       "marketing-pages.spec.ts",
+      "public-pages-contact-faq-mobile.spec.ts",
       // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
       // motion preference, and the poster being preloaded eagerly. Filed here
       // rather than in `smoke` on purpose — it is heavier than a smoke case
@@ -613,6 +614,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",
+  "public-pages-contact-faq-mobile.spec.ts",
   "public-reschedule-v2.spec.ts",
   "safe-willow-appointment-lifecycle.spec.ts",
   "safe-willow-contract.spec.ts",
