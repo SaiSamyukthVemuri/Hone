@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createHash, randomBytes } from "node:crypto";
-import { loginAsOwner } from "./helpers/flows";
+import { bookAppointment, loginAsOwner } from "./helpers/flows";
 import { markResendLedger, readResendLedger } from "./helpers/resend-ledger";
 import {
-  getAppointmentsForClient, getCancellationToken, seedE2eActiveCardOnFile,
-  seedE2eDashboardClient, seedE2eStudio, seedE2eTodayAppointment, sql,
+  getAppointmentsForClient, getClientIdByEmail, seedE2eActiveCardOnFile,
+  seedE2eDashboardClient, seedE2eStudio, sql,
   type E2eSeed,
 } from "./helpers/seed";
 
@@ -61,10 +61,11 @@ async function checkActiveSession(page: Page, previousToken?: string) {
   return cookie!.value;
 }
 
-async function reschedule(page: Page, studioId: string, originalId: string) {
-  const token = await getCancellationToken(studioId, originalId);
-  expect(Boolean(token), "Fixture appointment has a management link").toBe(true);
-  await followClientEmail(page, `/reschedule/${token}`);
+async function reschedule(page: Page) {
+  await page.getByRole("link", { name: /^manage appointment/i }).click();
+  await expect(page.getByRole("heading", { name: "Manage appointment", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Reschedule appointment", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Reschedule appointment", exact: true })).toBeVisible();
   const input = page.getByLabel("Pick a new date");
   const day = new Date(`${await input.inputValue()}T12:00:00Z`);
   day.setUTCDate(day.getUTCDate() + 9);
@@ -86,16 +87,25 @@ async function assertAppointment(page: Page, appointment: { id: string; starts_a
 }
 
 test("original link shows the rescheduled visit once across an owner publish and rollback", async ({
-  page, context, browser, baseURL,
+  page, browser, baseURL,
 }, info) => {
   test.setTimeout(180_000);
   const pilotStudioId = process.env.HONE_E2E_PORTAL_PILOT_STUDIOS?.split(",")[info.retry];
   if (!pilotStudioId) throw new Error("The portal pilot fixture must be registered on the local app server.");
   const studio = await seedE2eStudio(pilotStudioId);
-  const { clientId, name } = await seedE2eDashboardClient(studio, { label: "Returning client" });
-  const { appointmentId } = await seedE2eTodayAppointment(studio, {
-    clientId, startsMinutesFromNow: 7 * 1440, endsMinutesFromNow: 7 * 1440 + 30, withService: true,
-  });
+  // Public booking creates the same management token, reservation, and client
+  // as a real booking. Keep it well in the future throughout the round trip.
+  const bookedDay = new Date();
+  bookedDay.setUTCDate(bookedDay.getUTCDate() + 7);
+  await bookAppointment(page, studio, bookedDay.toISOString().slice(0, 10));
+  const clientId = await getClientIdByEmail(studio.studioId, studio.clientEmail);
+  if (!clientId) throw new Error("The booking did not create its client.");
+  const originals = await getAppointmentsForClient(studio.studioId, clientId);
+  expect(originals).toHaveLength(1);
+  const [original] = originals;
+  expect(original.status).toBe("confirmed");
+  expect(new Date(original.starts_at).getTime()).toBeGreaterThan(Date.now() + 5 * 86_400_000);
+  const appointmentId = original.id;
   const title = `Treatment consent ${studio.runId}`;
   await sql(
     `insert into public.consent_form_templates (studio_id, title, body, form_type, version, status, is_live)
@@ -115,11 +125,11 @@ test("original link shows the rescheduled visit once across an owner publish and
   await enterPortal(page, originalLink);
   const originalSession = await checkActiveSession(page);
   await expect(page.getByTestId("studio-portal")).toHaveCount(0);
-  await assertAppointment(page, (await getAppointmentsForClient(studio.studioId, clientId))[0]);
+  await assertAppointment(page, original);
 
   // A pre-rollout signature must survive both layouts with the same version and signature.
   await page.locator("li").filter({ hasText: title }).getByRole("button", { name: "Review and sign" }).click();
-  await page.getByLabel("Type your full name to sign").fill(name);
+  await page.getByLabel("Type your full name to sign").fill(studio.clientName);
   await page.getByRole("checkbox", { name: "I have read and agree to this form." }).check();
   await page.getByRole("button", { name: "Sign form" }).click();
   const signature = () => sql<{ id: string; template_version: number }>(
@@ -154,8 +164,7 @@ test("original link shows the rescheduled visit once across an owner publish and
     await checkActiveSession(page, originalSession);
 
     // The reschedule form writes a cancelled original and a confirmed successor.
-    const managePage = await context.newPage();
-    await reschedule(managePage, studio.studioId, appointmentId);
+    await reschedule(page);
     const visits = await getAppointmentsForClient(studio.studioId, clientId);
     expect(visits).toHaveLength(2);
     expect(visits.find((appointment) => appointment.id === appointmentId)?.status).toBe("cancelled");
@@ -208,7 +217,9 @@ test("original link shows the rescheduled visit once across an owner publish and
     await expect(other.getByText(control.studioName, { exact: true }).first()).toBeVisible();
 
     await ownerPage.getByRole("button", { name: "Switch to classic" }).click();
-    await expect(ownerPage.getByText("Classic portal restored. Your draft is saved.", { exact: true })).toBeVisible();
+    await expect(ownerPage.getByText("Classic portal restored.", { exact: true })).toBeVisible();
+    await ownerPage.reload();
+    await expect(ownerPage.getByLabel("Welcome heading")).toHaveValue(welcome);
     await followClientEmail(page, originalLink);
     await expectPortalPath(page, "/portal");
     await expect(page.getByTestId("studio-portal")).toHaveCount(0);
