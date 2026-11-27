@@ -332,6 +332,12 @@ export const BROWSER_GROUPS = {
       // Same placement and same self-skip as the spec above; both run for real
       // in the non-required `storage photos` job, which has storage-api.
       "treatment-image-upload-formats.spec.ts",
+      // FETT photos (HON-43), 0232: the Before/After label end to end at phone
+      // width (upload, keyboard relabel/clear, the visit sections) and the
+      // receptionist refusal. Same group and the same reasons as the recovery
+      // spec above; it uploads, so it SELF-SKIPS in CI (no storage-api).
+      "fett-photo-labels.spec.ts",
+      "fett-photo-privacy.spec.ts",
       // ID photo set/replace/remove on the client profile/Photos surface:
       // same group as thumbnail recovery, with the same real-storage
       // requirement (self-skips in CI without storage-api). Does not add to
@@ -526,6 +532,12 @@ export const BROWSER_GROUPS = {
       // anybody out, which is exactly the pair of facts SIGNOUT-01 learned had
       // to be checked together.
       "signout-acknowledgement.spec.ts",
+      // HON-124 PR 1. Both phone menus (keyboard + touch, aria-current, Escape
+      // focus return), the skip link on the marketing and app shells, the app's
+      // sticky header against anchors and upward focus, and the public booking
+      // progress / double-press / taken-time feedback at 390x844. Books
+      // publicly, so it is also in PUBLIC_BOOKING_SPECS below.
+      "hon124-nav-booking-mobile.spec.ts",
     ],
   },
   google: {
@@ -585,6 +597,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "book-next-available-fast.spec.ts",
   "core-memory-loop.spec.ts",
   "dashboard-treatment-memory-inline.spec.ts",
+  "hon124-nav-booking-mobile.spec.ts",
   "mobile-ux.spec.ts",
   "move-appointment-custom-time.spec.ts",
   "move-appointment-mobile-submit.spec.ts",

@@ -1,0 +1,1 @@
+{"pr":1827,"runtime":true,"migrations":["supabase/migrations/0393_visit_payment_ledger.sql","supabase/migrations/0394_visit_payment_commands.sql"],"release_receipt":"01-ops/1827-release-receipt.json"}

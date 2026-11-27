@@ -110,6 +110,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     updateTreatmentImageNoteAction: "staff",
     archiveTreatmentImageAction: "staff",
     setClientPortraitAction: "staff",
+    setTreatmentImageCaptureStageAction: "staff",
   },
   "app/(app)/clients/[id]/intake/actions.ts": {
     markIntakeReviewedAction: "staff",
@@ -742,6 +743,7 @@ export const RPC_NAMES: readonly string[] = [
   "set_session_treatment_plan",
   "set_studio_managed_appointments",
   "set_studio_receptionist_active",
+  "set_treatment_image_capture_stage",
   "set_treatment_image_note",
   "set_waitlist_entry_availability",
   "settle_postcare_send",
@@ -947,6 +949,7 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   set_session_treatment_plan: "-u-D",
   set_studio_managed_appointments: "ABSENT",
   set_studio_receptionist_active: "--sD",
+  set_treatment_image_capture_stage: "-u-D",
   set_treatment_image_note: "-u-D",
   set_waitlist_entry_availability: "--sD",
   settle_postcare_send: "--sD",
