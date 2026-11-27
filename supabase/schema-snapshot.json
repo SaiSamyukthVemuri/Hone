@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 291,
+    "count": 292,
     "last": "0390_front_desk_rollout_and_seats.sql",
-    "sha256": "4ef0b9b0df3459be887c1612fadc75ced4d73accaf45fe1405109e6dba2403f9"
+    "sha256": "f185dedf77691bf42e475a1abe806fa639cf8e410778014f3b8c39577cda16aa"
   },
   "public": {
     "tables": [
