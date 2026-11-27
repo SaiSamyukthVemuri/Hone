@@ -8,6 +8,10 @@ import { collectedMoneyLines, type CollectedMoneyRow } from "@/lib/finance/colle
 //
 //   collected_*   money Hone knows was collected and kept (card session payment, card fee, owner-recorded cash / e-transfer / other)
 //   refunded_*    card money provably refunded IN FULL (an adjustment; never subtracted from a collected line)
+//   refunded_partial  a refund recorded against ONE payment in the split-payments ledger (HON-122: card, cash or transfer; part or all of it). An
+//                 adjustment too: the payment it came from stays on its own collected line at its full amount, so nothing is netted.
+//   bill_note     the visit's bill total, recorded (HON-123). A note: it is the agreed amount, never money, never summed; it exists so a visit paid
+//                 in parts is judged against its bill and a lone part is never mistaken for the whole fee.
 //   waived        owner-attested as forgiven (an adjustment)
 //   still_owes    a note only, never money, never summed
 //   unresolved    money that may or may not have moved (in-flight, unprovable or partial refund, legacy fee with no refund record)
@@ -55,7 +59,9 @@ export type StatementKind =
   | "collected_other_external"
   | "refunded_card_session"
   | "refunded_card_fee"
+  | "refunded_partial"
   | "waived"
+  | "bill_note"
   | "still_owes_note"
   | "unresolved"
   | "other_currency"
@@ -70,7 +76,9 @@ export const STATEMENT_KINDS: readonly StatementKind[] = [
   "collected_other_external",
   "refunded_card_session",
   "refunded_card_fee",
+  "refunded_partial",
   "waived",
+  "bill_note",
   "still_owes_note",
   "unresolved",
   "other_currency",
@@ -85,7 +93,7 @@ export const COLLECTED_KINDS: readonly StatementKind[] = [
   "collected_e_transfer",
   "collected_other_external",
 ];
-export const ADJUSTMENT_KINDS: readonly StatementKind[] = ["refunded_card_session", "refunded_card_fee", "waived"];
+export const ADJUSTMENT_KINDS: readonly StatementKind[] = ["refunded_card_session", "refunded_card_fee", "refunded_partial", "waived"];
 
 export type KindTotal = { count: number; cents: number };
 export type StatementBucket = {
@@ -152,13 +160,18 @@ const METHOD_KIND: Record<string, StatementKind> = {
   paid_other_external: "collected_other_external",
   waived: "waived",
   still_owes: "still_owes_note",
+  // HON-123 / HON-122: rows of the split-payments ledger, expressed as settlement-shaped rows by lib/finance/statement-money-read.ts. A transfer
+  // that is recorded but not yet confirmed is `still_owes` (owed, not received); a refund still with Stripe is `refund_in_flight` (unresolved).
+  bill_total: "bill_note",
+  partial_refund: "refunded_partial",
+  refund_in_flight: "unresolved",
 };
 
 export function classifySettlementRow(row: StatementSettlementRow, studioCurrency: string): { kind: StatementKind; cents: number | null } {
   const kind = METHOD_KIND[row.method];
   if (!kind) return { kind: "unreadable", cents: null };
   // A still_owes row is a note: never money, never an amount.
-  if (kind === "still_owes_note") return { kind, cents: null };
+  if (kind === "still_owes_note" || kind === "bill_note" || kind === "unresolved") return { kind, cents: null };
   const a = row.amountCents;
   if (typeof a !== "number" || !Number.isInteger(a) || a < 0) return { kind: "unreadable", cents: null };
   // Mirrors outstanding-balance: a currency that is present and different is never summed.

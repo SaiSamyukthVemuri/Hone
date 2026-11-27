@@ -82,6 +82,7 @@ export function overviewCsv(view: OverviewView, opts: { preparedOn: string }): s
     add("Collected", "Payments on past bookings never completed", money(c.split.uncompletedPaymentsCents), "", cur);
     add("Collected", "On other bookings, not on a client statement", money(c.split.otherBookingsCents), "", cur);
     if (c.caveats.refundedInFullCents > 0) add("Collected", "Refunded in full, not in collected", money(c.caveats.refundedInFullCents), "", cur);
+    if (c.caveats.refundedPartialCents > 0) add("Collected", "Refunded from payments still counted in full above", money(c.caveats.refundedPartialCents), "", cur);
     if (c.caveats.unresolvedCount > 0) add("Collected", "Payment records not settled either way, not counted", String(c.caveats.unresolvedCount));
     if (c.caveats.otherCurrencyCount > 0) add("Collected", "Payment records in another currency, not counted", String(c.caveats.otherCurrencyCount));
   });

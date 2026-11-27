@@ -565,6 +565,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
                     </tbody>
                   </table>
                   {c.caveats.refundedInFullCents > 0 ? <p className="text-sm text-fg-muted">Refunded in full, not in collected: {format(c.caveats.refundedInFullCents)}.</p> : null}
+                  {c.caveats.refundedPartialCents > 0 ? <p className="text-sm text-fg-muted">Refunded from payments that are still counted in full above: {format(c.caveats.refundedPartialCents)}.</p> : null}
                   {c.caveats.unresolvedCount > 0 ? <p className="text-sm text-fg-muted">{plural(c.caveats.unresolvedCount, "payment record", "payment records")} could not be settled either way and {c.caveats.unresolvedCount === 1 ? "is" : "are"} not counted.</p> : null}
                   {c.caveats.otherCurrencyCount > 0 ? <p className="text-sm text-fg-muted">{plural(c.caveats.otherCurrencyCount, "payment record", "payment records")} in another currency {c.caveats.otherCurrencyCount === 1 ? "is" : "are"} not counted.</p> : null}
                 </div>

@@ -82,7 +82,7 @@ function Section({ bucket, format }: { bucket: StatementBucket; format: (c: numb
       </div>
       <div>
         <SectionLabel>Not totalled</SectionLabel>
-        <Rows bucket={bucket} kinds={["unresolved", "other_currency", "excluded", "unreadable", "still_owes_note"]} format={format} />
+        <Rows bucket={bucket} kinds={["unresolved", "other_currency", "excluded", "unreadable", "still_owes_note", "bill_note"]} format={format} />
       </div>
     </div>
   );

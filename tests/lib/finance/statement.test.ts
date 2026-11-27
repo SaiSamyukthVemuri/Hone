@@ -247,9 +247,9 @@ describe("group 7: copy guard", () => {
     const src = read("app/(app)/financials/statement/statement-view.tsx") + read("app/(app)/financials/statement/page.tsx");
     expect(src).not.toMatch(/revenue|reimburs|payer|\bclaim\b/i);
   });
-  it("write-offs are stated as not recorded, and partial refunds as not supported", () => {
+  it("write-offs are stated as not recorded, and a refund as its own line", () => {
     expect(copy.STATEMENT_WRITE_OFFS_NOTE).toMatch(/not recorded separately/);
-    expect(copy.STATEMENT_PARTIAL_REFUND_NOTE).toMatch(/not supported yet/);
+    expect(copy.STATEMENT_PARTIAL_REFUND_NOTE).toMatch(/never taken off the payment/);
   });
   it("every kind has a label and a label never calls collected money 'revenue'", () => {
     for (const k of STATEMENT_KINDS) expect(copy.STATEMENT_METHOD_LABELS[k]).toBeTruthy();

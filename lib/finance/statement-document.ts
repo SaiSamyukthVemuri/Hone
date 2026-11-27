@@ -320,7 +320,7 @@ function sumKinds(lines: readonly StatementMoneyLine[], kinds: readonly Statemen
   for (const l of lines) if (kinds.includes(l.kind) && AMOUNT_KINDS.includes(l.kind) && isCents(l.cents)) n += l.cents;
   return n;
 }
-const REFUNDED_KINDS: readonly StatementKind[] = ["refunded_card_session", "refunded_card_fee"];
+const REFUNDED_KINDS: readonly StatementKind[] = ["refunded_card_session", "refunded_card_fee", "refunded_partial"];
 
 /** ONE visit -> its state, reasons, flags and amounts. Pure. */
 export function classifyVisit(v: DocumentVisitInput): DocumentVisit {

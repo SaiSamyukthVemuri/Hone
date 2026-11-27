@@ -109,13 +109,32 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   const sessionToAppt = new Map<string, string>();
   for (const s of sessions.rows) if (s.appointment_id) sessionToAppt.set(s.id, s.appointment_id);
 
-  // HON-123, INTERIM. A visit with a split-payments BILL carries cash/transfer rows and partial refunds that this statement model does not itemise
-  // yet (its kinds are card, settlement and legacy fee, with full refunds only). Rather than show a total that leaves them out, the read FAILS CLOSED
-  // for any scope that contains one, exactly as it does for any other read it cannot prove. The itemised history replaces this.
-  const billed = await readInChunks<{ appointment_id: string }>(ids, (chunk) =>
-    supabase.from("visit_bills").select("appointment_id").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
-  );
-  if (!billed.ok || billed.rows.length > 0) return { ok: false };
+  // HON-123 / HON-122: the split-payments ledger, read as settlement-shaped rows so every existing total, line and print follows without a second model.
+  // The three reads fail closed together with the rest: a visit whose bill, cash/transfer or refund rows cannot be read is never shown without them.
+  const [bills, externals, refunds] = await Promise.all([
+    readInChunks<{ appointment_id: string; total_cents: number | null; currency: string | null }>(ids, (chunk) =>
+      supabase.from("visit_bills").select("appointment_id, total_cents, currency").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
+    ),
+    readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null; state: string }>(ids, (chunk) =>
+      supabase.from("visit_external_payments").select("appointment_id, method, amount_cents, currency, state").eq("studio_id", studioId).in("appointment_id", chunk),
+    ),
+    readInChunks<{ appointment_id: string | null; amount_cents: number | null; currency: string | null; status: string; legacy: boolean }>(ids, (chunk) =>
+      supabase.from("payment_refunds").select("appointment_id, amount_cents, currency, status, legacy").eq("studio_id", studioId).in("appointment_id", chunk),
+    ),
+  ]);
+  if (!bills.ok || !externals.ok || !refunds.ok) return { ok: false };
+  const ledgerRows: AssembleSettlementRow[] = [];
+  for (const b of bills.rows) ledgerRows.push({ appointmentId: b.appointment_id, method: "bill_total", amountCents: null, currency: b.currency, quotedAmountCents: b.total_cents });
+  for (const e of externals.rows) {
+    if (e.state === "voided") continue; // retracted before any money moved: nothing to show
+    // Confirmed money is cash / e-transfer / other as the owner recorded it. A transfer still waiting for confirmation is owed, not received.
+    ledgerRows.push({ appointmentId: e.appointment_id, method: e.state === "confirmed" ? e.method : "still_owes", amountCents: e.amount_cents, currency: e.currency, quotedAmountCents: null });
+  }
+  for (const r of refunds.rows) {
+    // A legacy row mirrors a full refund the attempt itself already carries (the card line shows it), and a failed refund moved nothing.
+    if (r.legacy || r.status === "failed" || !r.appointment_id) continue;
+    ledgerRows.push({ appointmentId: r.appointment_id, method: r.status === "succeeded" ? "partial_refund" : "refund_in_flight", amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: null });
+  }
 
   const [feeCards, sessionCards, settlements, legacy] = await Promise.all([
     readInChunks<CardDb>(ids, (chunk) =>
@@ -161,7 +180,7 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   return {
     ok: true,
     cardRows,
-    settlementRows: settlements.rows.map((r) => ({ appointmentId: r.appointment_id, method: r.method, amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: r.quoted_amount_cents })),
+    settlementRows: [...ledgerRows, ...settlements.rows.map((r) => ({ appointmentId: r.appointment_id, method: r.method, amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: r.quoted_amount_cents }))],
     legacyFeeRows: legacy.rows.map((r) => ({ appointmentId: r.appointment_id, status: r.status, amountCents: r.amount_cents, currency: r.currency, stripeLivemode: r.stripe_livemode })),
   };
 }
