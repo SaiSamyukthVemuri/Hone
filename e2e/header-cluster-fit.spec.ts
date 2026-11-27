@@ -28,8 +28,7 @@ async function assertFits(page: Page, who: string) {
 
 test("desktop header cluster fits 1024-1280: owner with Waitlist and a long name, short name, practitioner", async ({ page, browser }) => {
   test.setTimeout(300_000);
-  const seed = await seedE2eStudio();
-  await sql("insert into public.new_client_waitlist_entries(studio_id,name,email) values ($1,'Synthetic Waiter','synthetic.waiter@example.test')", [seed.studioId]);
+  const seed = await seedE2eStudio({ enableWaitlist: true });
   await sql("update public.practitioners set display_name=$1 where studio_id=$2 and role='owner'", [LONG_NAME, seed.studioId]);
   await loginAsOwner(page, seed);
   // The case the defect needs: the Waitlist link really is in the primary navigation.

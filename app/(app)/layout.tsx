@@ -65,10 +65,7 @@ export default async function AppLayout({
   // toward the badge (computed, not persisted) so the operational safety alert is
   // visible from every page. Two bounded studio-scoped reads, run together.
   //
-  // "Waitlist" in the main navigation follows the Settings tab's own rule for the
-  // CURRENT studio and role (never broader), and fails closed. It needs only the
-  // identity above, so it runs WITH these reads instead of ahead of them, and is
-  // measured under its own span so its cost is visible in production timings.
+  // Resolve Waitlist visibility alongside the other studio-scoped shell reads.
   const [unreadPersisted, overdueDisinfectantCount, showWaitlist] = await timed(
     "shell.support-reads",
     () =>
