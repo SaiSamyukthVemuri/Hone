@@ -140,17 +140,49 @@ describe("ops_alerts is written operator-only when it carries money or a client 
     expect(partial && sensitive(partial)).toBe(true);
   });
 
-  // Privacy condition: safe_details.studio_id / client_id (where operator-only alerts keep their lineage) are read only on /admin.
-  it("ops_alerts is read only by operator and service-role code, never by the signed-in app, booking, portal or token routes", () => {
-    const readers = [...TEXT.entries()].filter(([p, t]) => p !== "lib/ops/alerts.ts" && /from\(\s*["']ops_alerts["']\s*\)/.test(t)).map(([p]) => p);
-    const memberTrees = /^app\/(\(app\)|portal|book|cancel|reschedule|manage|intake|invitation|calendar-feed)\//;
-    expect(readers.filter((p) => memberTrees.test(p)), "a member-facing tree reads ops_alerts").toEqual([]);
-    expect(readers.length).toBeGreaterThan(4);
-    // The two views that surface the moved ids are admin pages; the rest are service-role crons and sweeps.
-    const adminOnly = readers.filter((p) => p.startsWith("app/"));
-    for (const p of adminOnly) expect(p, "an app reader outside /admin, /api/cron").toMatch(/^app\/(admin|api\/cron)\//);
-    for (const p of readers.filter((x) => x.startsWith("lib/"))) {
-      expect(TEXT.get(p)!, `${p} must use the service-role client`).toMatch(/createAdminClient|\badmin\b/);
+  // Privacy condition: safe_details.studio_id / client_id (where operator-only alerts keep their lineage) are read only by operator and
+  // service-role code. Judged on the SOURCE of every `.from("ops_alerts")` call (its client expression), not on file names alone.
+  it("every .from(\"ops_alerts\") read uses the service-role client, and only admin pages and service-role jobs read it", () => {
+    type Read = { file: string; receiver: string };
+    const reads: Read[] = [];
+    for (const [file, text] of TEXT) {
+      if (!/ops_alerts/.test(text)) continue;
+      const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+      const visit = (n: ts.Node) => {
+        if (
+          ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "from" &&
+          n.arguments[0] && ts.isStringLiteralLike(n.arguments[0]) && n.arguments[0].text === "ops_alerts"
+        ) reads.push({ file, receiver: n.expression.expression.getText().replace(/\s+/g, "") });
+        ts.forEachChild(n, visit);
+      };
+      visit(sf);
     }
+    expect(reads.length, "the census found the reads (positive control)").toBeGreaterThan(8);
+
+    // 1. The client expression is one of three service-role shapes, and nothing else (no cookie/session client, no user client).
+    const ALLOWED_RECEIVERS = new Set(["admin", "args.admin", "createAdminClient()"]);
+    expect(reads.filter((r) => !ALLOWED_RECEIVERS.has(r.receiver)), "a read whose client is not the service-role client").toEqual([]);
+
+    // 2. A bare `admin` is bound to createAdminClient() in that file; `args.admin` is only the stuck-fee sweep, and its only caller passes
+    //    createAdminClient().
+    for (const r of reads.filter((x) => x.receiver === "admin")) {
+      expect(TEXT.get(r.file)!, `${r.file}: admin must be createAdminClient()`).toMatch(/\badmin\s*=\s*(await\s+)?createAdminClient\(\)/);
+    }
+    expect(reads.filter((r) => r.receiver === "args.admin").map((r) => r.file)).toEqual(["lib/billing/stuck-fee-sweep.ts"]);
+    expect(TEXT.get("app/api/cron/stuck-fee-sweep/route.ts")!).toMatch(/sweepStuckFeeAttempts\(\{\s*admin:\s*createAdminClient\(\)\s*\}\)/);
+
+    // 3. Where the reads live: admin pages, or library code run by crons and the writer. Never the signed-in app, booking, portal or token routes.
+    const files = [...new Set(reads.map((r) => r.file))].sort();
+    expect(files).toEqual([
+      "app/admin/ops-alerts/actions.ts",
+      "app/admin/ops-alerts/page.tsx",
+      "app/admin/payments/manual-review/page.tsx",
+      "lib/billing/stuck-fee-sweep.ts",
+      "lib/cron/reminder-heartbeat.ts",
+      "lib/google-calendar/sync/reconcile-heartbeat.ts",
+      "lib/ops/alerts.ts",
+      "lib/waitlist/retention-health.ts",
+    ]);
+    expect(files.filter((f) => f.startsWith("app/") && !/^app\/(admin|api\/cron)\//.test(f))).toEqual([]);
   });
 });
