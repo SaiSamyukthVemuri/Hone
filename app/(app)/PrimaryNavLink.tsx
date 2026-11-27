@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
-import { cx } from "@/components/ui/control-base";
+import { cx, NAV_ROW_FEEDBACK, NAV_ROW_FOCUS } from "@/components/ui/control-base";
 import type { ReactNode } from "react";
 
 // UX-01 QW2 · "you are here", on the existing primary navigation.
@@ -80,8 +80,8 @@ const NAV_LINK_BASE = "rounded-md px-3 py-2";
  * repaired, and it is a shape change rather than colour alone because the fill
  * appears.
  */
-export const NAV_LINK_CURRENT = "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100";
-const NAV_LINK_IDLE = "hover:bg-neutral-100 dark:hover:bg-neutral-900";
+export const NAV_LINK_CURRENT = `bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 ${NAV_ROW_FOCUS}`;
+const NAV_LINK_IDLE = NAV_ROW_FEEDBACK;
 
 export function PrimaryNavLink({
   href,

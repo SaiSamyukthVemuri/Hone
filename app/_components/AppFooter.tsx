@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { TEXT_LINK_FEEDBACK } from "@/components/ui/control-base";
 
 // Minimal footer for the in-app surfaces. Privacy + Terms links are
 // required to be reachable from every authenticated page; this stays
@@ -11,19 +12,19 @@ export function AppFooter() {
         <span className="flex flex-wrap gap-x-3 gap-y-1">
           <Link
             href="/privacy"
-            className="hover:text-neutral-900 dark:hover:text-neutral-100"
+            className={TEXT_LINK_FEEDBACK}
           >
             Privacy
           </Link>
           <Link
             href="/terms"
-            className="hover:text-neutral-900 dark:hover:text-neutral-100"
+            className={TEXT_LINK_FEEDBACK}
           >
             Terms
           </Link>
           <a
             href="mailto:privacy@hone.care"
-            className="hover:text-neutral-900 dark:hover:text-neutral-100"
+            className={TEXT_LINK_FEEDBACK}
           >
             privacy@hone.care
           </a>

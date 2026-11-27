@@ -91,6 +91,23 @@ export const FOCUS_RING =
  * CSS-only marker classes defined in app/globals.css, which is also where
  * `prefers-reduced-motion` collapses them to 1ms. No animation library.
  */
+/**
+ * The feedback an app navigation row gives (the primary nav, the phone menu's rows, the Business menu and its rows). One definition, so the three steps
+ * cannot drift apart per surface: HOVER (a mouse), PRESSED (a finger or a held key, where :hover never fires on touch) and the keyboard FOCUS ring. Each
+ * step is a distinct fill, so the press is visible on both input methods. A row marking the current page keeps its own fill and takes NAV_ROW_FOCUS alone, so it is still reachable by keyboard with a visible ring.
+ */
+export const NAV_ROW_FOCUS = "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-inset";
+export const NAV_ROW_FEEDBACK = cx(
+  "hover:bg-neutral-100 active:bg-neutral-200 dark:hover:bg-neutral-900 dark:active:bg-neutral-800",
+  NAV_ROW_FOCUS,
+);
+
+/** The same three steps for a small text link (a footer link): a hover underline as well as the colour, so the cue is not colour alone. */
+export const TEXT_LINK_FEEDBACK = cx(
+  "rounded-sm hover:text-neutral-900 hover:underline active:text-neutral-950 dark:hover:text-neutral-100 dark:active:text-white",
+  "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+);
+
 export const PRESS_TRANSITION = "hone-transition-press";
 export const UI_TRANSITION = "hone-transition-ui";
 
