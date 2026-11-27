@@ -3,7 +3,7 @@
   "migrations": {
     "count": 293,
     "last": "0394_visit_payment_commands.sql",
-    "sha256": "ac5468ad4b273afb95e4b29a5e49ff0aac2bbea8de83a3384def1a06fece1c92"
+    "sha256": "e9eadf2eb7c57f594c6c43ea564a4be1e92cde7d4fadebfaf2ec9a9bd6b92e15"
   },
   "public": {
     "tables": [
@@ -220,6 +220,7 @@
       "can_read_client_legal_identity",
       "can_use_client_legal_identity",
       "cancel_appointment_core",
+      "cancel_split_card_attempt",
       "cancellation_fee_attempt_guard",
       "cancellation_fee_legacy_setting_guard",
       "capture_treatment_reading_change",

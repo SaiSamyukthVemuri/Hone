@@ -58,7 +58,8 @@ export function visitBalance(l: VisitLedger): VisitBalance | null {
   const confirmedCents = sum(l.externals.filter((e) => e.state === "confirmed").map((e) => e.amountCents));
   const pendingCents = sum(l.externals.filter((e) => e.state === "pending_confirmation").map((e) => e.amountCents));
   const cardCents = sum(l.cards.filter((c) => ["ready", "pending_stripe", "succeeded"].includes(c.status)).map((c) => c.amountCents));
-  const refundedCents = sum(l.refunds.filter((r) => r.status !== "failed").map((r) => r.amountCents));
+  // Only a SUCCEEDED refund counts (0394): one still with Stripe may yet fail, so it frees no capacity.
+  const refundedCents = sum(l.refunds.filter((r) => r.status === "succeeded").map((r) => r.amountCents));
   const collectableCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - cardCents + refundedCents);
   return { totalCents: l.bill.totalCents, confirmedCents, pendingCents, cardCents, refundedCents, collectableCents, owedCents: collectableCents + pendingCents };
 }
@@ -69,7 +70,7 @@ export type HistoryLine = {
   amountCents: number;
   /** "in" adds to what was received, "out" is money handed back. */
   direction: "in" | "out";
-  status: "received" | "pending" | "voided" | "failed" | "in_progress";
+  status: "received" | "pending" | "voided" | "failed" | "in_progress" | "not_sent" | "cancelled";
   at: string;
 };
 
@@ -80,10 +81,10 @@ export const methodLabel = (m: ExternalMethod) => METHOD_LABEL[m];
 export function historyLines(l: VisitLedger): HistoryLine[] {
   const lines: HistoryLine[] = [];
   for (const c of l.cards) {
-    if (c.status === "ready") continue; // a prepared charge that was never run is not a payment
+    // A prepared charge that was never run is not a payment, but it HOLDS its amount against the balance, so it is listed (never hidden) and can be cancelled.
     lines.push({
       key: `card:${c.id}`, label: "Card", amountCents: c.amountCents, direction: "in", at: c.at,
-      status: c.status === "succeeded" ? "received" : c.status === "pending_stripe" ? "in_progress" : "failed",
+      status: c.status === "succeeded" ? "received" : c.status === "pending_stripe" ? "in_progress" : c.status === "ready" ? "not_sent" : c.status === "cancelled" ? "cancelled" : "failed",
     });
   }
   for (const e of l.externals) {
@@ -104,7 +105,7 @@ export function historyLines(l: VisitLedger): HistoryLine[] {
 }
 
 export const STATUS_LABEL: Record<HistoryLine["status"], string> = {
-  received: "Received", pending: "Waiting for confirmation", voided: "Voided", failed: "Failed", in_progress: "Checking payment status",
+  received: "Received", pending: "Waiting for confirmation", voided: "Voided", failed: "Failed", in_progress: "Checking payment status", not_sent: "Prepared, not charged (holds this amount)", cancelled: "Cancelled",
 };
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,10 @@ export function commandNote(code: string, ctx: { collectableCents?: number; curr
     case "method_unavailable": return { tone: "blocked", message: "E-transfer is not used for a US studio. Record it as a transfer or other payment." };
     case "not_completed": return { tone: "blocked", message: "Finish the visit before taking payment." };
     case "already_settled": return { tone: "blocked", message: "This visit already has a recorded outcome (paid another way or waived), so it cannot be split. The studio owner can correct that record first." };
+    case "card_attempt_prepared": return { tone: "blocked", message: "A card payment is already prepared for this visit. Finish it or cancel it first, then split the payment." };
+    case "cancelled": return { tone: "ok", message: "Cancelled. Its amount can be collected again." };
+    case "already_cancelled": return { tone: "info", message: "That card payment was already cancelled." };
+    case "not_cancellable": return { tone: "blocked", message: "That card payment has already been sent, so it cannot be cancelled. Reload the page to see where it stands." };
     case "card_payment_exists": return { tone: "blocked", message: "This visit already has a card payment, so it cannot be split." };
     case "price_missing": return { tone: "blocked", message: "Check the fee for this visit first: it has no price." };
     case "no_bill": return { tone: "blocked", message: "This visit has no bill yet. Reload the page and try again." };

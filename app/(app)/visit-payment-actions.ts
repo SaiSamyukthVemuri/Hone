@@ -94,6 +94,17 @@ export async function confirmTransferAction(formData: FormData): Promise<SplitAc
   return finish(who.studioId, appointmentId, row.result, row.id);
 }
 
+/** Cancel a card payment that was prepared but never sent to Stripe (it holds its amount against the balance). Refused once it has been sent. */
+export async function cancelSplitCardAttemptAction(formData: FormData): Promise<SplitActionResult> {
+  const who = await owner();
+  if (!who) return refuse("not_owner");
+  const appointmentId = str(formData.get("appointment_id"));
+  const attemptId = str(formData.get("attempt_id"));
+  if (!UUID.test(appointmentId) || !UUID.test(attemptId)) return refuse("invalid_input");
+  const row = await callCommand("cancel_split_card_attempt", { p_studio_id: who.studioId, p_attempt_id: attemptId, p_reason: null });
+  return finish(who.studioId, appointmentId, row.result, row.id);
+}
+
 export async function voidTransferAction(formData: FormData): Promise<SplitActionResult> {
   const who = await owner();
   if (!who) return refuse("not_owner");
@@ -168,11 +179,12 @@ export async function prepareSplitCardPaymentAction(formData: FormData): Promise
 
   const admin = createAdminClient();
   // A repeated prepare (double click, retry) is the same payment: return the first attempt, make nothing.
-  const prior = await admin.from("payment_charge_attempts").select("id, amount_cents, currency")
+  const prior = await admin.from("payment_charge_attempts").select("id, amount_cents, currency, appointment_id, status")
     .eq("studio_id", who.studioId).eq("submission_id", submissionId).maybeSingle();
   if (prior.data) {
     const c = parsePaymentCurrency(prior.data.currency);
-    if (c && prior.data.amount_cents === cents) return { ok: true, attemptId: prior.data.id as string, currency: c, amountCents: cents };
+    // The same submission id means the same visit, amount and a live attempt. A different visit, or an attempt that was cancelled or failed, is a reused id.
+    if (c && prior.data.amount_cents === cents && prior.data.appointment_id === appointmentId && ["ready", "pending_stripe", "succeeded"].includes(String(prior.data.status))) return { ok: true, attemptId: prior.data.id as string, currency: c, amountCents: cents };
     return splitFail(who.studioId, appointmentId, "submission_reused");
   }
 
@@ -200,9 +212,9 @@ export async function prepareSplitCardPaymentAction(formData: FormData): Promise
     // The card wall's closed codes (0394): PY001 reserved for a pending transfer, PY002 more than is collectable. Nothing was written.
     if (error.code === "PY001" || error.code === "PY002") return splitFail(who.studioId, appointmentId, error.code);
     if (error.code === "23505") {
-      const again = await admin.from("payment_charge_attempts").select("id, amount_cents, currency").eq("studio_id", who.studioId).eq("submission_id", submissionId).maybeSingle();
+      const again = await admin.from("payment_charge_attempts").select("id, amount_cents, currency, appointment_id, status").eq("studio_id", who.studioId).eq("submission_id", submissionId).maybeSingle();
       const c = again.data ? parsePaymentCurrency(again.data.currency) : null;
-      if (again.data && c && again.data.amount_cents === cents) return { ok: true, attemptId: again.data.id as string, currency: c, amountCents: cents };
+      if (again.data && c && again.data.amount_cents === cents && again.data.appointment_id === appointmentId && ["ready", "pending_stripe", "succeeded"].includes(String(again.data.status))) return { ok: true, attemptId: again.data.id as string, currency: c, amountCents: cents };
     }
     return splitFail(who.studioId, appointmentId, "unavailable");
   }

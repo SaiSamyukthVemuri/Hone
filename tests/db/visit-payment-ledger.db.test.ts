@@ -67,7 +67,7 @@ const refundable = async (attemptId: string | null, externalId: string | null) =
   (await adminQuery(`select public.payment_refundable_cents($1,$2) as n`, [attemptId, externalId])).rows[0].n as number | null;
 
 describe("0393 structure and access", () => {
-  it("the three tables hold read-only member access and no write grant for any role", async () => {
+  it("the three tables hold read-only OWNER access and no write grant for any role", async () => {
     for (const table of ["visit_bills", "visit_external_payments", "payment_refunds"]) {
       const rls = await adminQuery(`select relrowsecurity from pg_class where oid = ('public.' || $1)::regclass`, [table]);
       expect(rls.rows[0].relrowsecurity, table).toBe(true);
@@ -89,7 +89,7 @@ describe("0393 structure and access", () => {
     }
   });
 
-  it("a studio member reads only their own studio's rows", async () => {
+  it("the studio's owner reads only its own studio's rows, and another practitioner of the studio reads none (owner-only, as payment_charge_attempts)", async () => {
     const a = await scenario();
     const b = await scenario();
     const billA = await bill(a);
@@ -99,7 +99,7 @@ describe("0393 structure and access", () => {
     await expect(asUser(a.practitionerUserId, (q) => q(`insert into public.visit_bills (studio_id) values ($1)`, [a.studioId]))).rejects.toThrow();
     const member = await seedMember({ studioId: a.studioId, userId: a.practitionerUserId, practitionerId: a.practitionerId, clientId: a.clientId }, "member");
     const asMember = await asUser(member.userId, (q) => q(`select id from public.visit_bills`));
-    expect(asMember.rows.map((r) => r.id)).toEqual([billA]);
+    expect(asMember.rows).toEqual([]);
   });
 });
 

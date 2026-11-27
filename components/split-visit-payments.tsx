@@ -8,8 +8,11 @@ import {
 } from "@/lib/billing/visit-payments-core";
 import {
   confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
-  voidTransferAction, type SplitActionResult, type SplitState,
+  voidTransferAction, cancelSplitCardAttemptAction, type SplitActionResult, type SplitState,
 } from "@/app/(app)/visit-payment-actions";
+
+/** Free-text fields on money records are never shown to the client and are kept out of logs and messages, but they are still stored: keep names and health details out of them. */
+const REASON_HELP = "No client or personal details.";
 
 // ===========================================================================
 // Split payments on one visit (HON-123 / HON-122): the checkout panel.
@@ -189,7 +192,15 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         {historyLines(ledger).map((l) => (
           <li key={l.key} className="flex items-baseline justify-between gap-3 py-2 text-sm">
             <span>{l.label}<span className="ml-2 text-neutral-500">{STATUS_LABEL[l.status]}</span></span>
-            <span className="font-medium">{l.direction === "out" ? "−" : ""}{fmt(l.amountCents)}</span>
+            <span className="flex items-baseline gap-3">
+              {l.status === "not_sent" && !unknown && (
+                <button type="button" className="text-sm underline" disabled={busy} data-testid="split-cancel-attempt"
+                  onClick={async () => { setBusy(true); try { apply(await cancelSplitCardAttemptAction(form({ attempt_id: l.key.slice(5) }))); } finally { setBusy(false); } }}>
+                  Cancel this card payment
+                </button>
+              )}
+              <span className="font-medium">{l.direction === "out" ? "−" : ""}{fmt(l.amountCents)}</span>
+            </span>
           </li>
         ))}
         {historyLines(ledger).length === 0 && (
@@ -257,7 +268,8 @@ function PendingTransfer(props: { id: string; label: string; amount: string; bus
       {voiding && (
         <div className="mt-3 flex flex-col gap-2">
           <label className="text-sm font-medium">Reason for cancelling the transfer
-            <input className={input} value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
+            <input className={input} value={reason} maxLength={500} aria-describedby="split-void-reason-help" onChange={(e) => setReason(e.target.value)} />
+            <span id="split-void-reason-help" className="mt-1 block text-xs font-normal text-neutral-600 dark:text-neutral-400">{REASON_HELP}</span>
           </label>
           <button type="button" className={secondary} disabled={props.busy || reason.trim() === ""} onClick={() => void props.onVoid(reason.trim())}>
             Cancel {props.amount} transfer and release the amount
@@ -300,7 +312,8 @@ function RefundForm(props: {
             <input inputMode="decimal" autoComplete="off" className={input} value={amount} onChange={(e) => setAmount(e.target.value)} />
           </label>
           <label className="text-sm font-medium">Reason
-            <input className={input} value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
+            <input className={input} value={reason} maxLength={500} aria-describedby="split-refund-reason-help" onChange={(e) => setReason(e.target.value)} />
+            <span id="split-refund-reason-help" className="mt-1 block text-xs font-normal text-neutral-600 dark:text-neutral-400">{REASON_HELP}</span>
           </label>
           <button type="button" className={primary} disabled={props.busy || cents === null || reason.trim() === ""}
             onClick={() => void props.onSubmit({ paymentId, amount, kind, reason: reason.trim(), card: props.received.find((r) => r.id === paymentId)?.card ?? false }).then(() => { setAmount(""); setReason(""); })}>

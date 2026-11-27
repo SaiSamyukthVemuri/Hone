@@ -85,7 +85,7 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
 
 export type CommandRow = { result: string; id: string | null; state: string | null };
 
-export type CommandName = "ensure_visit_bill" | "record_visit_external_payment" | "confirm_visit_external_payment" | "void_visit_external_payment" | "request_payment_refund";
+export type CommandName = "ensure_visit_bill" | "record_visit_external_payment" | "confirm_visit_external_payment" | "void_visit_external_payment" | "request_payment_refund" | "cancel_split_card_attempt";
 
 /** One staff command as the signed-in person. A transport or permission failure is `result: "unavailable"`; the database's own refusals come back as their code. */
 export async function callCommand(fn: CommandName, args: Record<string, unknown>): Promise<CommandRow> {
@@ -97,11 +97,12 @@ export async function callCommand(fn: CommandName, args: Record<string, unknown>
       : fn === "record_visit_external_payment" ? await supabase.rpc("record_visit_external_payment", args)
       : fn === "confirm_visit_external_payment" ? await supabase.rpc("confirm_visit_external_payment", args)
       : fn === "void_visit_external_payment" ? await supabase.rpc("void_visit_external_payment", args)
+      : fn === "cancel_split_card_attempt" ? await supabase.rpc("cancel_split_card_attempt", args)
       : await supabase.rpc("request_payment_refund", args);
     if (error) return { result: "unavailable", id: null, state: null };
     const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
     if (!row || typeof row.result !== "string") return { result: "unavailable", id: null, state: null };
-    const id = [row.payment_id, row.refund_id, row.bill_id].find((v) => typeof v === "string") as string | undefined;
+    const id = [row.payment_id, row.refund_id, row.attempt_id, row.bill_id].find((v) => typeof v === "string") as string | undefined;
     return { result: row.result, id: id ?? null, state: typeof row.state === "string" ? row.state : typeof row.status === "string" ? row.status : null };
   } catch {
     return { result: "unavailable", id: null, state: null };
@@ -112,9 +113,9 @@ export async function callCommand(fn: CommandName, args: Record<string, unknown>
 export async function readRefundRow(studioId: string, refundId: string): Promise<import("@/lib/billing/payment-partial-refund").PendingRefundRow | null> {
   try {
     const { data, error } = await (await createClient()).from("payment_refunds")
-      .select("id, studio_id, attempt_id, amount_cents, status, source").eq("id", refundId).eq("studio_id", studioId).maybeSingle();
+      .select("id, studio_id, attempt_id, amount_cents, status, source, requested_at").eq("id", refundId).eq("studio_id", studioId).maybeSingle();
     if (error || !data || typeof data.attempt_id !== "string") return null;
-    return { id: data.id as string, studioId: data.studio_id as string, attemptId: data.attempt_id, amountCents: data.amount_cents as number, status: String(data.status), source: String(data.source) };
+    return { id: data.id as string, studioId: data.studio_id as string, attemptId: data.attempt_id, amountCents: data.amount_cents as number, status: String(data.status), requestedAt: String(data.requested_at ?? ""), source: String(data.source) };
   } catch {
     return null;
   }

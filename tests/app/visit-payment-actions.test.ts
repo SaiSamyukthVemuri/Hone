@@ -59,7 +59,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 
 import {
   confirmTransferAction, prepareSplitCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
-  startSplitBillAction, voidTransferAction, refundCardPaymentAction,
+  startSplitBillAction, voidTransferAction, cancelSplitCardAttemptAction, refundCardPaymentAction,
 } from "@/app/(app)/visit-payment-actions";
 
 const APPT = "22222222-2222-4222-8222-222222222222";
@@ -176,11 +176,16 @@ describe("a card for reserved money never reaches Stripe", () => {
     expect(S.stripeCalls).toBe(0);   // preparing never calls Stripe
   });
   it("a repeated prepare (same submission, same amount) returns the first attempt and inserts nothing", async () => {
-    S.prior = { id: "first-attempt", amount_cents: 7500, currency: "cad" };
+    S.prior = { id: "first-attempt", amount_cents: 7500, currency: "cad", appointment_id: APPT, status: "ready" };
     const out = await prep();
     expect(out).toMatchObject({ ok: true, attemptId: "first-attempt" });
     expect(S.inserts).toEqual([]);
-    S.prior = { id: "first-attempt", amount_cents: 9999, currency: "cad" };
+    S.prior = { id: "first-attempt", amount_cents: 9999, currency: "cad", appointment_id: APPT, status: "ready" };
+    expect(await prep()).toMatchObject({ ok: false, code: "submission_reused" });
+    // P3(d): the same submission id on ANOTHER visit, or on an attempt that was cancelled or failed, is a reused id, not "the first attempt".
+    S.prior = { id: "first-attempt", amount_cents: 7500, currency: "cad", appointment_id: "99999999-9999-4999-8999-999999999999", status: "ready" };
+    expect(await prep()).toMatchObject({ ok: false, code: "submission_reused" });
+    S.prior = { id: "first-attempt", amount_cents: 7500, currency: "cad", appointment_id: APPT, status: "cancelled" };
     expect(await prep()).toMatchObject({ ok: false, code: "submission_reused" });
   });
 });
@@ -248,5 +253,20 @@ describe("partial card refund", () => {
       expect(await refundCardPaymentAction(f(bad)), JSON.stringify(bad)).toMatchObject({ ok: false, code: "invalid_input" });
     }
     expect(S.commandCalls).toEqual([]);
+  });
+});
+
+describe("cancelling a prepared, unsent card payment (P3b)", () => {
+  it("is owner-only, validates ids, and calls the database command with the studio from the session", async () => {
+    S.role = "staff";
+    expect(await cancelSplitCardAttemptAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ ok: false, code: "not_owner" });
+    expect(S.commandCalls).toEqual([]);
+    S.role = "owner";
+    expect(await cancelSplitCardAttemptAction(form({ appointment_id: APPT, attempt_id: "x" }))).toMatchObject({ ok: false, code: "invalid_input" });
+    S.command = { result: "cancelled", id: PAY, state: "cancelled" };
+    expect(await cancelSplitCardAttemptAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ ok: true, code: "cancelled" });
+    expect(S.commandCalls.at(-1)?.[0]).toBe("cancel_split_card_attempt");
+    S.command = { result: "not_cancellable", id: PAY, state: "pending_stripe" };
+    expect(await cancelSplitCardAttemptAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ ok: false, code: "not_cancellable" });
   });
 });

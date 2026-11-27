@@ -44,7 +44,7 @@ set local lock_timeout = '5s';
 do $$
 begin
   if to_regclass('public.payment_charge_attempts') is null or to_regclass('public.appointments') is null
-     or to_regclass('public.practitioners') is null or to_regprocedure('public.is_studio_member(uuid)') is null then
+     or to_regclass('public.practitioners') is null or to_regprocedure('public.is_studio_owner(uuid)') is null then
     raise exception '0393: a table or function this migration builds on is missing' using errcode = 'check_violation';
   end if;
   if (select md5(p.prosrc) from pg_proc p where p.oid = to_regprocedure('public.initialize_studio_payment_jurisdiction_from_history(uuid,text,text,text,text,text,boolean,text[],uuid[])')) is distinct from '34d66f66fa3572a36934d00ed124aeb7'
@@ -781,18 +781,19 @@ $$;
 
 
 -- ---------------------------------------------------------------------------
--- ROW-LEVEL SECURITY AND GRANTS. Read-only for members; every write is a 0394 command.
+-- ROW-LEVEL SECURITY AND GRANTS. Read-only, and OWNER-only, exactly as payment_charge_attempts (0254) and appointment_settlements: the amounts, the free-text
+-- notes and reasons here are the owner's. Every write is a 0394 command.
 -- ---------------------------------------------------------------------------
 alter table public.visit_bills enable row level security;
 alter table public.visit_external_payments enable row level security;
 alter table public.payment_refunds enable row level security;
 
-create policy "visit_bills_member_select" on public.visit_bills for select to authenticated
-  using (public.is_studio_member(visit_bills.studio_id));
-create policy "visit_external_payments_member_select" on public.visit_external_payments for select to authenticated
-  using (public.is_studio_member(visit_external_payments.studio_id));
-create policy "payment_refunds_member_select" on public.payment_refunds for select to authenticated
-  using (public.is_studio_member(payment_refunds.studio_id));
+create policy "visit_bills_owner_select" on public.visit_bills for select to authenticated
+  using (public.is_studio_owner(visit_bills.studio_id));
+create policy "visit_external_payments_owner_select" on public.visit_external_payments for select to authenticated
+  using (public.is_studio_owner(visit_external_payments.studio_id));
+create policy "payment_refunds_owner_select" on public.payment_refunds for select to authenticated
+  using (public.is_studio_owner(payment_refunds.studio_id));
 
 revoke all on public.visit_bills from public, anon, authenticated, service_role;
 revoke all on public.visit_external_payments from public, anon, authenticated, service_role;
@@ -843,6 +844,11 @@ begin
     if new.state = 'confirmed' then new.confirmed_at := now(); end if;
     if new.state = 'voided' then
       raise exception 'visit_external_payments: a payment is never created voided' using errcode = '23514';
+    end if;
+    -- Defence in depth: the payment must sit on a live bill of the same studio, visit and currency.
+    if not exists (select 1 from public.visit_bills b where b.id = new.bill_id and b.studio_id = new.studio_id and b.appointment_id = new.appointment_id
+                      and b.currency = new.currency and b.superseded_at is null) then
+      raise exception 'visit_external_payments: the payment does not match the live bill (studio, visit or currency)' using errcode = '23514';
     end if;
     return new;
   end if;
@@ -909,6 +915,10 @@ begin
   end if;
   if tg_op = 'INSERT' then
     new.requested_at := now();
+    if new.reduced_bill_id is not null and not exists (select 1 from public.visit_bills b where b.id = new.reduced_bill_id and b.studio_id = new.studio_id
+                                                         and b.appointment_id = new.appointment_id and b.currency = new.currency) then
+      raise exception 'payment_refunds: the reduced bill does not match the refund (studio, visit or currency)' using errcode = '23514';
+    end if;
     if new.status = 'succeeded' and new.external_payment_id is not null then new.confirmed_at := now(); end if;
   else
     if new.id is distinct from old.id or new.studio_id is distinct from old.studio_id or new.appointment_id is distinct from old.appointment_id
@@ -987,6 +997,13 @@ begin
      and old.stripe_refund_id is not distinct from new.stripe_refund_id
      and old.stripe_refund_status is not distinct from new.stripe_refund_status
      and old.stripe_refund_event_id is not distinct from new.stripe_refund_event_id then
+    return new;
+  end if;
+  -- A refund made through the new flow already carries this attempt's refund history in payment_refunds, row by row. A replayed webhook that touches the
+  -- attempt's own refund columns must not add a legacy row on top (the over-refund wall would then refuse it and the webhook would fail): do nothing.
+  -- A NEW older-code refund (refund_status becoming pending_stripe, written BEFORE its Stripe call) is different: it keeps meeting the wall, so a full
+  -- refund is never started on top of a partial one.
+  if new.refund_status is distinct from 'pending_stripe' and exists (select 1 from public.payment_refunds r where r.attempt_id = new.id and not r.legacy and r.status in ('pending_stripe', 'succeeded')) then
     return new;
   end if;
   insert into public.payment_refunds (

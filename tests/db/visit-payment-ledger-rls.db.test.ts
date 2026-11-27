@@ -21,7 +21,7 @@ const restAs = (userId: string): SupabaseClient =>
   createClient(API, jwt({ role: "anon" }), { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${jwt({ role: "authenticated", sub: userId })}` } } });
 
 // HON-123 / HON-122: who can READ the three split-payments ledger tables (0393). Synthetic values only.
-// The owner of the studio reads its own bill, cash/transfer and refund rows. A front-desk receptionist, the owner of ANOTHER studio and the anonymous
+// The owner of the studio reads its own bill, cash/transfer and refund rows. A front-desk receptionist, another practitioner, the owner of ANOTHER studio and the anonymous
 // and service roles read nothing. Rows are never writable by any of them directly (every write is a 0394 command).
 
 const TABLES = ["visit_bills", "visit_external_payments", "payment_refunds"] as const;
@@ -91,9 +91,14 @@ describe("0393 read access to the ledger", () => {
       await expect(asUser(mine.practitionerUserId, (q) => q(`update public.${t} set studio_id = studio_id where studio_id = $1`, [mine.studioId]))).rejects.toMatchObject({ code: "42501" });
     }
   });
-  it("another practitioner of the same studio reads it (as for card payments), and the app's owner gate is what limits the screen", async () => {
-    // Recorded so a change is noticed: the table policy is studio membership, exactly as payment_charge_attempts. The owner-only checkout is an application gate.
-    for (const t of TABLES) expect(await count(colleague.userId, t, mine.studioId)).toBeGreaterThan(0);
+  it("another practitioner of the same studio reads ZERO rows: the policies are owner-only, as payment_charge_attempts (0254)", async () => {
+    for (const t of TABLES) expect(await count(colleague.userId, t, mine.studioId)).toBe(0);
+  });
+  it("...and gets nothing from the position read either", async () => {
+    const r = await asUser(colleague.userId, (q) => q(`select * from public.get_visit_payment_position($1,$2)`, [mine.studioId, mine.appointmentId]));
+    expect(r.rows).toEqual([]);
+    const own = await asUser(mine.practitionerUserId, (q) => q(`select * from public.get_visit_payment_position($1,$2)`, [mine.studioId, mine.appointmentId]));
+    expect(own.rows).toHaveLength(1);
   });
 
   it("the statement read, through the real REST layer, itemises the owner's visit and reads NOTHING for a receptionist or another studio", async () => {

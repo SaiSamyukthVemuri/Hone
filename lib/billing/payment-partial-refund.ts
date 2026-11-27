@@ -42,7 +42,23 @@ export type PartialCardRefundOutcome =
  * and finish_payment_refund records an outcome once. A connection or server error is "unknown": the row stays pending_stripe and nothing is
  * recorded as failed (a retry gets the same Stripe refund back). `feeReturnedCents` is decided by the caller from the charge's platform fee.
  */
-export type PendingRefundRow = { id: string; studioId: string; attemptId: string; amountCents: number; status: string; source: string };
+export type PendingRefundRow = { id: string; studioId: string; attemptId: string; amountCents: number; status: string; source: string; requestedAt: string };
+
+/** Stripe forgets an idempotency key after 24 hours, so a retry after about 23 hours could create a SECOND refund. Past this age the existing refund is looked up first. */
+export const IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1000;
+export function retryNeedsLookup(requestedAt: string, now: Date = new Date()): boolean {
+  const t = Date.parse(requestedAt);
+  return !Number.isFinite(t) || now.getTime() - t > IDEMPOTENCY_SAFE_MS; // an unreadable age is treated as old
+}
+
+/** The refund Stripe already made for this row, found by the metadata the call always carries; null when there is none. Throws when Stripe cannot be asked. */
+export async function findExistingStripeRefund(
+  stripe: ReturnType<typeof getSessionPaymentStripe>,
+  a: { chargeId: string; accountId: string | null; refundRowId: string },
+): Promise<Stripe.Refund | null> {
+  const list = await stripe.refunds.list({ charge: a.chargeId, limit: 100 }, { stripeAccount: a.accountId ?? undefined });
+  return list.data.find((r) => r.metadata?.hone_payment_refund_id === a.refundRowId) ?? null;
+}
 
 export async function refundCardPaymentPartial(args: { row: PendingRefundRow; feeReturnedCents: number | null }): Promise<PartialCardRefundOutcome> {
   // The service role has no grant on payment_refunds (0393 gives the table to owners under RLS only), so the CALLER reads the row as the signed-in
@@ -79,7 +95,15 @@ export async function refundCardPaymentPartial(args: { row: PendingRefundRow; fe
 
   let refund: Stripe.Refund;
   try {
-    refund = await createStripeRefund(getSessionPaymentStripe(), {
+    let existing: Stripe.Refund | null = null;
+    if (retryNeedsLookup(row.requestedAt)) {
+      // The idempotency key may have expired, so asking Stripe to create again could refund twice. Look for the refund this row already made first;
+      // if Stripe cannot be asked, that is an unknown outcome (the catch below), never a blind create.
+      existing = await findExistingStripeRefund(getSessionPaymentStripe(), {
+        chargeId: attempt.stripe_charge_id as string, accountId: (attempt.stripe_account_id as string | null) ?? null, refundRowId: row.id,
+      });
+    }
+    refund = existing ?? await createStripeRefund(getSessionPaymentStripe(), {
       chargeId: attempt.stripe_charge_id as string,
       amountCents: row.amountCents,
       accountId: (attempt.stripe_account_id as string | null) ?? null,

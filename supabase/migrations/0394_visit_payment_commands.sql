@@ -78,6 +78,8 @@ create unique index payment_charge_attempts_active_session_payment_uniq
 
 -- ---------------------------------------------------------------------------
 -- 3. The position of a visit (one definition of "how much is still collectable")
+-- Only a SUCCEEDED refund counts: a refund still with Stripe does not free capacity (it may yet fail), so a replacement tender can never take money that
+-- is not provably back. This follows the never-over-collect rule.
 -- ---------------------------------------------------------------------------
 create function public.visit_payment_position(p_studio uuid, p_appointment uuid)
 returns table (bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
@@ -101,7 +103,7 @@ as $$
     cross join lateral (
       select coalesce(sum(f.amount_cents), 0)::integer as refunded
         from public.payment_refunds f
-       where f.studio_id = p_studio and f.appointment_id = p_appointment and f.status in ('pending_stripe', 'succeeded')
+       where f.studio_id = p_studio and f.appointment_id = p_appointment and f.status = 'succeeded'
          and (f.external_payment_id is not null
               or exists (select 1 from public.payment_charge_attempts a2 where a2.id = f.attempt_id and a2.visit_bill_id is not null))) r
    where b.studio_id = p_studio and b.appointment_id = p_appointment and b.superseded_at is null;
@@ -139,17 +141,13 @@ begin
   if new.charge_reason <> 'session_payment' or new.appointment_id is null or new.status not in ('ready', 'pending_stripe', 'succeeded') then
     return new;
   end if;
+  -- The visit lock comes FIRST, before the bill is read, so an attempt racing bill creation either is stamped by the bill (it waited for it) or is
+  -- seen by ensure_visit_bill under the same lock, which then refuses to make a bill over it.
+  perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(new.appointment_id));
   select b.id, b.currency into v_bill, v_currency
     from public.visit_bills b where b.studio_id = new.studio_id and b.appointment_id = new.appointment_id and b.superseded_at is null;
   if v_bill is null then
     return new;                       -- a legacy visit: exactly the behaviour it always had
-  end if;
-  perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(new.appointment_id));
-  -- The bill may have been replaced while we waited for the lock: read it again under the lock.
-  select b.id, b.currency into v_bill, v_currency
-    from public.visit_bills b where b.studio_id = new.studio_id and b.appointment_id = new.appointment_id and b.superseded_at is null;
-  if v_bill is null then
-    return new;
   end if;
   if new.currency is distinct from v_currency then
     raise exception 'payment_currency_mismatch: the card amount is not in the bill currency' using errcode = 'PY003';
@@ -187,6 +185,9 @@ declare
   v_live public.visit_bills%rowtype;
 begin
   actor := public.session_actor_practitioner(p_studio_id);
+  if not public.is_studio_owner(p_studio_id) then
+    return query select 'not_owner'::text, null::uuid, null::integer, null::text; return;
+  end if;
   if p_appointment_id is null or (p_final_cents is not null and p_final_cents not between 0 and 200000)
      or (v_reason is not null and length(v_reason) > 200) then
     return query select 'invalid_input'::text, null::uuid, null::integer, null::text; return;
@@ -213,15 +214,22 @@ begin
   if public.appointment_has_live_card_money(p_studio_id, p_appointment_id, coalesce(p_livemode, true)) then
     return query select 'card_payment_exists'::text, null::uuid, null::integer, null::text; return;
   end if;
+  -- A card payment already PREPARED the old way (a 'ready' attempt, no bill) could still be charged on top of split tenders, so the visit is refused a
+  -- bill until that attempt is finished or cancelled.
+  if exists (
+    select 1 from public.payment_charge_attempts a
+      left join public.sessions s on s.id = a.session_id and s.studio_id = a.studio_id
+     where a.studio_id = p_studio_id and a.charge_reason = 'session_payment' and a.status = 'ready' and a.visit_bill_id is null
+       and coalesce(a.appointment_id, s.appointment_id) = p_appointment_id
+  ) then
+    return query select 'card_attempt_prepared'::text, null::uuid, null::integer, null::text; return;
+  end if;
   v_quote := public.appointment_quoted_amount_cents(p_studio_id, p_appointment_id);
   if v_quote is null then
     return query select 'price_missing'::text, null::uuid, null::integer, null::text; return;
   end if;
   v_total := coalesce(p_final_cents, v_quote);
   if v_total is distinct from v_quote then
-    if not public.is_studio_owner(p_studio_id) then
-      return query select 'not_owner'::text, null::uuid, null::integer, null::text; return;
-    end if;
     if v_reason is null or v_quote not between 1 and 200000 then
       return query select 'invalid_input'::text, null::uuid, null::integer, null::text; return;
     end if;
@@ -255,6 +263,9 @@ declare
   v_id uuid;
 begin
   actor := public.session_actor_practitioner(p_studio_id);
+  if not public.is_studio_owner(p_studio_id) then
+    return query select 'not_owner'::text, null::uuid, null::text; return;
+  end if;
   if p_appointment_id is null or p_submission_id is null
      or p_method is null or p_method not in ('paid_cash', 'paid_e_transfer', 'paid_other_external')
      or p_amount_cents is null or p_amount_cents not between 1 and 200000
@@ -308,6 +319,9 @@ declare
   e public.visit_external_payments%rowtype;
 begin
   actor := public.session_actor_practitioner(p_studio_id);
+  if not public.is_studio_owner(p_studio_id) then
+    return query select 'not_owner'::text, null::uuid, null::text; return;
+  end if;
   if p_payment_id is null then
     return query select 'invalid_input'::text, null::uuid, null::text; return;
   end if;
@@ -339,6 +353,9 @@ declare
   e public.visit_external_payments%rowtype;
 begin
   actor := public.session_actor_practitioner(p_studio_id);
+  if not public.is_studio_owner(p_studio_id) then
+    return query select 'not_owner'::text, null::uuid, null::text; return;
+  end if;
   if p_payment_id is null or v_reason is null or length(v_reason) > 500 then
     return query select 'invalid_input'::text, null::uuid, null::text; return;
   end if;
@@ -499,14 +516,14 @@ begin
 end;
 $$;
 
--- The one read the screens use. Members of the studio only.
+-- The one read the screens use. The studio's OWNER only, as the tables themselves (0393).
 create function public.get_visit_payment_position(p_studio_id uuid, p_appointment_id uuid)
 returns table (bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
                card_cents integer, refunded_cents integer, outstanding_cents integer)
 language plpgsql stable security definer set search_path = pg_catalog, pg_temp
 as $$
 begin
-  if not public.is_studio_member(p_studio_id) then
+  if not public.is_studio_owner(p_studio_id) then
     return;
   end if;
   return query select * from public.visit_payment_position(p_studio_id, p_appointment_id);
@@ -516,6 +533,46 @@ $$;
 -- ---------------------------------------------------------------------------
 -- 6. Grants: all four default-granted roles revoked BY NAME, then only what is needed
 -- ---------------------------------------------------------------------------
+-- An abandoned card payment: prepared (the row exists, so its amount is held against the balance) but never sent to Stripe. The owner can cancel it, which
+-- releases the amount. Only a split attempt that is still 'ready' with no PaymentIntent can be cancelled; anything that reached Stripe is not touched.
+create function public.cancel_split_card_attempt(p_studio_id uuid, p_attempt_id uuid, p_reason text)
+returns table (result text, attempt_id uuid, status text)
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
+as $$
+declare
+  actor uuid;
+  v_reason text := nullif(btrim(p_reason), '');
+  v_appt uuid;
+  a public.payment_charge_attempts%rowtype;
+begin
+  actor := public.session_actor_practitioner(p_studio_id);
+  if not public.is_studio_owner(p_studio_id) then
+    return query select 'not_owner'::text, null::uuid, null::text; return;
+  end if;
+  if p_attempt_id is null or (v_reason is not null and length(v_reason) > 500) then
+    return query select 'invalid_input'::text, null::uuid, null::text; return;
+  end if;
+  select x.appointment_id into v_appt from public.payment_charge_attempts x
+   where x.id = p_attempt_id and x.studio_id = p_studio_id and x.visit_bill_id is not null;
+  if not found then
+    return query select 'not_found'::text, null::uuid, null::text; return;
+  end if;
+  perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(v_appt));
+  select * into a from public.payment_charge_attempts x where x.id = p_attempt_id and x.studio_id = p_studio_id for update;
+  if a.status = 'cancelled' then
+    return query select 'already_cancelled'::text, a.id, a.status; return;
+  end if;
+  if a.status <> 'ready' or a.stripe_payment_intent_id is not null or a.charged_at is not null then
+    return query select 'not_cancellable'::text, a.id, a.status; return;
+  end if;
+  update public.payment_charge_attempts t
+     set status = 'cancelled', cancelled_at = now(), cancelled_by_practitioner_id = actor,
+         cancelled_reason = coalesce(v_reason, 'Cancelled before it was sent to the card network.')
+   where t.id = a.id and t.status = 'ready' and t.stripe_payment_intent_id is null;
+  return query select 'cancelled'::text, a.id, 'cancelled'::text;
+end;
+$$;
+
 revoke all privileges on function public.ensure_visit_bill(uuid, uuid, integer, text, boolean) from public, anon, authenticated, service_role;
 revoke all privileges on function public.record_visit_external_payment(uuid, uuid, text, integer, uuid, text) from public, anon, authenticated, service_role;
 revoke all privileges on function public.confirm_visit_external_payment(uuid, uuid) from public, anon, authenticated, service_role;
@@ -523,12 +580,14 @@ revoke all privileges on function public.void_visit_external_payment(uuid, uuid,
 revoke all privileges on function public.request_payment_refund(uuid, uuid, uuid, uuid, integer, text, text, uuid) from public, anon, authenticated, service_role;
 revoke all privileges on function public.finish_payment_refund(uuid, text, text, text, text, text, integer) from public, anon, authenticated, service_role;
 revoke all privileges on function public.get_visit_payment_position(uuid, uuid) from public, anon, authenticated, service_role;
+revoke all privileges on function public.cancel_split_card_attempt(uuid, uuid, text) from public, anon, authenticated, service_role;
 grant execute on function public.ensure_visit_bill(uuid, uuid, integer, text, boolean) to authenticated;
 grant execute on function public.record_visit_external_payment(uuid, uuid, text, integer, uuid, text) to authenticated;
 grant execute on function public.confirm_visit_external_payment(uuid, uuid) to authenticated;
 grant execute on function public.void_visit_external_payment(uuid, uuid, text) to authenticated;
 grant execute on function public.request_payment_refund(uuid, uuid, uuid, uuid, integer, text, text, uuid) to authenticated;
 grant execute on function public.get_visit_payment_position(uuid, uuid) to authenticated;
+grant execute on function public.cancel_split_card_attempt(uuid, uuid, text) to authenticated;
 grant execute on function public.finish_payment_refund(uuid, text, text, text, text, text, integer) to service_role;
 
 comment on function public.visit_payment_position(uuid, uuid) is '0394. The one definition of how much of a billed visit is still collectable. Internal.';

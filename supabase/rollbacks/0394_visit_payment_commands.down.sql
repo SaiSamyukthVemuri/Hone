@@ -22,6 +22,7 @@ $$;
 
 drop trigger payment_charge_attempts_visit_bill_guard_trg on public.payment_charge_attempts;
 drop function public.payment_charge_attempts_visit_bill_guard();
+drop function public.cancel_split_card_attempt(uuid, uuid, text);
 drop function public.finish_payment_refund(uuid, text, text, text, text, text, integer);
 drop function public.request_payment_refund(uuid, uuid, uuid, uuid, integer, text, text, uuid);
 drop function public.visit_bill_supersede(uuid, uuid, integer, text, uuid);

@@ -49,8 +49,20 @@ describe("visitBalance mirrors the database position", () => {
   it("no bill, no balance (a legacy visit is read the old way)", () => expect(visitBalance({ bill: null, cards: [], externals: [], refunds: [] })).toBeNull());
 });
 
+describe("visitBalance: only a SUCCEEDED refund frees capacity (0394)", () => {
+  const bill = { id: "b", totalCents: 22500, currency: "cad", referenceFeeCents: null, feeAdjustmentReason: null, at: "2026-11-27T10:00" } as never;
+  const card = { kind: "card", id: "c1", amountCents: 22500, status: "succeeded", at: "2026-11-27T10:01", platformFeeCents: null } as const;
+  const refund = (status: "pending_stripe" | "succeeded" | "failed") => ({ id: "r", amountCents: 5000, kind: "payment_reversal", status, attemptId: "c1", externalPaymentId: null, reason: "x", at: "2026-11-27T10:02", platformFeeReturnedCents: null }) as const;
+  it("pending and failed refunds free nothing, a succeeded one frees its amount", () => {
+    const at = (status: "pending_stripe" | "succeeded" | "failed") => visitBalance({ bill, cards: [card], externals: [], refunds: [refund(status)] } as never)!.collectableCents;
+    expect(at("pending_stripe")).toBe(0);
+    expect(at("failed")).toBe(0);
+    expect(at("succeeded")).toBe(5000);
+  });
+});
+
 describe("historyLines", () => {
-  it("lists everything in order, keeps voided and failed visible, and skips a prepared-but-never-run card", () => {
+  it("lists everything in order, keeps voided and failed visible, and lists a prepared-but-never-run card as not sent (it holds its amount)", () => {
     const lines = historyLines(ledger({
       cards: [
         { kind: "card", id: "c1", amountCents: 10000, status: "succeeded", at: "2026-11-27T10:01", platformFeeCents: null },
@@ -60,7 +72,7 @@ describe("historyLines", () => {
       refunds: [{ id: "r", amountCents: 4000, kind: "price_reduction", status: "pending_stripe", attemptId: "c1", externalPaymentId: null, reason: "x", at: "2026-11-27T10:04", platformFeeReturnedCents: null }],
     }));
     expect(lines.map((l) => [l.label, l.status, l.direction])).toEqual([
-      ["Card", "received", "in"], ["E-transfer", "voided", "in"], ["Price reduced, money returned (card)", "in_progress", "out"],
+      ["Card", "received", "in"], ["Card", "not_sent", "in"], ["E-transfer", "voided", "in"], ["Price reduced, money returned (card)", "in_progress", "out"],
     ]);
   });
 });
