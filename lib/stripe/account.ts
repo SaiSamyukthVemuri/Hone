@@ -12,6 +12,7 @@ import { createAdminClient } from "@/lib/supabase/admin-server";
 import type { PaymentCountry } from "@/lib/billing/payment-jurisdiction";
 import { inferStripeLivemode } from "./server";
 import { requireStripeForStudio } from "./studio-platform";
+import { connectedAccountCreateParams } from "./account-create-params";
 import { dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 function logInternalStripeError(event: string, detail: unknown) {
@@ -122,17 +123,7 @@ export async function createOrLoadConnectedAccountForStudio(
   let account: Stripe.Account;
   try {
     account = await stripe.accounts.create(
-      {
-        type: "express",
-        country,
-        capabilities: {
-          card_payments: { requested: true },
-          transfers: { requested: true },
-        },
-        metadata: {
-          hone_studio_id: studioId,
-        },
-      },
+      connectedAccountCreateParams(country, studioId),
       { idempotencyKey: claim.out_idempotency_key ?? undefined },
     );
   } catch (err) {
