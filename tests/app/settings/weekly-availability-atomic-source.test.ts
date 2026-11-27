@@ -22,6 +22,6 @@ describe("full-week availability save — atomic RPC wiring", () => {
   });
   it("both use the admin (service_role) client after a server-side owner check", () => {
     expect(ACTIONS).toMatch(/createAdminClient\(\)/);
-    expect(ACTIONS).toMatch(/assertOwner\(\)/);
+    expect(ACTIONS).toMatch(/await ownerOrFailure\(\)/); // HON-124 item 19: the owner gate, as a returned refusal
   });
 });

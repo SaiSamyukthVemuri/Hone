@@ -12,12 +12,10 @@ import path from "node:path";
 const ROOT = path.resolve(__dirname, "../..");
 
 const NOT_YET_CONVERTED: Record<string, string> = {
-  // availability: PR-2 (actions throw today; four client sections print the thrown text)
-  "app/(app)/settings/availability/AvailabilityClient.tsx": "availability PR-2: save/delete actions still throw",
   // B-group: actions already RETURN {ok:false,error}; only the rare unexpected-throw catch still prints the text
-  "app/(app)/settings/availability/RecurringBreaksSection.tsx": "B-group fallback catch (actions return errors); convert with availability PR-2",
-  "app/(app)/settings/availability/TimedBlocksSection.tsx": "B-group fallback catch (actions return errors); convert with availability PR-2",
-  "app/(app)/calendar/TimedBlockEditDrawer.tsx": "B-group fallback catch (actions return errors); convert with availability PR-2",
+  "app/(app)/settings/availability/RecurringBreaksSection.tsx": "B-group fallback catch (actions return errors); convert in the fallback-catch PR",
+  "app/(app)/settings/availability/TimedBlocksSection.tsx": "B-group fallback catch (actions return errors); convert in the fallback-catch PR",
+  "app/(app)/calendar/TimedBlockEditDrawer.tsx": "B-group fallback catch (actions return errors); convert in the fallback-catch PR",
   "app/(app)/settings/calendar/StudioDisplayPreferencesForm.tsx": "B-group fallback catch; its action also returns 'Failed to update display preferences: <code>'",
   // payments: held until #1821 (Stripe onboarding rework) merges
   "app/(app)/settings/payments/PaymentsSettings.tsx": "payments PR: waits for #1821 onboarding rework",
@@ -32,7 +30,7 @@ const NOT_YET_CONVERTED: Record<string, string> = {
   // outside item 19: the sign-in provider's own message, a different surface
   "app/(auth)/login/page.tsx": "auth provider message; not a settings/client server action",
 };
-const CEILING = 14;
+const CEILING = 13;
 
 // err/e/error/ex/caught . message, or `instanceof Error ? x.message`, after comments are removed.
 const LEAK = /\b(?:err|e|error|ex|caught)(?: as [A-Za-z]+)?\.message\b/;
