@@ -337,6 +337,7 @@ export const BROWSER_GROUPS = {
       // receptionist refusal. Same group and the same reasons as the recovery
       // spec above; it uploads, so it SELF-SKIPS in CI (no storage-api).
       "fett-photo-labels.spec.ts",
+      "fett-photo-privacy.spec.ts",
       // ID photo set/replace/remove on the client profile/Photos surface:
       // same group as thumbnail recovery, with the same real-storage
       // requirement (self-skips in CI without storage-api). Does not add to
