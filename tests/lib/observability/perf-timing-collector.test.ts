@@ -158,7 +158,9 @@ describe("one request produces one line", () => {
   });
 
   it("schedules exactly one flush no matter how many spans run", async () => {
-    for (const span of PERF_SPAN_IDS) {
+    // The allowlist is longer than the per-request cap (64) once the Dashboard's read spans are in, so take a run that fits under it.
+    const some = PERF_SPAN_IDS.slice(0, 60);
+    for (const span of some) {
       await timed(span, async () => "x");
     }
     // The flushScheduled guard: many spans, one deferred flush.
@@ -166,7 +168,7 @@ describe("one request produces one line", () => {
 
     endRequest();
     expect(lines()).toHaveLength(1);
-    expect(lines()[0].span_count).toBe(PERF_SPAN_IDS.length);
+    expect(lines()[0].span_count).toBe(some.length);
   });
 
   it("keeps separate requests in separate lines", async () => {

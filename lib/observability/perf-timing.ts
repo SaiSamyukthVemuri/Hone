@@ -119,6 +119,27 @@ export const PERF_SPAN_IDS = [
   "waitlist.identity",
   "waitlist.domain",
   "dashboard.identity",
+  // HON-109 slice 2. The Dashboard's own reads, one span per read so the question "where do 1.0 s and the 3 s tail go" has an answer. NOT phase
+  // "domain" (they overlap, so domain_total_ms would double count); duration and completion order only, no ids, no paths.
+  "dashboard.roster",
+  "dashboard.boundary",
+  "dashboard.bulk",
+  "dashboard.linked-sessions",
+  "dashboard.session-blocks",
+  "dashboard.attention-sources",
+  "dashboard.readiness",
+  "dashboard.staff-managed",
+  "dashboard.practice-metrics",
+  "dashboard.upcoming-clients",
+  "dashboard.personal-charting",
+  "dashboard.clients-attention",
+  "dashboard.followups",
+  "dashboard.supplies",
+  "dashboard.getting-started",
+  "dashboard.payment-states",
+  "dashboard.before-today",
+  "dashboard.prep-loads",
+  "dashboard.plans",
   // SESSION-START-01 slice 2. The charting entry path, which the recon showed
   // is the product's worst measured wait and had NO instrumentation at all.
   // Split finely on purpose: the question is not "is it slow" but WHICH term

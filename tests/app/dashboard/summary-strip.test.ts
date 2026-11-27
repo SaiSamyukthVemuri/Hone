@@ -166,7 +166,7 @@ describe("booked time counts a midnight-crossing visit (Codex P2)", () => {
   });
   it("a failed boundary read says Unavailable, never an undercount", () => {
     expect(page).toMatch(/boundaryCrossers === null\s*\?\s*"Unavailable"/);
-    expect(page).toMatch(/getBoundaryCrossingAppointments\(studio\.id, startUtc\)\.catch\(\s*\(\) => null/);
+    expect(page).toMatch(/getBoundaryCrossingAppointments\(studio\.id, startUtc\)\)?\.catch\(\s*\(\) => null/);
   });
 });
 
