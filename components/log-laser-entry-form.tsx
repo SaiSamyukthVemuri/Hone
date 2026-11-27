@@ -11,7 +11,7 @@ import {
 import type { LaserEntry } from "@/lib/types/database";
 import { appendComment } from "@/lib/comments";
 import { ChipSelector } from "./chip-selector";
-import { actionFailureMessage, type ActionResult, type DataResult } from "@/lib/actions/action-result";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type FormState = {
   zone: string;
@@ -120,7 +120,7 @@ export function LogLaserEntryForm({
     startTransition(async () => {
       try {
         const result = await action(fd);
-        if (!result.ok) {
+        if (isActionFailure(result)) {
           setError(result.error); // everything typed stays; nothing was saved
           return;
         }

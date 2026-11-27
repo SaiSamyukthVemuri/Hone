@@ -5,6 +5,7 @@ import { PinnedNoteField, pinnedNotePermissions } from "@/components/client-pinn
 import type { ClientPinnedNote } from "@/lib/types/database";
 import { addClientPinnedNoteAction, editClientPinnedNoteAction } from "../clients/[id]/pinned-notes-actions";
 import { RowPinnedNotes } from "./row-safety-lines";
+import { isActionFailure } from "@/lib/actions/action-result";
 
 type DashboardPin = Pick<ClientPinnedNote, "id" | "text" | "created_by_practitioner_id">;
 type Client = { clientId: string; clientName: string };
@@ -51,7 +52,7 @@ export function DashboardQuickPin({ clientId, clientName, pinnedNotes, viewer }:
 function DashboardPinEditor({ clientId, clientName, note, onSaved }: Client & { note?: DashboardPin; onSaved: (pin: DashboardPin) => void }) {
   const [originalText, setOriginalText] = useState<string | null>(null);
   const [text, setText] = useState("");
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const saving = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -59,13 +60,13 @@ function DashboardPinEditor({ clientId, clientName, note, onSaved }: Client & { 
   function open() {
     setOriginalText(note?.text ?? "");
     setText(note?.text ?? "");
-    setError(false);
+    setError(null);
   }
 
   function close() {
     setOriginalText(null);
     setText("");
-    setError(false);
+    setError(null);
     requestAnimationFrame(() => trigger.current?.focus());
   }
 
@@ -80,14 +81,20 @@ function DashboardPinEditor({ clientId, clientName, note, onSaved }: Client & { 
       data.set("original_text", originalText);
     }
     saving.current = true;
-    setError(false);
+    setError(null);
     startTransition(async () => {
       try {
         const result: unknown = note ? await editClientPinnedNoteAction(data) : await addClientPinnedNoteAction(data);
-        if (isSavedPin(result)) onSaved({ id: result.id, text: result.text, created_by_practitioner_id: result.created_by_practitioner_id ?? null });
+        if (isActionFailure(result)) {
+          setError(result.error); // the dialog stays open and the typed caution is kept
+          return;
+        }
+        // New shape {ok:true,data}; the OLD shape (the bare pin) and undefined from a not-yet-deployed server both read as "went through".
+        const saved = (result as { data?: unknown } | null | undefined)?.data ?? result;
+        if (isSavedPin(saved)) onSaved({ id: saved.id, text: saved.text, created_by_practitioner_id: saved.created_by_practitioner_id ?? null });
         close();
       } catch {
-        setError(true);
+        setError(note ? "Couldn’t save changes. Refresh to check the current note." : "Couldn’t save the note. Try again.");
       } finally {
         saving.current = false;
       }
@@ -99,7 +106,7 @@ function DashboardPinEditor({ clientId, clientName, note, onSaved }: Client & { 
       <fieldset disabled={pending}>
         <PinnedNoteField autoFocus value={text} onChange={setText} onEnter={save} onEscape={close}
           ariaLabel={`${note ? "Edit pinned note" : "Pinned note"} for ${clientName}`} placeholder="What should stay on this client’s dashboard?" />
-        {error && <p role="alert" className="text-xs text-rose-700">{note ? "Couldn’t save changes. Refresh to check the current note." : "Couldn’t save the note. Try again."}</p>}
+        {error && <p role="alert" className="text-xs text-rose-700">{error}</p>}
         <div className="flex gap-2">
           <button type="submit" disabled={pending || !text.trim()} className="min-h-11 text-xs font-semibold disabled:opacity-50">{pending ? "Saving…" : "Save pinned note"}</button>
           <button type="button" onClick={close} className="min-h-11 px-2 text-xs">Cancel</button>
