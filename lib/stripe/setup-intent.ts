@@ -142,7 +142,7 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
   // by the RPC's idempotency key. Description / metadata carry opaque
   // ids only, enough to triage the connected-account dashboard against
   // Hone. No card-touching information and no client name are sent.
-  const stripe = await requireStripeForStudio(studioId);
+  const stripe = await requireStripeForStudio(studioId, "existing_account");
   let stripeCustomerId: string;
   try {
     const customer = await stripe.customers.create(
@@ -215,7 +215,7 @@ export async function createCardOnFileSetupIntent(params: {
   stripeCustomerId: string;
   cardAuthorizationSignatureId: string;
 }): Promise<SetupIntentResult> {
-  const stripe = await requireStripeForStudio(params.studioId);
+  const stripe = await requireStripeForStudio(params.studioId, "existing_account");
   const livemode = inferStripeLivemode();
   try {
     const setupIntent = await stripe.setupIntents.create(

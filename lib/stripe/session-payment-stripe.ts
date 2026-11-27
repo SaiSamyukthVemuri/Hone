@@ -1,6 +1,6 @@
 import "server-only";
 import type Stripe from "stripe";
-import { requireStripeForStudio, resolveStudioPlatform, StripePlatformUnavailableError } from "@/lib/stripe/studio-platform";
+import { requireStripeForStudio, resolveStudioPlatform, StripePlatformUnavailableError, type PlatformPurpose } from "@/lib/stripe/studio-platform";
 import {
   assertFakeStripeNotRequestedInDeployment,
   isE2eFakeStripeEnabled,
@@ -22,17 +22,17 @@ import { createFakeStripe } from "@/lib/stripe/e2e-fake-stripe";
 //
 // Business rules, call signatures, idempotency, and connected-account handling
 // are unchanged; callers use this exactly like getStripe().
-export async function getSessionPaymentStripe(studioId: string): Promise<Stripe> {
+export async function getSessionPaymentStripe(studioId: string, purpose: PlatformPurpose): Promise<Stripe> {
   // Fail-LOUD on misconfiguration: if the fake flag is set in a deployed
   // environment, throw here rather than silently falling back to real Stripe.
   assertFakeStripeNotRequestedInDeployment();
   if (isE2eFakeStripeEnabled()) {
-    const route = await resolveStudioPlatform(studioId);
+    const route = await resolveStudioPlatform(studioId, purpose);
     if (!route.ok) throw new StripePlatformUnavailableError(route.reason);
     return createFakeStripe();
   }
   // Bound as `const stripe = ...` (the enforced convention) so the money-
   // movement grep inventory can never be evaded by a renamed client.
-  const stripe = await requireStripeForStudio(studioId);
+  const stripe = await requireStripeForStudio(studioId, purpose);
   return stripe;
 }

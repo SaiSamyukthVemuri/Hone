@@ -6,7 +6,7 @@ import { resolveStripePublishableKey, type PublishableKeyResolution } from "@/li
 // verified jurisdiction row. A studio whose platform cannot be resolved has no key (the portal's calm "not available" state), never the
 // Canadian one.
 export async function resolveStudioPublishableKey(studioId: string): Promise<PublishableKeyResolution> {
-  const route = await resolveStudioPlatform(studioId);
+  const route = await resolveStudioPlatform(studioId, "existing_account");
   if (!route.ok) return { ok: false, reason: "missing" };
   return resolveStripePublishableKey(route.platform);
 }

@@ -1149,7 +1149,7 @@ async function reconcileExistingPaymentIntent(args: {
   expectedAmountCents: number | null;
   expectedCurrency: string | null;
 }): Promise<SessionPaymentChargeResult> {
-  const stripe = await getSessionPaymentStripe(args.studioId);
+  const stripe = await getSessionPaymentStripe(args.studioId, "existing_account");
   let pi: Stripe.PaymentIntent;
   try {
     pi = await stripe.paymentIntents.retrieve(
@@ -1562,7 +1562,7 @@ export async function runSessionPaymentCharge(args: {
   let stripe: Stripe | undefined;
   if (attemptRow.status === "ready") {
     try {
-      stripe = await getSessionPaymentStripe(attemptRow.studio_id);
+      stripe = await getSessionPaymentStripe(attemptRow.studio_id, "new_money");
     } catch (clientErr) {
       logInternal("session_payment_stripe_client_unavailable", {
         attemptId: attemptRow.id,
@@ -1820,7 +1820,7 @@ export async function runSessionPaymentCharge(args: {
   //     metadata block carries every Hone identity column the future
   //     webhook handler or a manual reconciler needs to bind a
   //     leaked-back PaymentIntent to this attempt.
-  const sender = stripe ?? (await getSessionPaymentStripe(attemptRow.studio_id));
+  const sender = stripe ?? (await getSessionPaymentStripe(attemptRow.studio_id, "new_money"));
   let pi: Stripe.PaymentIntent;
   try {
     pi = await sender.paymentIntents.create(

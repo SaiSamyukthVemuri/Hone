@@ -53,7 +53,7 @@ export async function createOrLoadConnectedAccountForStudio(
 ): Promise<CreateOrLoadResult> {
   const admin = createAdminClient();
   // The studio's own platform account (HON-90): resolved from its verified jurisdiction row, never the CA client by default.
-  const stripe = await requireStripeForStudio(studioId);
+  const stripe = await requireStripeForStudio(studioId, "existing_account");
   const livemode = inferStripeLivemode();
 
   const { data: claimRows, error: claimErr } = await admin.rpc(
@@ -347,7 +347,7 @@ export async function createConnectOnboardingLink(params: {
   stripeAccountId: string;
   appOrigin: string;
 }): Promise<string> {
-  const stripe = await requireStripeForStudio(params.studioId);
+  const stripe = await requireStripeForStudio(params.studioId, "existing_account");
   try {
     const link = await stripe.accountLinks.create({
       account: params.stripeAccountId,
@@ -380,7 +380,7 @@ export async function createExpressDashboardLoginLink(
   studioId: string,
   stripeAccountId: string,
 ): Promise<string> {
-  const stripe = await requireStripeForStudio(studioId);
+  const stripe = await requireStripeForStudio(studioId, "existing_account");
   try {
     const link = await stripe.accounts.createLoginLink(stripeAccountId);
     return link.url;
@@ -416,7 +416,7 @@ export async function refreshAccountStatusFromStripe(params: {
   studioId: string;
   stripeAccountId: string;
 }): Promise<AccountStatusSnapshot> {
-  const stripe = await requireStripeForStudio(params.studioId);
+  const stripe = await requireStripeForStudio(params.studioId, "existing_account");
   const livemode = inferStripeLivemode();
 
   let account: Stripe.Account;
