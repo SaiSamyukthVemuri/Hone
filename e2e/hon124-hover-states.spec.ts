@@ -27,6 +27,7 @@ async function threeStates(page: Page, row: Locator, label: string) {
   expect(hover, `${label}: hover differs from rest`).not.toBe(rest);
   await page.mouse.down();
   const pressed = await bg(row);
+  await page.mouse.move(1, 1); // release off the row: a press that ends elsewhere is not a click, so the page stays put
   await page.mouse.up();
   expect(pressed, `${label}: pressed differs from hover`).not.toBe(hover);
   expect(pressed, `${label}: pressed differs from rest`).not.toBe(rest);
