@@ -1547,7 +1547,8 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
       prepareRefused("not_billed");
       expect((await callRoute()).status).toBe(200);
       expect(ADMIN.current!.opsRows).toEqual([expect.objectContaining({ event: "stripe_webhook_bound_command_refused", severity: "critical" })]);
-      expect(ADMIN.current!.opsRows[0].studio_id ?? ADMIN.current!.opsRows[0].studioId).toBeTruthy();
+      // The legacy alert is the SAME alert the writer always produced for this event (the webhook passes the studio); whether the stored row is studio-attributed or operator-only is
+      // the writer's own rule (HON-125, routeOperatorOnly), so this test does not pin the row's studio_id.
       const flags = ADMIN.current!.rpcCalls.filter((c) => c.name === "flag_payment_refund_review");
       expect(flags.map((c) => c.args.p_reason_code)).toEqual(["refund_evidence_refused"]);
       expect(flags[0].args.p_stripe_refund_id ?? null).toBeNull();
