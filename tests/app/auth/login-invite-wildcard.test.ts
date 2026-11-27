@@ -1,0 +1,120 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Security finding (Machines, 7 Nov 2026): the invite-only signup gate looked up pending_invitations with an UNESCAPED ilike on the typed
+// address, so `_` and `%` were wildcards: bob_jones@x.com matched ANOTHER person's pending invite bob.jones@x.com and turned shouldCreateUser
+// on. The fake table below implements Postgres LIKE/ILIKE semantics (backslash escapes, % = any run, _ = any one char, case-insensitive).
+
+const h = vi.hoisted(() => ({ invites: [] as Array<{ id: string; email: string; status: string }>, otp: vi.fn(async () => ({ error: null })) }));
+
+function likeToRegExp(pattern: string): RegExp {
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === "\\" && i + 1 < pattern.length) {
+      out += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    } else if (ch === "%") out += ".*";
+    else if (ch === "_") out += ".";
+    else out += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${out}$`, "is");
+}
+
+vi.mock("@/lib/supabase/admin-server", () => ({
+  createAdminClient: () => ({
+    from: () => {
+      const filters: Array<(r: { email: string; status: string }) => boolean> = [];
+      const b: Record<string, unknown> = {};
+      b.select = () => b;
+      // PostgREST rewrites * to % in like/ilike values BEFORE Postgres sees them (probed live): the fake does the same.
+      b.ilike = (col: string, pat: string) => { const sent = pat.replace(/\*/g, "%"); filters.push((r) => likeToRegExp(sent).test((r as Record<string, string>)[col])); return b; };
+      let cap = Infinity;
+      b.limit = (n: number) => { cap = n; return b; };
+      b.eq = (col: string, v: string) => { filters.push((r) => (r as Record<string, string>)[col] === v); return b; };
+      b.then = (resolve: (v: unknown) => unknown) => resolve({ data: h.invites.filter((r) => filters.every((f) => f(r))).slice(0, cap), error: null });
+      return b;
+    },
+  }),
+}));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { signInWithOtp: h.otp } }) }));
+vi.mock("@/lib/app-origin", () => ({ getRequiredAppOrigin: () => "https://hone.test" }));
+
+import { requestPractitionerMagicLinkAction } from "@/app/(auth)/login/actions";
+
+const lastOptions = () => (h.otp.mock.calls.at(-1) as unknown as [{ options: { shouldCreateUser: boolean } }])[0].options;
+
+beforeEach(() => {
+  h.otp.mockClear();
+  h.invites = [
+    { id: "i1", email: "bob.jones@example.com", status: "pending" },
+    { id: "i2", email: "Alice_Smith@Example.com", status: "pending" },
+  ];
+});
+
+describe("invite-only signup gate: the typed address is matched LITERALLY, case-insensitively", () => {
+  it("an address with an underscore does NOT match another person's invite (bob_jones vs bob.jones)", async () => {
+    await requestPractitionerMagicLinkAction("bob_jones@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("a percent sign does NOT match either (a%@example.com)", async () => {
+    await requestPractitionerMagicLinkAction("b%@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("PostgREST's * alias for %: b*@example.com does NOT enable signup", async () => {
+    await requestPractitionerMagicLinkAction("b*@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("*@example.com (matches every invite at the domain) does NOT enable signup", async () => {
+    await requestPractitionerMagicLinkAction("*@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("even if the filter returned a wildcard-matched candidate (escape removed), the in-code exact compare refuses it", async () => {
+    const { singleExactEmailRow } = await import("@/lib/invitations/email-match");
+    expect(singleExactEmailRow([{ email: "bob.jones@example.com" }], "b*@example.com")).toBeNull();
+    expect(singleExactEmailRow([{ email: "bob.jones@example.com" }, { email: "carol@example.com" }], "*@example.com")).toBeNull();
+  });
+  it("a mixed-case, padded exact match still allows signup", async () => {
+    await requestPractitionerMagicLinkAction("  BOB.Jones@Example.COM ");
+    expect(lastOptions().shouldCreateUser).toBe(true);
+  });
+  it("an invitation whose own address contains an underscore matches itself, in any case", async () => {
+    await requestPractitionerMagicLinkAction("alice_smith@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(true);
+  });
+  it("...and its underscore does not stand for a different character (aliceXsmith)", async () => {
+    await requestPractitionerMagicLinkAction("alicexsmith@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  // Typed bob*jones@ is sent as bob_jones@: it matches every distinct one-character lookalike and the stored bob*jones@ itself.
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789-.+=~!#$&'^`{}|".split("").filter((c) => c !== "_" && c !== "*");
+  const oneChar = (n: number) => chars.slice(0, n).map((c, i) => ({ id: `o${i}`, email: `bob${c}jones@example.com`, status: "pending" }));
+  const real = { id: "r1", email: "bob*jones@example.com", status: "pending" };
+  it("49 one-character lookalikes + the exact bob*jones@ = a FULL page of 50 that holds the exact row: inconclusive, signup off", async () => {
+    h.invites = [...oneChar(49), real];
+    await requestPractitionerMagicLinkAction("bob*jones@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("48 lookalikes + the exact row = 49 rows, not full: the exact row is found and signup is allowed", async () => {
+    h.invites = [...oneChar(48), real];
+    await requestPractitionerMagicLinkAction("bob*jones@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(true);
+  });
+  // One-character lookalikes of bob*jones@: each matches the pattern bob_jones@ (the * is sent as a one-character wildcard).
+  const lookalikes = ["bobXjones", "bob.jones", "bob-jones", "bob_jones", "bobajones", "bob1jones", "bobzjones"].map((l, n) => ({
+    id: `l${n}`, email: `${l}@example.com`, status: "pending",
+  }));
+  it("an invitation stored WITH an asterisk lets that exact address sign up, even with 7 one-character lookalikes ahead of it (limit cannot drop it)", async () => {
+    h.invites = [...lookalikes, { id: "i9", email: "bob*jones@example.com", status: "pending" }];
+    await requestPractitionerMagicLinkAction("bob*jones@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(true);
+  });
+  it("...nor with a SINGLE lookalike (bobXjones@) as the only candidate: the exact compare alone refuses it", async () => {
+    h.invites = [{ id: "i8", email: "bobXjones@example.com", status: "pending" }];
+    await requestPractitionerMagicLinkAction("bob*jones@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+  it("...but typed bob*jones@ with ONLY the lookalikes seeded does NOT sign up: the pattern matches them, the exact compare refuses", async () => {
+    h.invites = [...lookalikes];
+    await requestPractitionerMagicLinkAction("bob*jones@example.com");
+    expect(lastOptions().shouldCreateUser).toBe(false);
+  });
+});
