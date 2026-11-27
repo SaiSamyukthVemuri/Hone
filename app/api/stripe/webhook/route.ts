@@ -71,7 +71,7 @@
 
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { getStripe } from "@/lib/stripe/server";
+import { usWebhookStudioMismatch, webhookSecretVariable, webhookStripe } from "@/lib/stripe/webhook-platform";
 import { accountToStatusSnapshot, recordAccountJurisdiction } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
@@ -113,9 +113,11 @@ function logInternal(event: string, detail: unknown) {
 }
 
 function getWebhookSecretOrFail(): string {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  // HON-90: the CA route's variable is STRIPE_WEBHOOK_SECRET, exactly as before; the US route's is its own.
+  const variable = webhookSecretVariable();
+  const secret = process.env[variable];
   if (!secret) {
-    throw new Error("STRIPE_WEBHOOK_SECRET is not set");
+    throw new Error(`${variable} is not set`);
   }
   return secret;
 }
@@ -145,7 +147,7 @@ export async function POST(req: Request): Promise<Response> {
   //    timestamp tolerance, and parses the JSON. Failure throws.
   let event: Stripe.Event;
   try {
-    const stripe = getStripe();
+    const stripe = webhookStripe();
     const webhookSecret = getWebhookSecretOrFail();
     event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
   } catch (err) {
@@ -202,6 +204,11 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false }, { status: 500 });
     }
     studioId = data?.studio_id ?? null;
+    // HON-90: on the US route only, an account bound to a studio that is not a US studio is an UNBOUND account (never applied to it).
+    if (studioId && (await usWebhookStudioMismatch(studioId))) {
+      logInternal("stripe_webhook_studio_platform_mismatch", { eventId: event.id, eventType: event.type });
+      studioId = null;
+    }
   }
 
   // 5. Claim the event idempotently. The RPC enforces a partial
@@ -716,7 +723,7 @@ async function handleSetupIntentSucceeded(
   if (typeof si.payment_method !== "string" || si.payment_method.length === 0) {
     return await terminalCardRejection(event, ctx, si, "missing_payment_method");
   }
-  const stripe = getStripe();
+  const stripe = webhookStripe();
   let pm: Stripe.PaymentMethod;
   try {
     pm = await stripe.paymentMethods.retrieve(
@@ -857,7 +864,7 @@ async function resolveAccountFromEvent(
   }
   // capability.updated: refresh via accounts.retrieve.
   try {
-    const stripe = getStripe();
+    const stripe = webhookStripe();
     const account = await stripe.accounts.retrieve(stripeAccountId);
     // A successful fetch is not proof that this is the bound account. Never
     // synchronize another account's readiness or acknowledge an unverified read.
