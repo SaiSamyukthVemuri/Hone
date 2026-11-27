@@ -97,6 +97,14 @@ describe("PR #181: NextStepCard three-state CTA precedence", () => {
   });
 });
 
+describe("HON-124 item 7: restyling the CTA cannot move a session or payment target", () => {
+  it("the rendered link still takes its href from ctaHref, so the three targets pinned above are what the user is sent to", () => {
+    const block = blockFor("NextStepCard");
+    expect(block).toMatch(/<Link\s+href=\{ctaHref\}/);
+    expect(block).toMatch(/\{ctaLabel\}/);
+  });
+});
+
 describe("PR #181: NextStepCard styling + safety", () => {
   it("uses primary (filled) styling on the CTA so it is the obvious next action", () => {
     const block = blockFor("NextStepCard");

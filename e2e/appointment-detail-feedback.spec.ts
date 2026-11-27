@@ -45,7 +45,7 @@ async function focusRing(page: Page, row: Locator, label: string) {
   expect(await ring(row), `${label}: keyboard focus draws a ring`).not.toBe(rest);
 }
 
-async function openVisit(page: Page): Promise<{ apptId: string; clientName: string }> {
+async function openVisit(page: Page): Promise<{ apptId: string; clientId: string; clientName: string }> {
   const seed = await seedE2eStudio();
   const { clientId } = await seedE2eClient(seed);
   const tz = await getStudioTimezone(seed.studioId);
@@ -54,7 +54,8 @@ async function openVisit(page: Page): Promise<{ apptId: string; clientName: stri
   await loginAsOwner(page, seed);
   await page.goto(`/calendar/${apptId}`);
   await expect(page.getByRole("link", { name: "Create treatment plan" })).toBeVisible({ timeout: T });
-  return { apptId, clientName: seed.clientName };
+  const [{ name }] = await sql<{ name: string }>("select name from public.clients where id = $1", [clientId]); // seedE2eClient names its own client
+  return { apptId, clientId, clientName: name };
 }
 
 function controls(page: Page, clientName: string): Array<[string, Locator, (l: Locator) => Promise<string>]> {
@@ -69,7 +70,7 @@ function controls(page: Page, clientName: string): Array<[string, Locator, (l: L
 }
 
 async function check(page: Page) {
-  const { apptId, clientName } = await openVisit(page);
+  const { apptId, clientId, clientName } = await openVisit(page);
   for (const [label, row, measure] of controls(page, clientName)) {
     await row.scrollIntoViewIfNeeded();
     expect(await row.count(), `${label} is present`).toBe(1);
@@ -81,6 +82,8 @@ async function check(page: Page) {
   await page.goto(`/calendar/${apptId}`);
   const start = page.getByRole("link", { name: "Start session" });
   await expect(start).toBeVisible({ timeout: T });
+  // Restyling must not move the session target: "Start session" still opens a new session for THIS appointment.
+  await expect(start).toHaveAttribute("href", `/clients/${clientId}/sessions/new?appointment_id=${apptId}`);
   await threeStates(page, start, "Start session", bg);
   await focusRing(page, start, "Start session");
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
