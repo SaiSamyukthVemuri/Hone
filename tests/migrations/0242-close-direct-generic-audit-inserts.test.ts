@@ -46,8 +46,19 @@ describe("0242 atomic governed service commands", () => {
     expect(next).toBeDefined();
     expect(JSON.parse(next!)).toEqual({ ...JSON.parse(raw!), waitlist_decline_answers: "waitlist-decline-answers.csv" });
     const registry = Object.fromEntries(exportedResources().map(({ resource, disposition }) => [resource, disposition.file]));
-    // Every exported resource must be in the LATEST map (otherwise a production export would fail its audit step).
-    for (const [resource, file] of Object.entries(registry)) expect(JSON.parse(next!)[resource], resource).toBe(file);
+    // 0325's map is frozen history too: it must still be the registry's file for each resource it names.
+    for (const [resource, file] of Object.entries(JSON.parse(next!))) expect(registry[resource], resource).toBe(file);
+  });
+  it("0386 adds exactly treatment_setup_readings to 0325's map, and the registry never outruns the newer map", () => {
+    const earlier = readFileSync("supabase/migrations/0325_waitlist_decline_followups.sql", "utf8");
+    const later = readFileSync("supabase/migrations/0386_export_treatment_setup_readings.sql", "utf8");
+    const before = JSON.parse(earlier.match(/\$registry\$([\s\S]*?)\$registry\$/)![1]);
+    const after = JSON.parse(later.match(/\$registry\$([\s\S]*?)\$registry\$/)![1]);
+    expect(after).toEqual({ ...before, treatment_setup_readings: "treatment_setup_readings.csv" });
+    // Every exported resource must be in the LATEST map (otherwise a production export would fail its audit step); the newest-map agreement is
+    // pinned by tests/lib/export/decline-answers-name-agreement.test.ts.
+    const registry = Object.fromEntries(exportedResources().map(({ resource, disposition }) => [resource, disposition.file]));
+    for (const [resource, file] of Object.entries(registry)) expect(after[resource], resource).toBe(file);
   });
   it("binds membership locks and audit insertion in each narrow transaction", () => {
     for (const name of ["record_client_archive_audit_governed", "record_studio_export_audit_governed"]) {

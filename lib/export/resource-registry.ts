@@ -2083,11 +2083,17 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "Introduced by migration 0223 (MPX-03, #829) when per-field revisions were replaced by atomic captures. One row per act of recording a settings group against a treatment block: which unit, which catalogue profile version, which mode, which channels, by whom, when, and which revision of that group it is. It is CLINICAL and studio-owned - the readings in treatment_setup_readings hang off it, and exporting readings without their captures would leave each reading unable to say what it was recorded under or in what order. Its disposition should therefore follow whatever treatment_setup_readings is given, and this lane was not asked to make that product decision. Note it carries recorded_by_practitioner_id, so it names a practitioner but no client directly.",
   },
   treatment_setup_readings: {
-    kind: "pending",
-    ticket: "TRUTH-01B",
-    tier: 1,
-    reason:
-      "Introduced by migration 0223 (MPX-02, #829). What a machine actually showed for one treatment block: one row per settings group, stage and field, each carrying its own native unit, the machine's decimal precision, the profile version it was captured under, and who or what observed it. Append-only - UPDATE is refused by trigger. This is clinical treatment content of the same class as electrolysis_entries and laser_entries, both of which ARE exported, so the likely answer is that it should be too. It is left pending rather than assumed for two reasons: the field set is model-specific, so a CSV header list cannot be written until at least one machine profile passes its evidence review; and #828's HIPAA gate governs what may leave the system in a patient-identifiable archive. No finding is made here about either.",
+    kind: "exported",
+    file: "treatment_setup_readings.csv",
+    csvHeaders: ["id","session_block_id","studio_machine_id","machine_profile_id","machine_profile_version","mode_key","group_key","channels","stage_key","field_key","value_numeric","value_text","absence_reason","native_unit","decimals","observation_source","revision","recorded_by_practitioner_id","recorded_at","capture_id"],
+    includedColumns: ["id","session_block_id","studio_machine_id","machine_profile_id","machine_profile_version","mode_key","group_key","channels","stage_key","field_key","value_numeric","value_text","absence_reason","native_unit","decimals","observation_source","revision","recorded_by_practitioner_id","recorded_at","capture_id"],
+    excludedColumns: [
+      { column: "studio_id", reason: "tenant_key" },
+    ],
+    sourceCountCheck: { kind: "studio_scoped" },
+    rowScope: "Every machine-native reading (for example xCell Pur MultiPlex) this studio has recorded, one row per field per capture, including readings under a removed area. A field left blank at the machine has NO row: a blank is never exported as 0.",
+    description:
+      "What a machine actually showed for a treatment area: mode, group, stage, field, value with the machine's own unit and decimals, and who recorded it and when. value_numeric is written to the contract's decimals (1.80 stays 1.80). Join to electrolysis_entries.csv by session_block_id = block_id. A native area's legacy pulse_count is blank in electrolysis_entries.csv: its pulse count is the snap_count row here.",
   },
   treatment_setup_submissions: {
     kind: "pending",
