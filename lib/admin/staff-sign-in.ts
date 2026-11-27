@@ -90,11 +90,11 @@ export function signInState(userId: string | null, lookup: { ok: true; lastSignI
 async function lookupLastSignIn(
   admin: SupabaseClient,
   userId: string,
-): Promise<{ ok: true; lastSignInAt: string | null } | { ok: false }> {
+): Promise<{ ok: true; lastSignInAt: string | null } | { ok: false; timedOut?: boolean }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const timeout = new Promise<{ ok: false }>((resolve) => {
-      timer = setTimeout(() => resolve({ ok: false }), STAFF_LOOKUP_TIMEOUT_MS);
+    const timeout = new Promise<{ ok: false; timedOut: true }>((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false, timedOut: true }), STAFF_LOOKUP_TIMEOUT_MS);
     });
     const answer = (async () => {
       const { data, error } = await admin.auth.admin.getUserById(userId);
@@ -108,6 +108,26 @@ async function lookupLastSignIn(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** Reuse one account lookup across every membership in this request. */
+export async function loadAccountSignIns(admin: SupabaseClient, userIds: Iterable<string>) {
+  const ids = [...new Set(userIds)];
+  let next = 0;
+  const found = new Map<string, StaffSignInState>();
+
+  async function readAccounts() {
+    while (next < ids.length) {
+      const id = ids[next++];
+      const result = await lookupLastSignIn(admin, id);
+      found.set(id, signInState(id, result));
+      // The auth SDK cannot cancel this request. Retire its slot on timeout to
+      // keep the number of outstanding requests bounded during an outage.
+      if (!result.ok && result.timedOut) return;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(ids.length, LOOKUP_CONCURRENCY) }, readAccounts));
+  return found;
 }
 
 export async function loadStaffSignIns(admin: SupabaseClient, studioId: string): Promise<StaffSignInReport> {
@@ -153,14 +173,8 @@ export async function loadStaffSignIns(admin: SupabaseClient, studioId: string):
   const truncated = members.length > STAFF_SIGN_IN_CAP;
   members = members.slice(0, STAFF_SIGN_IN_CAP);
 
-  // One lookup per distinct account (a person who is both staff roles in different tables is looked up once), a few at a time.
-  const ids = [...new Set(members.map((m) => m.userId).filter((x): x is string => x !== null))];
-  const found = new Map<string, Awaited<ReturnType<typeof lookupLastSignIn>>>();
-  for (let i = 0; i < ids.length; i += LOOKUP_CONCURRENCY) {
-    const chunk = ids.slice(i, i + LOOKUP_CONCURRENCY);
-    const got = await Promise.all(chunk.map((id) => lookupLastSignIn(admin, id)));
-    chunk.forEach((id, j) => found.set(id, got[j]));
-  }
+  const ids = members.map((member) => member.userId).filter((id): id is string => id !== null);
+  const found = await loadAccountSignIns(admin, ids);
 
   return {
     staff: members.map((m) => ({
@@ -168,7 +182,7 @@ export async function loadStaffSignIns(admin: SupabaseClient, studioId: string):
       displayName: m.displayName,
       role: m.role,
       active: m.active,
-      signIn: signInState(m.userId, m.userId === null ? { ok: false } : (found.get(m.userId) ?? { ok: false })),
+      signIn: m.userId === null ? { state: "account_removed" } : (found.get(m.userId) ?? { state: "unknown" }),
     })),
     truncated,
     unavailable: false,

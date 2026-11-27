@@ -5,6 +5,7 @@ import {
   seedNoStudioAuthUser,
   seedOperatorAuthUser,
   getWelcomeEmailStatusBySlug,
+  sql,
 } from "./helpers/seed";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN } from "./helpers/local-env";
@@ -221,15 +222,30 @@ test.describe("Admin Console V1 (PR #255)", () => {
 });
 
 test.describe("Admin studio detail privacy (PR #256)", () => {
-  test("detail page shows counts/setup metadata, never a raw client name", async ({
+  test("operator sees the last sign-in beside Created and can open the redacted studio detail", async ({
     page,
   }) => {
     // A full studio with an owner + a NAMED client + a service.
     const seed = await seedE2eStudio();
+    const lastSignIn = "2026-03-01T14:23:00Z";
+    await sql("update auth.users set last_sign_in_at = $1 where email = $2", [
+      lastSignIn, seed.ownerEmail,
+    ]);
     const { email: operatorEmail } = await seedOperatorAuthUser();
     await loginViaMagicLink(page, operatorEmail);
 
-    await page.goto(`/admin/studios/${seed.studioId}`);
+    await page.goto("/admin");
+    const studioLink = page.getByRole("link", { name: seed.studioName, exact: true });
+    const studioTable = page.getByRole("table").filter({ has: studioLink });
+    const signInHeader = studioTable.locator('th:has-text("Created") + th');
+    await expect(signInHeader).toContainText("Last sign-in");
+    const index = await signInHeader.evaluate((cell: HTMLTableCellElement) => cell.cellIndex);
+    const row = studioTable.getByRole("row").filter({ has: studioLink });
+    const expected = await page.evaluate((iso) => new Date(iso).toLocaleString([], {
+      month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+    }), lastSignIn);
+    await expect(row.getByRole("cell").nth(index)).toHaveText(expected);
+    await studioLink.click();
     await expect(
       page.getByRole("heading", { name: seed.studioName, level: 1 }),
     ).toBeVisible();
