@@ -259,6 +259,8 @@ export const BROWSER_GROUPS = {
       "settings-booking-copy-mobile.spec.ts",
       // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
       "team-invite-receptionist.spec.ts",
+      // HON-124 item 14: destructive staff actions (revoke an invitation, remove a team member, cancel an appointment) ask first through the confirm dialog.
+      "confirm-dialogs-mobile.spec.ts",
       // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
       // calendar lane on purpose: the targeted lane is already near its measured budget.
       "receptionist-onboarding-flow.spec.ts",
@@ -358,6 +360,8 @@ export const BROWSER_GROUPS = {
       "owner-only-catalog-edit.spec.ts",
       // HON-100: the owner's Statements month controls (arrow, picker, Back/Forward, reload) all name the same month. Owner-only read surface.
       "statements-month-navigation.spec.ts",
+      // HON-124 (print): the statement, the record-keeping sections and the clinical-notes export print as the document alone, unclipped and readable, on Letter and A4.
+      "print-layout.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
@@ -469,6 +473,8 @@ export const BROWSER_GROUPS = {
       // HON-62: the weekly-hours editor's native time inputs (keyboard
       // entry, touch tap, save/reload, untouched existing hours).
       "availability-hours-editor.spec.ts",
+      // HON-124 item 4: availability Remove shows activity and ignores a second press.
+      "pending-states-mobile.spec.ts",
       // HON-62 WebKit discriminator: bare time inputs, no app. It skips outside the
       // non-required WebKit project, so it is a no-op wherever this group runs.
       "webkit-time-input-key-probe.spec.ts",
@@ -488,6 +494,7 @@ export const BROWSER_GROUPS = {
     specs: [
       "marketing-homepage.spec.ts",
       "marketing-pages.spec.ts",
+      "public-pages-contact-faq-mobile.spec.ts",
       // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
       // motion preference, and the poster being preloaded eagerly. Filed here
       // rather than in `smoke` on purpose — it is heavier than a smoke case
@@ -496,6 +503,8 @@ export const BROWSER_GROUPS = {
       "marketing-homepage-film.spec.ts",
       // HON-84. The public /demo form still succeeds for a visitor and saves one lead with one alert row.
       "public-lead-forms.spec.ts",
+      // HON-124 item 13. Back to top on the long public pages: keyboard-operable, focus restored, reduced motion honoured.
+      "back-to-top.spec.ts",
     ],
   },
   responsive: {
@@ -543,6 +552,8 @@ export const BROWSER_GROUPS = {
       // progress / double-press / taken-time feedback at 390x844. Books
       // publicly, so it is also in PUBLIC_BOOKING_SPECS below.
       "hon124-nav-booking-mobile.spec.ts",
+      // HON-124 item 7. Hover, pressed and keyboard-focus feedback on the shared nav rows and footer links.
+      "hon124-hover-states.spec.ts",
     ],
   },
   google: {
@@ -615,6 +626,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",
+  "public-pages-contact-faq-mobile.spec.ts",
   "public-reschedule-v2.spec.ts",
   "safe-willow-appointment-lifecycle.spec.ts",
   "safe-willow-contract.spec.ts",

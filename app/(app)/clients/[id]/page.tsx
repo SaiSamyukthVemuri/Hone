@@ -158,6 +158,7 @@ import { getOverviewVisitAppointments } from "@/lib/clients/profile-appointments
 import { pickLastVisit, pickNextAppointment } from "@/lib/clients/profile-visits";
 import { VisitSummary } from "./_profile/VisitSummary";
 import { ContactSidebar } from "./_profile/ContactSidebar";
+import { PendingButton } from "@/components/pending-button";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -1517,13 +1518,13 @@ export default async function ClientCheatSheetPage({
                       <form action={deleteClientPricingAction}>
                         <input type="hidden" name="id" value={p.id} />
                         <input type="hidden" name="client_id" value={client.id} />
-                        <button
-                          type="submit"
+                        <PendingButton
+                          variant="secondary"
+                          size="sm"
                           aria-label={`Delete ${p.service_name} pricing`}
-                          className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
                         >
                           ✕
-                        </button>
+                        </PendingButton>
                       </form>
                     )}
                   </li>

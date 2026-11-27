@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { MARKETING_PALETTE } from "./marketingNav";
+import { CONTACT_EMAIL } from "@/lib/marketing/content";
 
 export function MarketingFooter() {
   return (
@@ -26,6 +27,24 @@ export function MarketingFooter() {
         >
           Treatment memory for electrologists.
         </p>
+        {/* HON-124 item 3. Two DIFFERENT contacts, kept apart: the studio answers about an appointment or treatment (Hone has no way to
+            act on a studio's appointments), Hone support answers about this website. */}
+        <div className="flex flex-col gap-1 text-[14px] leading-[1.6]" data-testid="contact-paths" style={{ color: MARKETING_PALETTE.muted }}>
+          <p>
+            <strong className="font-medium" style={{ color: MARKETING_PALETTE.ink }}>
+              About your appointment or treatment:
+            </strong>{" "}
+            contact your studio directly.
+          </p>
+          <p>
+            <strong className="font-medium" style={{ color: MARKETING_PALETTE.ink }}>
+              Hone support, for problems with this website:
+            </strong>{" "}
+            <a href={`mailto:${CONTACT_EMAIL}`} className="underline underline-offset-4">
+              {CONTACT_EMAIL}
+            </a>
+          </p>
+        </div>
         <p
           className="text-[12px] font-medium uppercase"
           style={{ letterSpacing: "0.2em", color: MARKETING_PALETTE.muted }}
