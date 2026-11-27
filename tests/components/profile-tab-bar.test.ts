@@ -306,7 +306,9 @@ describe("UI-01D: a spinner is not the proof, and the mobile control is untouche
     expect(nav).toMatch(/sticky top-14 z-20/);
     expect(nav).not.toMatch(/top-0/);
     const src = readFileSync("components/profile-tab-bar.tsx", "utf8");
-    expect(src).toMatch(/querySelector\("header"\)/);
+    // The measurement lives in the shared hook (HON-124), read by this bar and the phone calendar strip.
+    expect(src).toMatch(/const headerHeight = useAppHeaderHeight\(\);/);
+    expect(readFileSync("components/use-app-header-height.ts", "utf8")).toMatch(/querySelector\("header"\)/);
     expect(src).toMatch(/style=\{headerHeight > 0 \? \{ top: headerHeight \} : undefined\}/);
     expect(src).toMatch(/top < headerHeight/);
     // stays under the header (z-30)

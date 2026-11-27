@@ -254,6 +254,9 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // HON-124 item 11: the booking-link copy control on an iPhone-sized viewport: Copied only after the write, a calm failure message with the
+      // link text selected, and keyboard-only operation. Here because settings/booking/** selects this group.
+      "settings-booking-copy-mobile.spec.ts",
       // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
       "team-invite-receptionist.spec.ts",
       // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
@@ -534,6 +537,12 @@ export const BROWSER_GROUPS = {
       // anybody out, which is exactly the pair of facts SIGNOUT-01 learned had
       // to be checked together.
       "signout-acknowledgement.spec.ts",
+      // HON-124 PR 1. Both phone menus (keyboard + touch, aria-current, Escape
+      // focus return), the skip link on the marketing and app shells, the app's
+      // sticky header against anchors and upward focus, and the public booking
+      // progress / double-press / taken-time feedback at 390x844. Books
+      // publicly, so it is also in PUBLIC_BOOKING_SPECS below.
+      "hon124-nav-booking-mobile.spec.ts",
     ],
   },
   google: {
@@ -593,6 +602,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "book-next-available-fast.spec.ts",
   "core-memory-loop.spec.ts",
   "dashboard-treatment-memory-inline.spec.ts",
+  "hon124-nav-booking-mobile.spec.ts",
   "mobile-ux.spec.ts",
   "move-appointment-custom-time.spec.ts",
   "move-appointment-mobile-submit.spec.ts",
