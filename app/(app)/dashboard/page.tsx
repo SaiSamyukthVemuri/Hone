@@ -322,7 +322,7 @@ export default async function DashboardPage({
     () => new Set<string>(),
   ) : null;
   const attentionSourcesPromise = settleLater(
-    Promise.all([
+    timed("dashboard.attention-sources", () => Promise.all([
       // Insurance B2: a failure here is "unavailable" for THIS count only. It
       // must not reject the bundle and hide every other Needs attention item.
       getIntakesAwaitingReview(supabase, studio.id).catch(() => CHECK_UNAVAILABLE),
@@ -332,7 +332,7 @@ export default async function DashboardPage({
       // clients.date_of_birth. Practitioner-facing only. Never sent as
       // email/SMS or exposed to client/public surfaces.
       birthdays,
-    ] as const),
+    ] as const)),
   );
   // BOOKING READINESS IS ITS OWN DEFERRED READ, not a member of the bundle
   // above, and the distinction is correctness rather than tidiness.
@@ -352,15 +352,15 @@ export default async function DashboardPage({
   // OWNER-ONLY, null otherwise, so a non-owner pays for no read at all. The
   // previous arrangement read availability for everyone and discarded it.
   const bookingReadinessPromise = settleLater(
-    isOwner
+    timed("dashboard.readiness", () => isOwner
       ? getNewClientReadiness(studio)
-      : Promise.resolve(null as NewClientReadiness | null),
+      : Promise.resolve(null as NewClientReadiness | null)),
   );
   // The read distinguishes "unknown" from "standard"; consumers that only need
   // the copy posture get the same default as before, and the stack states the
   // unknown case to the owner.
   const staffManagedReadPromise = settleLater(
-    loadStaffManagedClinicChecked(supabase, studio.id),
+    timed("dashboard.staff-managed", () => loadStaffManagedClinicChecked(supabase, studio.id)),
   );
   const staffManagedPromise = settleLater(
     staffManagedReadPromise.then((v) => (v === STAFF_MANAGED_UNKNOWN ? false : v)),
@@ -368,11 +368,11 @@ export default async function DashboardPage({
   // WS-DB: the practice metrics loader runs for the OWNER only. A practitioner
   // never starts it (it reads studio-wide activity and, for the owner, money).
   const practiceMetricsPromise = settleLater(
-    isOwner
+    timed("dashboard.practice-metrics", () => isOwner
       ? getPracticeDashboardMetrics(studio.id, studio.timezone, period, {
           viewerIsOwner: true,
         })
-      : Promise.resolve(null),
+      : Promise.resolve(null)),
   );
   // The "records missing details" roll-up every role sees. The owner already
   // reads it inside the metrics; anyone else gets just that one read.
@@ -387,7 +387,7 @@ export default async function DashboardPage({
   // Orders intake gaps (preparation tier). A failed read degrades to the safe
   // order and never fails the section: it changes ORDER only, never membership.
   const upcomingVisitClientsPromise = settleLater(
-    getClientIdsWithUpcomingVisits(supabase, studio.id, renderNow.toISOString()).catch(
+    timed("dashboard.upcoming-clients", () => getClientIdsWithUpcomingVisits(supabase, studio.id, renderNow.toISOString())).catch(
       () => CHECK_UNAVAILABLE,
     ),
   );
@@ -396,25 +396,25 @@ export default async function DashboardPage({
   const personalChartingPromise = settleLater(
     isOwner
       ? Promise.resolve(null)
-      : getPersonalChartedWithin24h(studio.id, practitioner.id, renderNow.toISOString()).catch(
+      : timed("dashboard.personal-charting", () => getPersonalChartedWithin24h(studio.id, practitioner.id, renderNow.toISOString())).catch(
           () => CHECK_UNAVAILABLE,
         ),
   );
   const clientsNeedingAttentionPromise = settleLater(
-    getClientsNeedingAttention(studio.id),
+    timed("dashboard.clients-attention", () => getClientsNeedingAttention(studio.id)),
   );
   const followUpAssistantPromise = settleLater(
-    getMissingRecordsAssistant(studio.id, renderNow.toISOString()),
+    timed("dashboard.followups", () => getMissingRecordsAssistant(studio.id, renderNow.toISOString())),
   );
   const expiringSuppliesPromise = settleLater(
-    getExpiringSterileItems(studio.id, todayLocal),
+    timed("dashboard.supplies", () => getExpiringSterileItems(studio.id, todayLocal)),
   );
   const gettingStartedSignalsPromise = settleLater(
-    getGettingStartedSignals(
+    timed("dashboard.getting-started", () => getGettingStartedSignals(
       { id: studio.id, name: studio.name, slug: studio.slug },
       practitioner.display_name?.trim() || practitioner.email,
       { viewerIsOwner: isOwner },
-    ),
+    )),
   );
 
   const startUtc = utcInstantFromLocal(selectedDayLocal, "00:00", studio.timezone);
@@ -425,7 +425,7 @@ export default async function DashboardPage({
   // one trip without N+1 lookups.
   // HON-58: preferred name where one exists; fails soft to the stored name on a
   // database without the column (before 0258).
-  const { data: apptRows, error: apptErr } = await readWithPreferredName((includePreferred) =>
+  const { data: apptRows, error: apptErr } = await timed("dashboard.roster", () => readWithPreferredName((includePreferred) =>
     supabase
       .from("appointments")
       .select(
@@ -435,7 +435,7 @@ export default async function DashboardPage({
       .gte("starts_at", startUtc.toISOString())
       .lt("starts_at", endUtc.toISOString())
       .order("starts_at", { ascending: true }),
-  );
+  ));
   if (apptErr) {
     // DAT-002 N2: a fixed message; PostgREST text can echo the statement.
     throw new Error("Failed to load today's appointments");
@@ -491,7 +491,7 @@ export default async function DashboardPage({
   // visit) are not in the start-in-day query above. Same function and studio scope as the calendar's
   // time insights; they never join the roster, the appointment count or the client count. A failed
   // read makes the figure "Unavailable", never an undercount.
-  const boundaryCrossers = await getBoundaryCrossingAppointments(studio.id, startUtc).catch(
+  const boundaryCrossers = await timed("dashboard.boundary", () => getBoundaryCrossingAppointments(studio.id, startUtc)).catch(
     () => null,
   );
 
@@ -515,7 +515,7 @@ export default async function DashboardPage({
   // Bulk lookups for the visible client set. Each query is read-only,
   // RLS-scoped, and bounded by today's client list.
   const [practitioners, pinnedByClient, intakeByClient, cardOnFileLoad, nextVisits] =
-    await Promise.all([
+    await timed("dashboard.bulk", () => Promise.all([
       getPractitionersForStudio(studio.id),
       getPinnedNotesByClient(studio.id, selectedDayClientIds),
       loadIntakeStatusByClient(supabase, studio.id, selectedDayClientIds),
@@ -537,7 +537,7 @@ export default async function DashboardPage({
       getNextVisitsForRoster(supabase, studio.id, visibleAppointments, renderNow.toISOString()).catch(
         () => null,
       ),
-    ]);
+    ]));
   void practitioners; // currently unused on the appointments roster;
   // kept fetched in parallel because future per-practitioner annotations
   // may surface here without paying an extra round-trip.
@@ -559,12 +559,12 @@ export default async function DashboardPage({
   // non-owner never queries payment_charge_attempts or client_pricing here (the
   // read is not issued), and the row below renders no checkout control for them.
   const paymentStatesPromise = settleLater(
-    isOwner
+    timed("dashboard.payment-states", () => isOwner
       ? getAppointmentPaymentStates(studio.id, apptIds, studio.timezone, isOwner)
-      : Promise.resolve(new Map<string, AppointmentPaymentState>()),
+      : Promise.resolve(new Map<string, AppointmentPaymentState>())),
   );
   const beforeTodayPreviewsPromise = settleLater(
-    viewingToday
+    timed("dashboard.before-today", () => viewingToday
       ? getBeforeTodayPreviews(
           studio.id,
           visibleAppointments.map((a) => a.client_id),
@@ -574,10 +574,10 @@ export default async function DashboardPage({
             startsAt: a.starts_at,
           })),
         )
-      : Promise.resolve(new Map<string, BeforeTodayPreview>()),
+      : Promise.resolve(new Map<string, BeforeTodayPreview>())),
   );
   const prepLoadsPromise = settleLater(
-    loadLastChartedTreatmentsForClients({
+    timed("dashboard.prep-loads", () => loadLastChartedTreatmentsForClients({
       studioId: studio.id,
       requests: visibleAppointments.map((a) => ({
         // The APPOINTMENT is the unit of identity, not the client. A client with
@@ -588,19 +588,19 @@ export default async function DashboardPage({
         before: a.starts_at,
         excludeAppointmentId: a.id,
       })),
-    }),
+    })),
   );
   const sessionByAppointment = new Map<
     string,
     { sessionId: string; hasChartedArea: boolean }
   >();
   if (apptIds.length > 0) {
-    const { data: linkedSessions, error: linkedError } = await supabase
+    const { data: linkedSessions, error: linkedError } = await timed("dashboard.linked-sessions", async () => await supabase
       .from("sessions")
       .select("id, appointment_id")
       .eq("studio_id", studio.id)
       .in("appointment_id", apptIds)
-      .is("deleted_at", null);
+      .is("deleted_at", null));
     // DAT-002 (the #981 pattern): a failed read refuses the page through the
     // route error boundary. Read as "no linked session" or "no charted area",
     // it would tell the practitioner a charted visit still needs charting.
@@ -610,12 +610,12 @@ export default async function DashboardPage({
       appointment_id: string;
     }>;
     if (sessions.length > 0) {
-      const { data: blockRows, error: blocksError } = await supabase
+      const { data: blockRows, error: blocksError } = await timed("dashboard.session-blocks", async () => await supabase
         .from("session_blocks")
         .select("session_id")
         .eq("studio_id", studio.id)
         .in("session_id", sessions.map((s) => s.id))
-        .is("deleted_at", null);
+        .is("deleted_at", null));
       if (blocksError) throw new Error("Failed to load charting status");
       const sessionsWithAreas = new Set(
         ((blockRows ?? []) as Array<{ session_id: string }>).map(
@@ -692,7 +692,7 @@ export default async function DashboardPage({
   // (areas, machine settings, probe lot, tolerance, reactions, narrative) is
   // resolved again, for ONE appointment, only when the practitioner opens the
   // disclosure and the server has re-checked that the appointment is hers.
-  const plansForVisit = await immediateVisitPlans(supabase, studio.id, visibleAppointments, prepLoads).catch(() => new Map<string, string>());
+  const plansForVisit = await timed("dashboard.plans", () => immediateVisitPlans(supabase, studio.id, visibleAppointments, prepLoads)).catch(() => new Map<string, string>());
   const prepSummaryByAppointment = new Map<string, DashboardPrepSummary>();
   for (const appt of visibleAppointments) {
     const load = prepLoads.get(appt.id);

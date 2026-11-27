@@ -139,7 +139,7 @@ describe("OFF TODAY THE PAGE ASKS NO HISTORY QUESTION — the load-bearing rule"
   });
 
   it("uses the verified immediate target for the selected appointment, independent of the Today workflow", () => {
-    expect(CODE).toMatch(/immediateVisitPlans\(supabase, studio\.id, visibleAppointments, prepLoads\)\.catch\(/);
+    expect(CODE).toMatch(/immediateVisitPlans\(supabase, studio\.id, visibleAppointments, prepLoads\)\)\.catch\(/);
     expect(CODE).toMatch(/planNote: plansForVisit\.get\(appt\.id\) \?\? null/);
     expect(CODE).toMatch(/memory: null,\s*unavailable: false,\s*planNote: null,/);
     expect(CODE).not.toMatch(/planNote: load\.narrative\.plan/);

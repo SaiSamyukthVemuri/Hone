@@ -23,6 +23,6 @@ describe("PersonalChartingCard", () => {
     const stack = readFileSync("app/(app)/dashboard/secondary-stack.tsx", "utf8");
     expect(stack).toMatch(/\{!isOwner && personalCharting !== null && \(/);
     const page = readFileSync("app/(app)/dashboard/page.tsx", "utf8");
-    expect(page).toMatch(/isOwner\s*\?\s*Promise\.resolve\(null\)\s*:\s*getPersonalChartedWithin24h\(/);
+    expect(page).toMatch(/isOwner\s*\?\s*Promise\.resolve\(null\)\s*:\s*(timed\("dashboard\.personal-charting", \(\) => )?getPersonalChartedWithin24h\(/);
   });
 });
