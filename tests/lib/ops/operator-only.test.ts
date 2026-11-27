@@ -25,6 +25,9 @@ describe("routeOperatorOnly", () => {
     "amount", "amount_cents", "amount_refunded", "currency", "stripe_charge_id", "stripeChargeId", "stripe_refund_id",
     "refund_idempotency_key", "attempt_id", "attemptId", "payment_intent_id", "setupIntentId", "stripe_customer_id",
     "receipt_email_to", "dispute_id", "charge_reason", "pending_fee",
+    // HON-125 Privacy conditions: contact details, balances and free text
+    "phone", "recipient_phone", "phoneNumber", "email", "client_email", "name", "client_name", "display_name", "balance", "balance_due",
+    "total", "total_cents", "owed", "amount_owed", "paid", "paid_at", "deposit", "deposit_cents", "tip", "tip_amount", "tips",
   ])("routes an alert whose details carry %s", (key) => {
     const r = routeOperatorOnly({ studioId: STUDIO, safeDetails: { [key]: "v" } });
     expect(r.studioId, key).toBeNull();
@@ -35,8 +38,17 @@ describe("routeOperatorOnly", () => {
     expect(routeOperatorOnly({ studioId: STUDIO, safeDetails: { outer: { amount_cents: 5 } } }).studioId).toBeNull();
   });
 
+  it.each(["error", "provider_error", "error_safe", "err_message", "errorMessage", "error_message"])(
+    "routes an alert whose details hold provider free text (%s), which can echo a phone number",
+    (key) => {
+      const r = routeOperatorOnly({ studioId: STUDIO, safeDetails: { [key]: "Invalid number +1 555 0100" } });
+      expect(r.studioId, key).toBeNull();
+      expect(r.safeDetails).toMatchObject({ studio_id: STUDIO });
+    },
+  );
+
   it.each([
-    "attempt_count", "attempt_number", "reason", "sms_message_id", "purpose", "imageId", "provider_error_code", "reminder_type", "failure_class",
+    "attempt_count", "attempt_number", "reason", "sms_message_id", "purpose", "imageId", "provider_error_code", "reminder_type", "failure_class", "dead_count", "checked_at", "studio_id", "event_type", "code", "channel", "retryable",
   ])("leaves a delivery/ops detail (%s) studio-scoped", (key) => {
     const input = { studioId: STUDIO, appointmentId: "a", safeDetails: { [key]: "v" } };
     expect(isMemberSensitiveAlert(input)).toBe(false);

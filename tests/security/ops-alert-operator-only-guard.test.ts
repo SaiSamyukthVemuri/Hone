@@ -28,6 +28,7 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 const FILES = [...walk(join(ROOT, "app")), ...walk(join(ROOT, "lib"))];
+const TEXT = new Map(FILES.map((f) => [norm(f), readFileSync(f, "utf8")]));
 
 type Call = { key: string; studio: boolean; typed: Record<string, boolean>; detailKeys: string[]; dynamicDetails: boolean };
 const calls: Call[] = [];
@@ -76,8 +77,9 @@ function sensitive(c: Call): boolean {
   });
 }
 
-// Studio-scoped alerts that stay readable by the studio's own members: delivery or integration failures that name no money and no
-// client. appointmentId and image ids are records those members can already read under their own RLS.
+// Studio-scoped alerts that stay readable by the studio's own members: failures that name no money, no client, no contact detail and
+// carry no provider free text (provider text can echo a recipient's phone number, so those are operator-only). Details here are constants or
+// enumerated codes. appointmentId and image ids are records those members can already read under their own RLS.
 const STAYS_STUDIO_READABLE = [
   "app/(app)/clients/[id]/images/sign-treatment-image.ts::treatment_image_sign_rejected_invalid_path",
   "app/(app)/clients/[id]/images/sign-treatment-image.ts::treatment_image_sign_failed",
@@ -86,14 +88,9 @@ const STAYS_STUDIO_READABLE = [
   "app/api/twilio/message-status/route.ts::sms_delivery_failed",
   "app/book/[slug]/waitlist-actions.ts::sms_send_failed",
   "app/cancel/[token]/actions.ts::cancellation_email_unconfirmed",
-  "lib/conversion/dispatch.ts::conversion_delivery_failed",
   "lib/email/notify-appointment-moved.ts::appointment_move_notification_failed",
-  "lib/email/send-appointment.ts::email_send_gave_up",
   "lib/google-calendar/sync/reconcile-heartbeat.ts::DEAD_ROW_EVENT",
   "lib/notifications/practitioner-notifications.ts::input.event",
-  "lib/sms/send-appointment.ts::sms_send_failed",
-  "lib/waitlist/delivery/join-ack-sms.ts::sms_send_failed",
-  "lib/waitlist/delivery/sms.ts::sms_send_failed",
   "lib/waitlist/invite-to-book-adapter.ts::sms_send_failed",
 ];
 // Studio-scoped, not statically sensitive, with details built elsewhere: judged at run time by the writer. (A call that is
@@ -141,5 +138,19 @@ describe("ops_alerts is written operator-only when it carries money or a client 
     const partial = calls.find((c) => c.key === "lib/billing/payment-webhook-reconciliation.ts::charge_refunded_partial_out_of_band");
     expect(partial?.studio).toBe(true);
     expect(partial && sensitive(partial)).toBe(true);
+  });
+
+  // Privacy condition: safe_details.studio_id / client_id (where operator-only alerts keep their lineage) are read only on /admin.
+  it("ops_alerts is read only by operator and service-role code, never by the signed-in app, booking, portal or token routes", () => {
+    const readers = [...TEXT.entries()].filter(([p, t]) => p !== "lib/ops/alerts.ts" && /from\(\s*["']ops_alerts["']\s*\)/.test(t)).map(([p]) => p);
+    const memberTrees = /^app\/(\(app\)|portal|book|cancel|reschedule|manage|intake|invitation|calendar-feed)\//;
+    expect(readers.filter((p) => memberTrees.test(p)), "a member-facing tree reads ops_alerts").toEqual([]);
+    expect(readers.length).toBeGreaterThan(4);
+    // The two views that surface the moved ids are admin pages; the rest are service-role crons and sweeps.
+    const adminOnly = readers.filter((p) => p.startsWith("app/"));
+    for (const p of adminOnly) expect(p, "an app reader outside /admin, /api/cron").toMatch(/^app\/(admin|api\/cron)\//);
+    for (const p of readers.filter((x) => x.startsWith("lib/"))) {
+      expect(TEXT.get(p)!, `${p} must use the service-role client`).toMatch(/createAdminClient|\badmin\b/);
+    }
   });
 });
