@@ -70,7 +70,7 @@ export type HistoryLine = {
   amountCents: number;
   /** "in" adds to what was received, "out" is money handed back. */
   direction: "in" | "out";
-  status: "received" | "pending" | "voided" | "failed" | "in_progress" | "not_sent" | "cancelled";
+  status: "received" | "pending" | "voided" | "failed" | "in_progress" | "refund_in_progress" | "not_sent" | "cancelled";
   at: string;
 };
 
@@ -98,14 +98,14 @@ export function historyLines(l: VisitLedger): HistoryLine[] {
     const from = r.attemptId ? "card" : "cash or transfer";
     lines.push({
       key: `refund:${r.id}`, label: `${what} (${from})`, amountCents: r.amountCents, direction: "out", at: r.at,
-      status: r.status === "succeeded" ? "received" : r.status === "pending_stripe" ? "in_progress" : "failed",
+      status: r.status === "succeeded" ? "received" : r.status === "pending_stripe" ? "refund_in_progress" : "failed",
     });
   }
   return lines.sort((a, b) => a.at.localeCompare(b.at) || a.key.localeCompare(b.key));
 }
 
 export const STATUS_LABEL: Record<HistoryLine["status"], string> = {
-  received: "Received", pending: "Waiting for confirmation", voided: "Voided", failed: "Failed", in_progress: "Checking payment status", not_sent: "Prepared, not charged (holds this amount)", cancelled: "Cancelled",
+  received: "Received", pending: "Waiting for confirmation", voided: "Voided", failed: "Failed", in_progress: "Checking payment status", refund_in_progress: "Checking refund status", not_sent: "Prepared, not charged (holds this amount)", cancelled: "Cancelled",
 };
 
 // ---------------------------------------------------------------------------
@@ -177,13 +177,16 @@ export type CardEvent =
   | { type: "prepare_refused"; text: string }
   | { type: "result"; outcome: "succeeded" | "failed" | "unknown"; text?: string }
   | { type: "lost_response" }
-  | { type: "status"; outcome: "succeeded" | "failed" | "unknown"; text?: string };
+  | { type: "status"; outcome: "succeeded" | "failed" | "unknown"; text?: string }
+  | { type: "restore"; attemptId: string };
 
 export function cardReduce(s: CardPhase, e: CardEvent): CardPhase {
   switch (e.type) {
     case "submit": return s.phase === "idle" || s.phase === "failed" || s.phase === "succeeded" ? { phase: "preparing" } : s;   // never from unknown or charging; a finished payment does not block the next one
     case "prepared": return s.phase === "preparing" ? { phase: "charging", attemptId: e.attemptId } : s;
     case "prepare_refused": return s.phase === "preparing" ? { phase: "failed", attemptId: null, message: e.text } : s;
+    // A page that loads while a card payment is still unresolved (pending_stripe) starts in the checking state: no charge control, a recheck instead.
+    case "restore": return s.phase === "idle" ? { phase: "unknown", attemptId: e.attemptId } : s;
     case "lost_response": return s.phase === "charging" ? { phase: "unknown", attemptId: s.attemptId } : s;
     case "result": case "status": {
       if (s.phase !== "charging" && s.phase !== "unknown") return s;
@@ -195,6 +198,8 @@ export function cardReduce(s: CardPhase, e: CardEvent): CardPhase {
 }
 
 /** The one rule the screen follows: a new charge may be started only from idle or after a DEFINITE result (a payment that succeeded or failed). Never while preparing, charging or unknown. */
+/** The card payment of this visit whose outcome is not yet known (Stripe has not said), if any. Its id is the idempotency key, so checking it again is safe. */
+export const unresolvedCardAttempt = (l: VisitLedger): string | null => l.cards.find((c) => c.status === "pending_stripe")?.id ?? null;
 export const canStartCharge = (s: CardPhase) => s.phase === "idle" || s.phase === "failed" || s.phase === "succeeded";
 export const showCheckingStatus = (s: CardPhase) => s.phase === "unknown";
 

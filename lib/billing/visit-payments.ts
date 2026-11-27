@@ -24,6 +24,16 @@ export async function splitPaymentsEnabled(studioId: string): Promise<boolean> {
   }
 }
 
+/** Does this visit have a LIVE split-payments bill? A read that fails answers true: withdrawing the old single-outcome controls is the safe direction. */
+export async function visitIsBilled(studioId: string, appointmentId: string): Promise<boolean> {
+  try {
+    const r = await (await createClient()).from("visit_bills").select("id").eq("studio_id", studioId).eq("appointment_id", appointmentId).is("superseded_at", null).limit(1);
+    return !!r.error || (r.data?.length ?? 0) > 0;
+  } catch {
+    return true;
+  }
+}
+
 const ccy = (v: unknown): VisitCurrency | null => (v === "cad" || v === "usd" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 

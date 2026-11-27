@@ -59,7 +59,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 
 import {
   confirmTransferAction, prepareSplitCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
-  startSplitBillAction, voidTransferAction, cancelSplitCardAttemptAction, refundCardPaymentAction,
+  startSplitBillAction, voidTransferAction, cancelSplitCardAttemptAction, refundCardPaymentAction, recheckCardRefundAction,
 } from "@/app/(app)/visit-payment-actions";
 
 const APPT = "22222222-2222-4222-8222-222222222222";
@@ -253,6 +253,42 @@ describe("partial card refund", () => {
       expect(await refundCardPaymentAction(f(bad)), JSON.stringify(bad)).toMatchObject({ ok: false, code: "invalid_input" });
     }
     expect(S.commandCalls).toEqual([]);
+  });
+});
+
+describe("durable recheck of a pending card refund (Codex P1)", () => {
+  const RID = "55555555-5555-4555-8555-555555555555";
+  const f = (o: Record<string, string> = {}) => form({ appointment_id: APPT, refund_id: RID, ...o });
+  const pendingLedger = (status: string) => ({
+    bill: { id: "b", totalCents: 22500, currency: "cad", referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "x" }, cards: [], externals: [],
+    refunds: [{ id: RID, amountCents: 4000, kind: "payment_reversal", status, attemptId: PAY, externalPaymentId: null, reason: "r", at: "t" }],
+  });
+  it("is owner-only: a non-owner reaches nothing", async () => {
+    S.role = "staff";
+    expect(await recheckCardRefundAction(f())).toMatchObject({ ok: false, code: "not_owner" });
+    expect(S.refundCalls).toEqual([]);
+  });
+  it("only a pending card refund of THIS visit is sent; an unknown id is not_found and Stripe is not asked", async () => {
+    S.ledger = pendingLedger("pending_stripe");
+    expect(await recheckCardRefundAction(f({ refund_id: "66666666-6666-4666-8666-666666666666" }))).toMatchObject({ ok: false, code: "not_found" });
+    expect(S.refundCalls).toEqual([]);
+  });
+  it("a pending refund is sent again for the SAME row (its id is the Stripe key), after a reload", async () => {
+    S.ledger = pendingLedger("pending_stripe");
+    const out = await recheckCardRefundAction(f());
+    expect(S.refundCalls).toHaveLength(1);
+    expect(S.refundCalls[0]).toMatchObject({ row: { id: RID } });
+    expect(out).toMatchObject({ ok: true, refundId: RID });
+  });
+  it("a refund that already settled is not sent again", async () => {
+    S.ledger = pendingLedger("succeeded");
+    await recheckCardRefundAction(f());
+    expect(S.refundCalls).toEqual([]);
+  });
+  it("a lost answer keeps saying Checking refund status", async () => {
+    S.ledger = pendingLedger("pending_stripe");
+    S.refundOutcome = { outcome: "unknown", message: "Checking refund status" };
+    expect(await recheckCardRefundAction(f())).toMatchObject({ ok: true, checking: true });
   });
 });
 

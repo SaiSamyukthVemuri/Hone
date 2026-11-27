@@ -195,3 +195,70 @@ describe("P3 defence in depth and abandoned attempts", () => {
     await expect(asRole("anon", (q) => q(`select * from public.cancel_split_card_attempt($1,$2,null)`, [s.studioId, held]))).rejects.toMatchObject({ code: "42501" });
   });
 });
+
+describe("F5 a billed visit cannot also take a legacy single-outcome settlement (Codex P1)", () => {
+  it("record_appointment_settlement is refused once a live bill exists, and nothing is written", async () => {
+    const s = await visit();
+    expect((await ensure(s)).result).toBe("created");
+    const before = (await adminQuery(`select count(*)::int n from public.appointment_settlements where studio_id = $1`, [s.studioId])).rows[0].n as number;
+    await expect(
+      owner(s, (q) => q(`select * from public.record_appointment_settlement($1,$2,'paid_cash',22500,null,false)`, [s.studioId, s.appointmentId])),
+    ).rejects.toMatchObject({ code: "PY004" });
+    expect((await adminQuery(`select count(*)::int n from public.appointment_settlements where studio_id = $1`, [s.studioId])).rows[0].n).toBe(before);
+  });
+  it("the wall holds for the other settlement writers too: a direct insert on a billed visit is refused", async () => {
+    const s = await visit();
+    await ensure(s);
+    await expect(
+      adminQuery(
+        `insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, recorded_by_practitioner_id)
+         select $1,$2,'paid_cash',22500,'cad',$3`,
+        [s.studioId, s.appointmentId, s.practitionerId],
+      ),
+    ).rejects.toMatchObject({ code: "PY004" });
+  });
+  it("a visit with NO bill still records its settlement exactly as before", async () => {
+    const s = await visit();
+    const r = await owner(s, (q) => q(`select * from public.record_appointment_settlement($1,$2,'paid_cash',22500,null,false)`, [s.studioId, s.appointmentId]));
+    expect(r.rows[0].result).toBe("recorded");
+  });
+  it("and the reverse still holds: a visit with a settlement is refused a bill", async () => {
+    const s = await visit();
+    await owner(s, (q) => q(`select * from public.record_appointment_settlement($1,$2,'paid_cash',22500,null,false)`, [s.studioId, s.appointmentId]));
+    expect((await ensure(s)).result).not.toBe("created");
+  });
+  it("the settlement wall takes the SAME visit lock the command and ensure_visit_bill take, before it reads the bill: a settlement insert waits for whoever holds it", async () => {
+    const s = await visit();
+    const holder = new Client({ connectionString: process.env.HONE_LOCAL_DB_URL });
+    await holder.connect();
+    try {
+      await holder.query("begin");
+      await holder.query("select pg_advisory_xact_lock(public.appointment_settlement_lock_key($1))", [s.appointmentId]);
+      let done = false;
+      const insert = adminQuery(
+        `insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, recorded_by_practitioner_id) select $1,$2,'paid_cash',22500,'cad',$3`,
+        [s.studioId, s.appointmentId, s.practitionerId],
+      ).then(() => { done = true; });
+      await new Promise((r) => setTimeout(r, 800));
+      expect(done, "the settlement insert must wait for the visit lock").toBe(false);
+      await holder.query("commit");
+      await insert;
+      expect(done).toBe(true);
+    } finally {
+      await holder.query("rollback").catch(() => undefined);
+      await holder.end();
+    }
+  });
+  it("a settlement racing bill creation: either the bill refuses (a settlement exists) or the settlement is refused (a live bill exists), never both live", async () => {
+    for (let i = 0; i < 6; i++) {
+      const s = await visit();
+      await Promise.allSettled([
+        ensure(s),
+        owner(s, (q) => q(`select * from public.record_appointment_settlement($1,$2,'paid_cash',22500,null,false)`, [s.studioId, s.appointmentId])),
+      ]);
+      const bills = await countRows(s, "visit_bills");
+      const settlements = (await adminQuery(`select count(*)::int n from public.appointment_settlements where studio_id=$1 and superseded_at is null`, [s.studioId])).rows[0].n as number;
+      expect(bills > 0 && settlements > 0, `round ${i}: bills=${bills} settlements=${settlements}`).toBe(false);
+    }
+  });
+});

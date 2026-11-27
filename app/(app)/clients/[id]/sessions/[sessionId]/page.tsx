@@ -20,6 +20,7 @@ import { LaserEntryRow } from "@/components/entry-row";
 import { SessionPerformerLine } from "@/components/session-performer-line";
 import { toPerformerOptions } from "@/lib/sessions/performer-options";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
+import { visitIsBilled } from "@/lib/billing/visit-payments";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
 import { markAftercareExplainedAction } from "@/app/(app)/records/actions";
@@ -261,6 +262,11 @@ export default async function SessionDetailPage({
     settlementLoad?.ok && linkedAppointmentId
       ? (settlementLoad.byAppointmentId.get(linkedAppointmentId) ?? null)
       : null;
+
+  // HON-123: a visit with a live split-payments bill is paid through the split panel. The old single-outcome controls are withdrawn for it (the database
+  // refuses a settlement on a billed visit; this keeps the button from being a dead end). A read that fails is treated as BILLED: hiding the controls is
+  // the safe direction, offering them is not.
+  const visitBilled = linkedAppointmentId && isOwner ? await visitIsBilled(studio.id, linkedAppointmentId) : false;
 
   if (linkedAppointmentId) {
     const supabaseForDefault = await createClient();
@@ -1169,7 +1175,7 @@ export default async function SessionDetailPage({
           // appointment can carry a disposition (0187 answers anything else
           // with `not_completed`). Offering the controls on a visit that has
           // not happened yet would be a button that always fails.
-          canRecordSettlement={finishAppt?.status === "completed"}
+          canRecordSettlement={finishAppt?.status === "completed" && !visitBilled}
           // Trusted, server-derived owner flag: gates the owner-only Technical
           // payment details disclosure + the Refund button (server refund
           // authorization is unchanged; it is owner-only there too).

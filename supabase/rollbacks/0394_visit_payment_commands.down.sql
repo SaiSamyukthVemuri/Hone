@@ -20,6 +20,8 @@ begin
 end;
 $$;
 
+drop trigger appointment_settlements_visit_bill_guard_trg on public.appointment_settlements;
+drop function public.appointment_settlements_visit_bill_guard();
 drop trigger payment_charge_attempts_visit_bill_guard_trg on public.payment_charge_attempts;
 drop function public.payment_charge_attempts_visit_bill_guard();
 drop function public.cancel_split_card_attempt(uuid, uuid, text);

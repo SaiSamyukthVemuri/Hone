@@ -55,6 +55,21 @@ describe("0394 is shaped like a sealed migration", () => {
     expect(c).toContain("errcode = 'PY002'");
   });
 
+  it("the settlement wall: a BEFORE INSERT trigger on appointment_settlements takes the visit lock then refuses (PY004) when a live bill exists; the down file drops it", () => {
+    const c = code(UP);
+    const at = c.indexOf("function public.appointment_settlements_visit_bill_guard(");
+    const end = c.indexOf("$$;", c.indexOf("$$", at) + 2);
+    const body = c.slice(at, end);
+    expect(body.indexOf("pg_advisory_xact_lock(")).toBeGreaterThan(-1);
+    expect(body.indexOf("pg_advisory_xact_lock(")).toBeLessThan(body.indexOf("from public.visit_bills"));
+    expect(body).toContain("b.superseded_at is null");
+    expect(body).toContain("errcode = 'PY004'");
+    expect(c).toMatch(/create trigger appointment_settlements_visit_bill_guard_trg before insert on public\.appointment_settlements/);
+    expect(c).toMatch(/revoke all privileges on function public\.appointment_settlements_visit_bill_guard\(\) from public, anon, authenticated, service_role/);
+    expect(DOWN).toContain("drop trigger appointment_settlements_visit_bill_guard_trg on public.appointment_settlements;");
+    expect(DOWN).toContain("drop function public.appointment_settlements_visit_bill_guard();");
+  });
+
   it("a pending transfer is counted as reserved, and the old one-attempt rule is kept only for visits without a bill", () => {
     const c = code(UP);
     expect(c).toContain("filter (where e.state = 'pending_confirmation')");

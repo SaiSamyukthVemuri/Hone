@@ -4,11 +4,11 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
   canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
-  STATUS_LABEL, type CardPhase, type ExternalMethod, type VisitCurrency,
+  STATUS_LABEL, unresolvedCardAttempt, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
   confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
-  voidTransferAction, cancelSplitCardAttemptAction, type SplitActionResult, type SplitState,
+  voidTransferAction, cancelSplitCardAttemptAction, recheckCardRefundAction, type SplitActionResult, type SplitState,
 } from "@/app/(app)/visit-payment-actions";
 
 /** Free-text fields on money records are never shown to the client and are kept out of logs and messages, but they are still stored: keep names and health details out of them. */
@@ -91,6 +91,19 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
     await attempt();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointmentId, onChanged]);
+
+  // A reload (or a second device) while a card payment is unresolved: show "Checking payment status" and check it, offering NO charge control.
+  // Runs once per mount; the attempt id is the idempotency key, so checking is safe.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    const id = unresolvedCardAttempt(ledger);
+    if (!id) return;
+    restoredRef.current = true;
+    dispatch({ type: "restore", attemptId: id });
+    void runCard(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function chargeCard() {
     if (!canStartCharge(phase)) return;
@@ -197,6 +210,12 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
                 <button type="button" className="text-sm underline" disabled={busy} data-testid="split-cancel-attempt"
                   onClick={async () => { setBusy(true); try { apply(await cancelSplitCardAttemptAction(form({ attempt_id: l.key.slice(5) }))); } finally { setBusy(false); } }}>
                   Cancel this card payment
+                </button>
+              )}
+              {l.status === "refund_in_progress" && (
+                <button type="button" className="text-sm underline" disabled={busy} data-testid="split-recheck-refund"
+                  onClick={async () => { setBusy(true); try { apply(await recheckCardRefundAction(form({ refund_id: l.key.slice(7) }))); } finally { setBusy(false); } }}>
+                  Check refund status
                 </button>
               )}
               <span className="font-medium">{l.direction === "out" ? "−" : ""}{fmt(l.amountCents)}</span>

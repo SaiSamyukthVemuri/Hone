@@ -81,6 +81,7 @@ export async function readAppointmentsKeyset(
 }
 
 type CardDb = {
+  id: string;
   charge_reason: string | null;
   status: string | null;
   amount_cents: number | null;
@@ -118,8 +119,8 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
     readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null; state: string }>(ids, (chunk) =>
       supabase.from("visit_external_payments").select("appointment_id, method, amount_cents, currency, state").eq("studio_id", studioId).in("appointment_id", chunk),
     ),
-    readInChunks<{ appointment_id: string | null; amount_cents: number | null; currency: string | null; status: string; legacy: boolean }>(ids, (chunk) =>
-      supabase.from("payment_refunds").select("appointment_id, amount_cents, currency, status, legacy").eq("studio_id", studioId).in("appointment_id", chunk),
+    readInChunks<{ appointment_id: string | null; attempt_id: string | null; amount_cents: number | null; currency: string | null; status: string; legacy: boolean; kind: string }>(ids, (chunk) =>
+      supabase.from("payment_refunds").select("appointment_id, attempt_id, amount_cents, currency, status, legacy, kind").eq("studio_id", studioId).in("appointment_id", chunk),
     ),
   ]);
   if (!bills.ok || !externals.ok || !refunds.ok) return { ok: false };
@@ -130,10 +131,14 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
     // Confirmed money is cash / e-transfer / other as the owner recorded it. A transfer still waiting for confirmation is owed, not received.
     ledgerRows.push({ appointmentId: e.appointment_id, method: e.state === "confirmed" ? e.method : "still_owes", amountCents: e.amount_cents, currency: e.currency, quotedAmountCents: null });
   }
+  // An attempt that has its own split refunds is shown through THOSE rows. When the split refunds add up to the whole charge the webhook also marks the attempt itself
+  // fully refunded (0240), and showing that full-refund line as well as each split refund would count the same money twice (two $50 refunds must read $100, not $200).
+  const splitRefundedAttempts = new Set<string>();
+  for (const r of refunds.rows) if (!r.legacy && r.attempt_id && r.status !== "failed") splitRefundedAttempts.add(r.attempt_id);
   for (const r of refunds.rows) {
     // A legacy row mirrors a full refund the attempt itself already carries (the card line shows it), and a failed refund moved nothing.
     if (r.legacy || r.status === "failed" || !r.appointment_id) continue;
-    ledgerRows.push({ appointmentId: r.appointment_id, method: r.status === "succeeded" ? "partial_refund" : "refund_in_flight", amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: null });
+    ledgerRows.push({ appointmentId: r.appointment_id, method: r.status === "succeeded" ? (r.kind === "payment_reversal" ? "reversal_refund" : "partial_refund") : "refund_in_flight", amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: null });
   }
 
   const [feeCards, sessionCards, settlements, legacy] = await Promise.all([
@@ -169,11 +174,12 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
       status: r.status,
       amountCents: r.amount_cents,
       currency: r.currency,
-      refundStatus: r.refund_status,
-      refundAmountCents: r.refund_amount_cents,
-      providerRefundStatus: r.stripe_refund_status,
-      stripeRefundId: r.stripe_refund_id,
-      cumulativeFullRefundVerified: typeof r.stripe_charge_refund_event_id === "string" && r.stripe_charge_refund_event_id.length > 0,
+      // The split refunds of this attempt are shown through their own rows (above): its full-refund mirror is not emitted a second time.
+      refundStatus: splitRefundedAttempts.has(r.id) ? null : r.refund_status,
+      refundAmountCents: splitRefundedAttempts.has(r.id) ? null : r.refund_amount_cents,
+      providerRefundStatus: splitRefundedAttempts.has(r.id) ? null : r.stripe_refund_status,
+      stripeRefundId: splitRefundedAttempts.has(r.id) ? null : r.stripe_refund_id,
+      cumulativeFullRefundVerified: !splitRefundedAttempts.has(r.id) && typeof r.stripe_charge_refund_event_id === "string" && r.stripe_charge_refund_event_id.length > 0,
       stripeLivemode: r.stripe_livemode,
     });
   }

@@ -127,6 +127,23 @@ describe("the client document judges a visit against its bill", () => {
     expect(v.state).toBe("confirmed_unpaid");
     expect(v.owedCents).toBe(7500); // 225 - (100 card + 50 cash); the transfer is owed, not received
   });
+  it("a payment returned leaves less retained: $100 cash with $40 reversed shows $40 due on a $100 bill", async () => {
+    const v = await doc({
+      visit_bills: [{ appointment_id: A, total_cents: 10000, currency: "cad" }], sessions: SESSIONS,
+      visit_external_payments: [{ appointment_id: A, method: "paid_cash", amount_cents: 10000, currency: "cad", state: "confirmed" }],
+      payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" }],
+    });
+    expect(v.state).toBe("confirmed_unpaid");
+    expect(v.owedCents).toBe(4000);
+  });
+  it("a price reduction with the money returned does not make the bill owe again", async () => {
+    const v = await doc({
+      visit_bills: [{ appointment_id: A, total_cents: 6000, currency: "cad" }], sessions: SESSIONS,
+      visit_external_payments: [{ appointment_id: A, method: "paid_cash", amount_cents: 10000, currency: "cad", state: "confirmed" }],
+      payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "price_reduction" }],
+    });
+    expect(v.state).toBe("paid");
+  });
 });
 
 describe("an unreadable ledger is unavailable, never a total without it", () => {
@@ -138,5 +155,17 @@ describe("an unreadable ledger is unavailable, never a total without it", () => 
   it("a scope with no ledger rows reads as before", async () => {
     const out = await readMoneyForAppointments(fake({}), STUDIO, [A]);
     expect(out.ok).toBe(true);
+  });
+  it("split refunds that total the whole charge are not counted twice beside the attempt's own full-refund mirror", async () => {
+    const full = { ...card(10000), id: "att-1", refund_status: "refunded", refund_amount_cents: 10000 };
+    const { st } = await build({
+      payment_charge_attempts: [full], sessions: SESSIONS,
+      payment_refunds: [
+        { appointment_id: A, attempt_id: "att-1", amount_cents: 5000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" },
+        { appointment_id: A, attempt_id: "att-1", amount_cents: 5000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" },
+      ],
+    });
+    const refunded = st.all.kinds.refunded_partial.cents + st.all.kinds.refunded_card_session.cents;
+    expect(refunded).toBe(10000);
   });
 });

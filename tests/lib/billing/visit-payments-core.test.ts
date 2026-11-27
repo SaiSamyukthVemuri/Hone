@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 import {
-  canStartCharge, cardReduce, commandNote, historyLines, parseDollarsToCents, showCheckingStatus, visitBalance,
+  canStartCharge, cardReduce, commandNote, historyLines, parseDollarsToCents, showCheckingStatus, unresolvedCardAttempt, visitBalance,
   type CardPhase, type VisitLedger,
 } from "@/lib/billing/visit-payments-core";
 
@@ -72,7 +72,7 @@ describe("historyLines", () => {
       refunds: [{ id: "r", amountCents: 4000, kind: "price_reduction", status: "pending_stripe", attemptId: "c1", externalPaymentId: null, reason: "x", at: "2026-11-27T10:04", platformFeeReturnedCents: null }],
     }));
     expect(lines.map((l) => [l.label, l.status, l.direction])).toEqual([
-      ["Card", "received", "in"], ["Card", "not_sent", "in"], ["E-transfer", "voided", "in"], ["Price reduced, money returned (card)", "in_progress", "out"],
+      ["Card", "received", "in"], ["Card", "not_sent", "in"], ["E-transfer", "voided", "in"], ["Price reduced, money returned (card)", "refund_in_progress", "out"],
     ]);
   });
 });
@@ -180,5 +180,28 @@ describe("a partial card payment is not 'Paid' on the roster", () => {
     expect(billedPaymentState(bill, [{ status: "succeeded", amount_cents: 22500 }])).toBe("paid");
     expect(billedPaymentState(bill, [{ status: "pending_stripe", amount_cents: 10000 }])).toBe("unavailable");
     expect(billedPaymentState({ ...bill, externals: [{ amountCents: 22500, state: "pending_confirmation" }] }, [])).toBe("chargeable");
+  });
+});
+
+describe("a reload while a card payment is unresolved (Codex P1)", () => {
+  const pending = ledger({ cards: [{ kind: "card", id: "a-pending", amountCents: 5000, status: "pending_stripe", at: "t1", platformFeeCents: null }] });
+  it("finds the unresolved attempt and starts the panel in Checking payment status with NO charge control", () => {
+    expect(unresolvedCardAttempt(pending)).toBe("a-pending");
+    const s = cardReduce({ phase: "idle" }, { type: "restore", attemptId: "a-pending" });
+    expect(s).toEqual({ phase: "unknown", attemptId: "a-pending" });
+    expect(showCheckingStatus(s)).toBe(true);
+    expect(canStartCharge(s)).toBe(false);
+  });
+  it("nothing unresolved means nothing to restore; a settled or merely prepared attempt is not unresolved", () => {
+    expect(unresolvedCardAttempt(ledger())).toBeNull();
+    expect(unresolvedCardAttempt(ledger({ cards: [{ kind: "card", id: "x", amountCents: 1, status: "succeeded", at: "t", platformFeeCents: null }, { kind: "card", id: "y", amountCents: 1, status: "ready", at: "t", platformFeeCents: null }] }))).toBeNull();
+  });
+  it("restoring never overrides a phase that is already running", () => {
+    const charging: CardPhase = { phase: "charging", attemptId: "a1" };
+    expect(cardReduce(charging, { type: "restore", attemptId: "a2" })).toBe(charging);
+  });
+  it("a pending card refund is listed as Checking refund status so the recheck control can be offered after a reload", () => {
+    const l = historyLines(ledger({ refunds: [{ id: "r1", amountCents: 4000, kind: "payment_reversal", status: "pending_stripe", attemptId: "a1", externalPaymentId: null, reason: "r", at: "t", platformFeeReturnedCents: null }] }));
+    expect(l[0]).toMatchObject({ key: "refund:r1", status: "refund_in_progress" });
   });
 });

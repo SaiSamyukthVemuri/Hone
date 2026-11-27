@@ -3,7 +3,7 @@
   "migrations": {
     "count": 293,
     "last": "0394_visit_payment_commands.sql",
-    "sha256": "e9eadf2eb7c57f594c6c43ea564a4be1e92cde7d4fadebfaf2ec9a9bd6b92e15"
+    "sha256": "55ab313034b66e8766f060902f3d6a6f35346dd29b8d1de6d5b17b27d9a0f7a8"
   },
   "public": {
     "tables": [
@@ -198,6 +198,7 @@
       "appointment_settlements_method_for_jurisdiction",
       "appointment_settlements_no_delete",
       "appointment_settlements_server_timestamps",
+      "appointment_settlements_visit_bill_guard",
       "appointment_transition_allowed",
       "approve_client_id_photo_wording",
       "archive_treatment_image",

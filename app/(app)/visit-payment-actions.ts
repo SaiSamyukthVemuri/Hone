@@ -303,6 +303,30 @@ export async function refundCardPaymentAction(formData: FormData): Promise<CardR
   return { ...out, refundId: row.id, note: { tone: "ok", message: sent.message } };
 }
 
+/**
+ * Durable recheck of a pending card refund (HON-122). The pending row is persisted by request_payment_refund before Stripe is asked, so a reload, a lost response or
+ * a second device can ask again: the refund row id is the Stripe idempotency key (and, past about 23 hours, the existing Stripe refund is looked up first), so
+ * checking can never refund twice. Only a pending card refund of THIS visit in THIS studio is sent.
+ */
+export async function recheckCardRefundAction(formData: FormData): Promise<CardRefundResult> {
+  const who = await owner();
+  if (!who) return refuse("not_owner");
+  const appointmentId = str(formData.get("appointment_id"));
+  const refundId = str(formData.get("refund_id"));
+  if (!UUID.test(appointmentId) || !UUID.test(refundId)) return refuse("invalid_input");
+  const loaded = await loadVisitLedger(who.studioId, appointmentId);
+  const mine = loaded.ok ? loaded.ledger.refunds.find((r) => r.id === refundId) : null;
+  if (!mine || !mine.attemptId) return refuse("not_found");
+  if (mine.status !== "pending_stripe") return { ...(await finish(who.studioId, appointmentId, "already_requested", refundId)), refundId };
+  const pending = await readRefundRow(who.studioId, refundId);
+  if (!pending) return { ...(await finish(who.studioId, appointmentId, "unavailable", refundId)), ok: false, refundId, checking: true, note: { tone: "info", message: "Checking refund status" } };
+  const sent = await refundCardPaymentPartial({ row: pending, feeReturnedCents: null });
+  const out = await finish(who.studioId, appointmentId, sent.outcome === "failed" ? "refund_failed" : "requested", refundId);
+  if (sent.outcome === "unknown") return { ...out, ok: true, checking: true, refundId, note: { tone: "info", message: "Checking refund status" } };
+  if (sent.outcome === "failed" || sent.outcome === "blocked") return { ...out, ok: false, refundId, note: { tone: "blocked", message: sent.message } };
+  return { ...out, refundId, note: { tone: "ok", message: sent.message } };
+}
+
 // ---------------------------------------------------------------------------
 // Receipt for ONE card payment of a split visit
 // ---------------------------------------------------------------------------

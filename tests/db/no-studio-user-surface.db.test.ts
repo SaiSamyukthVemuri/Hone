@@ -824,6 +824,8 @@ const PINNED: string[] = [
   "fn public.client_id_photo_wording_current(p_studio_id uuid)",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
+  // 0394 (HON-123): returns ZERO rows for anyone who is not the studio owner (proved in visit-payment-hardening F1), so a no-studio user reaches an empty read, nothing more.
+  "fn public.get_visit_payment_position(p_studio_id uuid, p_appointment_id uuid)",
   "fn public.is_studio_member(target_studio_id uuid)",
   "fn public.is_studio_owner(target_studio_id uuid)",
   "fn public.latest_setup_for_client(p_studio_id uuid, p_client_id uuid, p_exclude_session_id uuid)",

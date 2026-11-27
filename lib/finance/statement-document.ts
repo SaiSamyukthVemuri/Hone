@@ -350,9 +350,16 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
     // What the fee leaves unsettled is measured against RETAINED money and waivers ONLY. A refund is never treated as a service credit: nothing here says
     // the returned money bought anything, so refunded cents never reduce the amount owed. With a refund on record and a recorded fee still uncovered, the
     // amount owed is established only when the owner attested it against a recorded quote; otherwise the balance is not established.
-    const shortfall = feeCents === null ? 0 : feeCents - paid - waived;
+    // A split-payments visit (HON-123 / HON-122) has a BILL, the owner-recorded amount owed. Its succeeded refunds (a payment returned, or a price reduced and the
+    // money returned with it) leave less money RETAINED than was collected, so they come off what counts as covering the bill: $100 cash with $40 returned
+    // leaves $60 retained against a $100 bill, so $40 is due; a price reduced to $60 with the same $40 returned leaves $60 against $60, so nothing is. The bill
+    // itself establishes the amount owed, so no separate attestation is needed for it. (An older visit with no bill keeps the rule above unchanged.)
+    const billed = has("bill_note");
+    const reversed = lines.reduce((n, l) => (l.reversal && l.kind === "refunded_partial" && isCents(l.cents) ? n + l.cents : n), 0);
+    const retained = billed ? Math.max(0, paid - reversed) : paid;
+    const shortfall = feeCents === null ? 0 : feeCents - retained - waived;
     if (feeCents !== null && shortfall > 0) {
-      if (attestedOwes && quoteRecorded) {
+      if ((attestedOwes || billed) && quoteRecorded) {
         state = "confirmed_unpaid";
         owed = shortfall;
       } else {
