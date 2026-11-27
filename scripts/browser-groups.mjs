@@ -254,6 +254,9 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // HON-124 item 11: the booking-link copy control on an iPhone-sized viewport: Copied only after the write, a calm failure message with the
+      // link text selected, and keyboard-only operation. Here because settings/booking/** selects this group.
+      "settings-booking-copy-mobile.spec.ts",
       // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
       "team-invite-receptionist.spec.ts",
       // HON-124 item 14: destructive staff actions (revoke an invitation, remove a team member, cancel an appointment) ask first through the confirm dialog.
@@ -485,6 +488,7 @@ export const BROWSER_GROUPS = {
     specs: [
       "marketing-homepage.spec.ts",
       "marketing-pages.spec.ts",
+      "public-pages-contact-faq-mobile.spec.ts",
       // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
       // motion preference, and the poster being preloaded eagerly. Filed here
       // rather than in `smoke` on purpose — it is heavier than a smoke case
@@ -612,6 +616,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",
+  "public-pages-contact-faq-mobile.spec.ts",
   "public-reschedule-v2.spec.ts",
   "safe-willow-appointment-lifecycle.spec.ts",
   "safe-willow-contract.spec.ts",
