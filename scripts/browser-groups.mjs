@@ -233,6 +233,8 @@ export const BROWSER_GROUPS = {
       "move-appointment-custom-time.spec.ts",
       "move-appointment-mobile-submit.spec.ts",
       "move-appointment-responsive.spec.ts",
+      // HON-124 item 7. The Move appointment dialog's buttons: hover, pressed, keyboard focus, tap size. Never confirms a move.
+      "move-dialog-feedback.spec.ts",
       "safe-willow-appointment-lifecycle.spec.ts",
       "create-plan-from-appointment.spec.ts",
       // P0 emergency: the new-client waitlist admission gate on the PUBLIC
