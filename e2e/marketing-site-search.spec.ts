@@ -1,10 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
+import { installWebkitLocalhostFix, isWebKit } from "./helpers/webkit-localhost";
 
 // HON-124 item 1: search the public site. Static, public pages, so no seed or login. The search is private by construction (the index ships in the bundle,
 // matching runs in the browser), so this also proves what the page does NOT do: no request carries the query, and the URL never holds it.
 //   1. By keyboard on desktop: the button opens the dialog with focus in the box, a typed question finds the pricing FAQ, Arrow Down reaches the result, Enter
 //      follows it to /pricing#faq with the dialog gone and no query in the URL; Escape closes and returns focus to the button.
 //   2. At 390 px: the button sits beside Menu, the dialog and its rows fit and are touch-sized, a word with no match says so, and nothing scrolls sideways.
+
+// WebKit only: strip the https upgrade the app sends for http://localhost (e2e/helpers/webkit-localhost.ts), without which the page's CSS and scripts never load. A no-op in Chromium.
+test.beforeEach(async ({ page }) => {
+  if (isWebKit(page)) await installWebkitLocalhostFix(page.context());
+});
 
 const SEARCH = (page: Page) => page.getByRole("button", { name: "Search", exact: true });
 const DIALOG = (page: Page) => page.getByRole("dialog", { name: "Search the site" });
