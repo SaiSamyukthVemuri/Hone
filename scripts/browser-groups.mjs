@@ -382,6 +382,8 @@ export const BROWSER_GROUPS = {
       // this mechanism is unattributable application code that already fails
       // safe to EXTENDED.
       "perceived-speed.spec.ts",
+      // HON-109: the Analytics controls' press acknowledgement (PendingLink / PendingGetForm), same shared vocabulary as the line above.
+      "hon109-analytics-feedback.spec.ts",
       // RESP-CLIENT-INTAKE-01: the same primitive as the line above, adopted on
       // the clinical navigation controls (Client Profile -> Log session /
       // previous session / intake / photos, Intake -> client) and the two raw
