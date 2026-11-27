@@ -85,6 +85,25 @@ describe("0394 is shaped like a sealed migration", () => {
     expect(c).not.toMatch(/function public\.(record_appointment_settlement|record_adjusted_appointment_settlement)/);
   });
 
+  it("studio_has_gone_live is the ONE rule for which card money counts: derived from rows, used by the position, never a caller input", () => {
+    const c = code(UP);
+    expect(c).toMatch(/function public\.studio_has_gone_live\(p_studio uuid\)/);
+    expect(c).toMatch(/a\.stripe_livemode = true and a\.status = 'succeeded'/);
+    expect(c).toMatch(/function public\.card_counts_toward_capacity\(p_studio uuid, p_livemode boolean\)/);
+    // the position's card term and its price-reduction term both go through it
+    expect((c.match(/public\.card_counts_toward_capacity\(p_studio, /g) ?? []).length).toBeGreaterThanOrEqual(2);
+    // no 0394 command takes a livemode argument: an owner could otherwise claim any mode
+    // the money commands (cash, transfer, refund, position, refusal) do not take a mode: only ensure_visit_bill's existing p_livemode (bill creation over live card money) and the helper do
+    for (const fn of ["record_visit_external_payment", "request_payment_refund", "visit_payment_position", "visit_payment_refusal"]) {
+      const sig = c.slice(c.indexOf(`function public.${fn}(`), c.indexOf(")", c.indexOf(`function public.${fn}(`)));
+      expect(sig, fn).not.toMatch(/livemode/);
+    }
+    for (const fn of ["studio_has_gone_live(uuid)", "card_counts_toward_capacity(uuid, boolean)"]) {
+      expect(c).toContain(`revoke all privileges on function public.${fn} from public, anon, authenticated, service_role;`);
+      expect(DOWN).toContain(`drop function public.${fn};`);
+    }
+  });
+
   it("down refuses (55000) while split money exists", () => {
     expect(DOWN).toMatch(/errcode = '55000'/);
     expect(DOWN).toContain("from public.visit_bills");

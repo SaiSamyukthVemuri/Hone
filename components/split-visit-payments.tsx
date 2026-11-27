@@ -5,7 +5,7 @@ import { BALANCE_DUE_LABEL, moneyRows, refundStatusLabel, visitMoneySummary } fr
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
   canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
-  STATUS_LABEL, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, idDisposition, awaitRefund, awaitFromAnswer, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
+  STATUS_LABEL, TEST_EXCLUDED_NOTE, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, idDisposition, awaitRefund, awaitFromAnswer, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
   confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
@@ -261,7 +261,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
       <ul className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800" aria-label="Payment history" data-testid="split-history">
         {historyLines(ledger).map((l) => (
           <li key={l.key} className="flex items-baseline justify-between gap-3 py-2 text-sm">
-            <span>{l.label}<span className="ml-2 text-neutral-500">{STATUS_LABEL[l.status]}</span></span>
+            <span>{l.label}<span className="ml-2 text-neutral-500">{STATUS_LABEL[l.status]}</span>{l.test && <span className="mt-0.5 block text-xs text-neutral-500" data-testid="split-test-note">{TEST_EXCLUDED_NOTE}</span>}</span>
             <span className="flex items-baseline gap-3">
               {l.status === "not_sent" && !unknown && (
                 <button type="button" className="text-sm underline" disabled={busy} data-testid="split-cancel-attempt"

@@ -3,7 +3,7 @@
   "migrations": {
     "count": 293,
     "last": "0394_visit_payment_commands.sql",
-    "sha256": "3ff93c70b01bd25cef01a566e6fe8756c5c9a9ff926c25f41683b492989cbf43"
+    "sha256": "f60bebca461c02583b84ebd1a61a0cb1a4ccd525e8209da24613f373cba74ebb"
   },
   "public": {
     "tables": [
@@ -226,6 +226,7 @@
       "cancellation_fee_attempt_guard",
       "cancellation_fee_legacy_setting_guard",
       "capture_treatment_reading_change",
+      "card_counts_toward_capacity",
       "check_claimed_payment_method_cleanup_safety",
       "claim_calendar_sync_op",
       "claim_conversion_delivery",
@@ -652,6 +653,7 @@
       "studio_account_acceptable_for_jurisdiction",
       "studio_capacity_enabled",
       "studio_client_id_photo_switch_log_write",
+      "studio_has_gone_live",
       "studio_membership_kind_lock",
       "studio_named_stripe_accounts",
       "studio_price_write_jurisdiction_lock",

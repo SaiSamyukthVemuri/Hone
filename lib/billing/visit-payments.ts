@@ -44,20 +44,22 @@ export type LedgerLoad = { ok: true; ledger: VisitLedger } | { ok: false };
 export async function loadVisitLedger(studioId: string, appointmentId: string): Promise<LedgerLoad> {
   try {
     const supabase = await createClient();
-    const [bills, externals, refunds, cards, position, openReviews] = await Promise.all([
+    const [bills, externals, refunds, cards, position, openReviews, liveProbe] = await Promise.all([
       supabase.from("visit_bills").select("id, total_cents, currency, reference_fee_cents, fee_adjustment_reason, created_at")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).is("superseded_at", null).maybeSingle(),
       supabase.from("visit_external_payments").select("id, method, amount_cents, state, recorded_at, note")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).order("recorded_at"),
       supabase.from("payment_refunds").select("id, amount_cents, kind, status, attempt_id, external_payment_id, requested_at, platform_fee_returned_cents, legacy, source")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).order("requested_at"),
-      createAdminClient().from("payment_charge_attempts").select("id, amount_cents, status, created_at, receipt_sent_at, refund_status, refund_amount_cents")
+      createAdminClient().from("payment_charge_attempts").select("id, amount_cents, status, created_at, receipt_sent_at, refund_status, refund_amount_cents, stripe_livemode")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).eq("charge_reason", "session_payment").not("visit_bill_id", "is", null).order("created_at"),
       // The database's own answer (payment_refund_money, 0393): the money returned and whether a review is open. The rows above must AGREE with it.
       supabase.rpc("get_visit_payment_position", { p_studio_id: studioId, p_appointment_id: appointmentId }),
       // Open reviews: closed fields only (amount and whether Stripe has settled it). The owner reads them under RLS.
       supabase.from("payment_refund_reviews").select("id, amount_cents, stripe_refund_status")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).is("resolved_at", null).order("opened_at"),
+      // studio_has_gone_live (0394): a succeeded LIVE card attempt exists for the studio. From then on, non-live card payments no longer count toward capacity.
+      createAdminClient().from("payment_charge_attempts").select("id").eq("studio_id", studioId).eq("stripe_livemode", true).eq("status", "succeeded").limit(1),
     ]);
     if (bills.error || externals.error || refunds.error || cards.error || position.error || openReviews.error) return { ok: false };
 
@@ -79,6 +81,8 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
         state: r.state as LedgerExternal["state"], at: String(r.recorded_at), note: typeof r.note === "string" ? r.note : null,
       });
     }
+    // The statement's own signal: only stripe_livemode === true is live; false, NULL or anything else is test and is excluded from statements and analytics.
+    const testAttempts = new Set<string>(((cards.data ?? []) as Record<string, unknown>[]).flatMap((c) => (typeof c.id === "string" && c.stripe_livemode !== true ? [c.id] : [])));
     const billedAttempts = new Set<string>(((cards.data ?? []) as Record<string, unknown>[]).flatMap((c) => (typeof c.id === "string" ? [c.id] : [])));
     const refs: LedgerRefund[] = [];
     for (const r of (refunds.data ?? []) as Record<string, unknown>[]) {
@@ -88,6 +92,7 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
         id: r.id, amountCents: r.amount_cents as number, kind: r.kind as LedgerRefund["kind"], status: r.status as LedgerRefund["status"],
         attemptId: typeof r.attempt_id === "string" ? r.attempt_id : null, externalPaymentId: typeof r.external_payment_id === "string" ? r.external_payment_id : null,
         reason: "", observed: r.source === "stripe_dashboard", at: String(r.requested_at), platformFeeReturnedCents: num(r.platform_fee_returned_cents),
+        ...(typeof r.attempt_id === "string" && testAttempts.has(r.attempt_id) ? { test: true } : {}),
       });
     }
     // Money the attempt's own columns say came back (a dashboard refund of the rest) that no row carries: a row of its own, so every reader sees it.
@@ -99,8 +104,8 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
         mine.filter((r) => r.status === "succeeded").reduce((a, r) => a + r.amountCents, 0), mine.filter((r) => r.status === "pending_stripe").reduce((a, r) => a + r.amountCents, 0),
       );
       const at = String(c.created_at);
-      if (gap.succeededGapCents > 0) refs.push({ id: `${c.id}:stripe-total`, amountCents: gap.succeededGapCents, kind: "payment_reversal", status: "succeeded", attemptId: c.id, externalPaymentId: null, reason: "", observed: true, at, platformFeeReturnedCents: null });
-      if (gap.pendingGapCents > 0) refs.push({ id: `${c.id}:stripe-pending`, amountCents: gap.pendingGapCents, kind: "payment_reversal", status: "pending_stripe", attemptId: c.id, externalPaymentId: null, reason: "", at, platformFeeReturnedCents: null });
+      if (gap.succeededGapCents > 0) refs.push({ id: `${c.id}:stripe-total`, amountCents: gap.succeededGapCents, kind: "payment_reversal", status: "succeeded", attemptId: c.id, externalPaymentId: null, reason: "", observed: true, ...(testAttempts.has(c.id) ? { test: true } : {}), at, platformFeeReturnedCents: null });
+      if (gap.pendingGapCents > 0) refs.push({ id: `${c.id}:stripe-pending`, amountCents: gap.pendingGapCents, kind: "payment_reversal", status: "pending_stripe", attemptId: c.id, externalPaymentId: null, reason: "", ...(testAttempts.has(c.id) ? { test: true } : {}), at, platformFeeReturnedCents: null });
     }
     const pos = (Array.isArray(position.data) ? position.data[0] : position.data) as Record<string, unknown> | null | undefined;
     if (bill) {
@@ -116,9 +121,10 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
     const cds: LedgerCard[] = [];
     for (const r of (cards.data ?? []) as Record<string, unknown>[]) {
       if (typeof r.id !== "string" || num(r.amount_cents) === null) return { ok: false };
-      cds.push({ kind: "card", id: r.id, amountCents: r.amount_cents as number, status: String(r.status), at: String(r.created_at), platformFeeCents: null, receiptSent: typeof r.receipt_sent_at === "string" });
+      cds.push({ kind: "card", id: r.id, amountCents: r.amount_cents as number, status: String(r.status), at: String(r.created_at), platformFeeCents: null, receiptSent: typeof r.receipt_sent_at === "string", ...(r.stripe_livemode !== true ? { test: true } : {}) });
     }
-    return { ok: true, ledger: { bill, cards: cds, externals: ext, refunds: refs, reviewOpen: pos?.review_open === true, reviews } };
+    if (liveProbe.error) return { ok: false };
+    return { ok: true, ledger: { studioLive: (liveProbe.data?.length ?? 0) > 0, bill, cards: cds, externals: ext, refunds: refs, reviewOpen: pos?.review_open === true, reviews } };
   } catch {
     return { ok: false };
   }

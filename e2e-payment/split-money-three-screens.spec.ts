@@ -216,6 +216,29 @@ test("a Stripe TEST card payment and its refund add nothing to the studio statem
   // The card really is a TEST-mode payment in the database.
   expect((await adminQuery(`select stripe_livemode from public.payment_charge_attempts where appointment_id = $1`, [seed.appointmentId])).rows.map((r) => r.stripe_livemode)).toEqual([false]);
 
+  // The VISIT page lists all four entries and labels each Stripe TEST-mode one individually; real cash and transfer stay unlabelled.
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  const entryList = page.getByRole("region", { name: "Session payment" }).getByTestId("visit-money-entries");
+  const entryRows = entryList.getByTestId("visit-money-entry");
+  await expect(entryRows).toHaveCount(4);
+  const testCard = entryRows.filter({ hasText: "Test payment" });
+  const testRefund = entryRows.filter({ hasText: "Test refund" });
+  await expect(testCard).toHaveCount(1);
+  await expect(testCard).toContainText("Excluded from statements and analytics.");
+  await expect(testCard).toContainText("$100.00");
+  await expect(testRefund).toHaveCount(1);
+  await expect(testRefund).toContainText("Excluded from statements and analytics.");
+  await expect(testRefund).toContainText("$40.00");
+  for (const [name, amt] of [["Cash", "$50.00"], ["E-transfer", "$75.00"]] as const) {
+    const real = entryRows.filter({ hasText: name });
+    await expect(real).toHaveCount(1);
+    await expect(real).toContainText(amt);
+    await expect(real).toHaveAttribute("data-test-mode", "false");
+    await expect(real).not.toContainText(/Test|Excluded/);
+  }
+  await expect(entryList.getByText("Excluded from statements and analytics.")).toHaveCount(2);
+  await shots(page, "t1-visit-test-labels");
+
   await page.goto("/financials/statement");
   const summary = page.getByRole("region", { name: "Summary" });
   await expect(summary).toContainText("Total collected");
@@ -223,7 +246,10 @@ test("a Stripe TEST card payment and its refund add nothing to the studio statem
   await expect(summary).not.toContainText("$225.00");
   await expect(summary).not.toContainText("$185.00");
   await expect(summary).not.toContainText("$100.00");
-  await expect(summary).toContainText("Cash");
+  // $125.00 is made of Cash $50 and E-transfer $75, with NO card line.
+  await expect(summary.getByRole("listitem").filter({ hasText: "Cash" })).toContainText("$50.00");
+  await expect(summary.getByRole("listitem").filter({ hasText: "E-transfer" })).toContainText("$75.00");
+  await expect(summary.getByRole("listitem").filter({ hasText: /^Card/ })).toHaveCount(0);
   await shots(page, "s1-studio-statement");
 
   await page.goto("/financials/analytics");

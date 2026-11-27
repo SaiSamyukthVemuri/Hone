@@ -188,7 +188,9 @@ export async function prepareSplitCardPaymentAction(formData: FormData): Promise
     return splitFail(who.studioId, appointmentId, "submission_reused");
   }
 
-  const sess = await admin.from("sessions").select("id").eq("studio_id", who.studioId).eq("appointment_id", appointmentId).limit(1).maybeSingle();
+  // The LIVE chart, deterministically: a deleted chart is never the one a card payment is attached to, and when a replacement exists the newest live one wins (Codex P2 on #1827).
+  const sess = await admin.from("sessions").select("id").eq("studio_id", who.studioId).eq("appointment_id", appointmentId).is("deleted_at", null)
+    .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1).maybeSingle();
   if (sess.error || !sess.data) {
     return splitFail(who.studioId, appointmentId, "no_session", "Card payment needs a chart entry for this visit. Add one first, or record the payment as cash or a transfer.");
   }

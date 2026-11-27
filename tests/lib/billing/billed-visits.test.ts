@@ -16,8 +16,10 @@ function fake(tables: Record<string, unknown[]>) {
     from(table: string) {
       const q: Record<string, unknown> = {};
       const self = () => q;
-      Object.assign(q, { select: self, eq: self, is: self, not: self, in: self, order: self, range: self, limit: self,
-        then: (res: (v: unknown) => unknown) => res({ data: tables[table] ?? [], error: null }) });
+      // The studio_has_gone_live probe (.eq("stripe_livemode", true)) finds a LIVE attempt only when the table says so; the fixtures here are test-mode or unflagged.
+      let liveProbe = false;
+      Object.assign(q, { select: self, eq: (c: string, v: unknown) => { if (c === "stripe_livemode" && v === true) liveProbe = true; return q; }, is: self, not: self, in: self, order: self, range: self, limit: self,
+        then: (res: (v: unknown) => unknown) => res({ data: liveProbe ? (tables[table] ?? []).filter((r) => (r as { stripe_livemode?: boolean }).stripe_livemode === true) : tables[table] ?? [], error: null }) });
       return q;
     },
   } as never;
@@ -72,5 +74,14 @@ describe("a billed visit's roster read: the dashboard refund of the rest, and an
   it("a failed read of the reviews fails the whole read (unknown is not 'no review')", async () => {
     const failing = { from: (t: string) => { const q: Record<string, unknown> = {}; const self = () => q; Object.assign(q, { select: self, eq: self, is: self, not: self, in: self, order: self, range: self, limit: self, then: (res: (v: unknown) => unknown) => res({ data: t === "payment_refund_reviews" ? null : (({ ...base, payment_refunds: [] }) as Record<string, unknown[]>)[t] ?? [], error: t === "payment_refund_reviews" ? { code: "x" } : null }) }); return q; } } as never;
     expect((await readBilledVisits(failing, STUDIO, [A])).ok).toBe(false);
+  });
+});
+
+describe("the roster mirror of studio_has_gone_live (0394)", () => {
+  const bill = { totalCents: 22500, currency: "cad", externals: [], refunds: [{ amountCents: 3000, status: "succeeded", kind: "price_reduction", uncounted: true }] };
+  it("a price reduction on a non-live card in a live studio adds nothing back; a counted one still does", async () => {
+    const { billedOutstanding } = await import("@/lib/billing/visit-payments-core");
+    expect(billedOutstanding(bill as never, [])).toMatchObject({ kind: "owed", outstandingCents: 22500 });
+    expect(billedOutstanding({ ...bill, refunds: [{ ...bill.refunds[0], uncounted: undefined }] } as never, [])).toMatchObject({ kind: "owed", outstandingCents: 25500 });
   });
 });

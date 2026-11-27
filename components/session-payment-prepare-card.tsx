@@ -1,5 +1,6 @@
 "use client";
 
+import type { HistoryLine } from "@/lib/billing/visit-payments-core";
 import { VisitMoneyBlock } from "@/components/visit-money-block";
 import type { VisitMoneySummary } from "@/lib/billing/visit-money";
 import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
@@ -226,6 +227,7 @@ export function SessionPaymentPrepareCard({
   visitBilled = false,
   billedMoney = null,
   billedStillToCollectCents = null,
+  billedEntries,
   billedCurrency = null,
   onSettlementRecorded,
   initialMethod,
@@ -266,6 +268,8 @@ export function SessionPaymentPrepareCard({
   billedMoney?: VisitMoneySummary | null;
   /** A billed visit's "Still to collect" (same figure as checkout), shown under Net. */
   billedStillToCollectCents?: number | null;
+  /** The visit's itemised payment entries (Stripe TEST-mode ones are labelled on the entry). */
+  billedEntries?: ReadonlyArray<HistoryLine>;
   billedCurrency?: PaymentCurrency | null;
   // Pass-through to AppointmentSettlementControls, and the ONLY refresh-shaped
   // prop this card accepts.
@@ -506,7 +510,7 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
-      {visitBilled && billedMoney && <VisitMoneyBlock summary={billedMoney} currency={billedCurrency} stillToCollectCents={billedStillToCollectCents} />}
+      {visitBilled && billedMoney && <VisitMoneyBlock summary={billedMoney} currency={billedCurrency} stillToCollectCents={billedStillToCollectCents} entries={billedEntries} />}
       {/* A billed visit shows Collected / Refunded / Net above instead of ONE succeeded card payment's "Paid". A ready or pending attempt keeps its controls (Run charge, the status
           recheck): hiding them would strand a prepared payment that nothing else can run (Codex P2 on #1827). */}
       {!(visitBilled && billedMoney && activeAttempt?.status === "succeeded") && (<>

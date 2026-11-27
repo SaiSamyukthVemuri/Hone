@@ -42,6 +42,9 @@ drop function public.record_refund_sent(uuid, text);
 drop function public.get_visit_payment_position(uuid, uuid);
 drop function public.visit_payment_refusal(uuid, uuid, integer);
 drop function public.visit_payment_position(uuid, uuid);
+drop index public.payment_charge_attempts_live_succeeded_idx;
+drop function public.card_counts_toward_capacity(uuid, boolean);
+drop function public.studio_has_gone_live(uuid);
 
 drop index public.payment_charge_attempts_active_session_payment_uniq;
 create unique index payment_charge_attempts_active_session_payment_uniq

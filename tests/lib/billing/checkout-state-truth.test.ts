@@ -35,6 +35,7 @@ vi.mock("@/lib/supabase/server", () => ({
       q.order = () => q;
       q.is = () => q;
       q.not = () => q;
+      q.limit = () => q;
       q.eq = (col: string, val: unknown) => {
         eqs.push([col, val]);
         return q;

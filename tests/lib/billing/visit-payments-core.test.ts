@@ -221,3 +221,23 @@ describe("a reload while a card payment is unresolved (Codex P1)", () => {
     expect(l[0]).toMatchObject({ key: "refund:r1", status: "refund_in_progress" });
   });
 });
+
+// 0394 studio_has_gone_live / card_counts_toward_capacity: the app mirror. Before a studio has a succeeded LIVE card attempt every card counts (test lanes unchanged); after it a
+// non-live card no longer counts toward capacity, and a price reduction on it adds nothing back. Test-mode money stays in the visit's Collected / Refunded / Net (labelling only).
+describe("visitBalance mirrors which card money counts (studio_has_gone_live)", () => {
+  const testCard = { kind: "card" as const, id: "t", amountCents: 22500, status: "succeeded", at: "t", platformFeeCents: null, test: true };
+  const liveCard = { kind: "card" as const, id: "l", amountCents: 10000, status: "succeeded", at: "t", platformFeeCents: null };
+  it("a test-only studio: a test card reduces the balance, exactly as before", () => {
+    expect(visitBalance(ledger({ cards: [testCard] }))).toMatchObject({ cardCents: 22500, collectableCents: 0 });
+    expect(visitBalance(ledger({ studioLive: false, cards: [testCard] }))).toMatchObject({ cardCents: 22500, collectableCents: 0 });
+  });
+  it("after going live: an old test charge no longer blocks, and a mixed visit counts only the live card", () => {
+    expect(visitBalance(ledger({ studioLive: true, cards: [testCard] }))).toMatchObject({ cardCents: 0, collectableCents: 22500 });
+    expect(visitBalance(ledger({ studioLive: true, cards: [testCard, liveCard] }))).toMatchObject({ cardCents: 10000, collectableCents: 12500 });
+  });
+  it("a price reduction on a non-live card adds nothing back once live; on a live card it still does", () => {
+    const red = (attemptId: string, test?: boolean) => ({ id: "r", amountCents: 3000, kind: "price_reduction" as const, status: "succeeded" as const, attemptId, externalPaymentId: null, reason: "x", at: "t", platformFeeReturnedCents: null, ...(test ? { test: true } : {}) });
+    expect(visitBalance(ledger({ studioLive: true, cards: [testCard], refunds: [red("t", true)] }))?.collectableCents).toBe(22500);
+    expect(visitBalance(ledger({ studioLive: true, cards: [liveCard], refunds: [red("l")] }))?.collectableCents).toBe(12500 + 3000);
+  });
+});

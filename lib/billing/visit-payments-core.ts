@@ -33,6 +33,8 @@ export type LedgerCard = {
   platformFeeCents: number | null;
   /** The receipt for this payment was already sent (payment_charge_attempts.receipt_sent_at). Optional: absent = unknown, treated as not sent. */
   receiptSent?: boolean;
+  /** A Stripe TEST-mode (or unknown-mode) charge: stripe_livemode is not true. Same signal as the statement, which excludes it. Absent = live. */
+  test?: boolean;
 };
 export type LedgerExternal = {
   kind: "external"; id: string; method: ExternalMethod; amountCents: number; state: "confirmed" | "pending_confirmation" | "voided"; at: string; note: string | null;
@@ -42,12 +44,15 @@ export type LedgerRefund = {
   attemptId: string | null; externalPaymentId: string | null; reason: string; at: string; platformFeeReturnedCents: number | null;
   /** Money returned in the Stripe dashboard (a fixed Hone sentence, never staff text): shown with a FIXED label, and its stored reason is never displayed. */
   observed?: boolean;
+  /** The refund is of a TEST-mode (or unknown-mode) card payment. Absent = live. */
+  test?: boolean;
 };
 /** A refund Stripe reported that Hone did not make, waiting for the owner. Closed fields only. */
 export type LedgerReview = { id: string; amountCents: number; settled: boolean };
 export const OBSERVED_REFUND_LABEL = "Refunded in the Stripe dashboard";
 /** `reviewOpen`: a refund Stripe reported that Hone did not make is waiting for the owner (the payment is frozen and the visit is NOT settled). */
-export type VisitLedger = { bill: LedgerBill | null; cards: LedgerCard[]; externals: LedgerExternal[]; refunds: LedgerRefund[]; reviewOpen?: boolean; reviews?: LedgerReview[] };
+/** `studioLive`: the studio has gone live (a succeeded live card attempt exists), so card payments that are not live no longer count toward capacity (studio_has_gone_live, 0394). */
+export type VisitLedger = { studioLive?: boolean; bill: LedgerBill | null; cards: LedgerCard[]; externals: LedgerExternal[]; refunds: LedgerRefund[]; reviewOpen?: boolean; reviews?: LedgerReview[] };
 
 /**
  * A billed attempt's OWN refund columns (0078 full only, 0240 full amount only) are Stripe's cumulative statement of the whole payment. When they say more
@@ -78,12 +83,14 @@ export function visitBalance(l: VisitLedger): VisitBalance | null {
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   const confirmedCents = sum(l.externals.filter((e) => e.state === "confirmed").map((e) => e.amountCents));
   const pendingCents = sum(l.externals.filter((e) => e.state === "pending_confirmation").map((e) => e.amountCents));
-  const cardCents = sum(l.cards.filter((c) => ["ready", "pending_stripe", "succeeded"].includes(c.status)).map((c) => c.amountCents));
+  // card_counts_toward_capacity (0394): once the studio has gone live, a card payment that is not live is not subtracted. Before that every card counts, as it always did.
+  const countsCard = (c: { test?: boolean }) => !(l.studioLive === true && c.test === true);
+  const cardCents = sum(l.cards.filter((c) => ["ready", "pending_stripe", "succeeded"].includes(c.status) && countsCard(c)).map((c) => c.amountCents));
   // Only a SUCCEEDED refund counts (0394): one still with Stripe may yet fail, so it frees no capacity.
   const refundedCents = sum(l.refunds.filter((r) => r.status === "succeeded").map((r) => r.amountCents));
   // PRODUCT RULE (Sam, 27 Nov 2026), the same as visit_payment_position (0394): refunding a paid visit does not by itself reopen a balance. Only a succeeded
   // price_reduction (the bill already dropped by that amount) adds back; a payment_reversal does not. `refundedCents` stays ALL money returned.
-  const reducedCents = sum(l.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction").map((r) => r.amountCents));
+  const reducedCents = sum(l.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction" && countsCard(r)).map((r) => r.amountCents));
   const collectableCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - cardCents + reducedCents);
   return { totalCents: l.bill.totalCents, confirmedCents, pendingCents, cardCents, refundedCents, collectableCents, owedCents: collectableCents + pendingCents };
 }
@@ -96,7 +103,12 @@ export type HistoryLine = {
   direction: "in" | "out";
   status: "received" | "pending" | "voided" | "failed" | "in_progress" | "refund_in_progress" | "not_sent" | "cancelled";
   at: string;
+  /** A Stripe TEST-mode entry: labelled on the entry itself and left out of statements and analytics. */
+  test?: boolean;
 };
+export const TEST_PAYMENT_LABEL = "Test payment";
+export const TEST_REFUND_LABEL = "Test refund";
+export const TEST_EXCLUDED_NOTE = "Excluded from statements and analytics.";
 
 const METHOD_LABEL: Record<ExternalMethod, string> = { paid_cash: "Cash", paid_e_transfer: "E-transfer", paid_other_external: "Transfer or other" };
 export const methodLabel = (m: ExternalMethod) => METHOD_LABEL[m];
@@ -107,7 +119,7 @@ export function historyLines(l: VisitLedger): HistoryLine[] {
   for (const c of l.cards) {
     // A prepared charge that was never run is not a payment, but it HOLDS its amount against the balance, so it is listed (never hidden) and can be cancelled.
     lines.push({
-      key: `card:${c.id}`, label: "Card", amountCents: c.amountCents, direction: "in", at: c.at,
+      key: `card:${c.id}`, label: c.test ? TEST_PAYMENT_LABEL : "Card", test: c.test === true, amountCents: c.amountCents, direction: "in", at: c.at,
       status: c.status === "succeeded" ? "received" : c.status === "pending_stripe" ? "in_progress" : c.status === "ready" ? "not_sent" : c.status === "cancelled" ? "cancelled" : "failed",
     });
   }
@@ -121,7 +133,7 @@ export function historyLines(l: VisitLedger): HistoryLine[] {
     const what = r.observed ? OBSERVED_REFUND_LABEL : r.kind === "price_reduction" ? "Price reduced, money returned" : "Payment returned";
     const from = r.attemptId ? "card" : "cash or transfer";
     lines.push({
-      key: `refund:${r.id}`, label: r.observed ? `${what} (card)` : `${what} (${from})`, amountCents: r.amountCents, direction: "out", at: r.at,
+      key: `refund:${r.id}`, label: r.test ? TEST_REFUND_LABEL : r.observed ? `${what} (card)` : `${what} (${from})`, test: r.test === true, amountCents: r.amountCents, direction: "out", at: r.at,
       status: r.status === "succeeded" ? "received" : r.status === "pending_stripe" ? "refund_in_progress" : "failed",
     });
   }
@@ -369,7 +381,8 @@ export type BilledVisitRows = {
   currency: string;
   externals: ReadonlyArray<{ amountCents: number; state: string }>;
   /** `kind` absent = a payment reversal (a refund read from the attempt's own columns, or a review): it never reopens a balance. */
-  refunds: ReadonlyArray<{ amountCents: number; status: string; kind?: string }>;
+  /** `uncounted`: a refund of a non-live card payment in a studio that has gone live (studio_has_gone_live, 0394): that card is not subtracted, so a reduction on it adds nothing back. */
+  refunds: ReadonlyArray<{ amountCents: number; status: string; kind?: string; uncounted?: boolean }>;
 };
 
 export type BilledOutstanding =
@@ -398,7 +411,7 @@ export function billedOutstanding(
   }
   if (bill.refunds.some((r) => r.status === "pending_stripe")) return { kind: "amount_unavailable" };
   const collected = bill.externals.filter((e) => e.state === "confirmed").reduce((n, e) => n + e.amountCents, 0);
-  const handedBack = bill.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction").reduce((n, r) => n + r.amountCents, 0);
+  const handedBack = bill.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction" && !r.uncounted).reduce((n, r) => n + r.amountCents, 0);
   const owed = bill.totalCents - collected - cardKept + handedBack;
   if (owed <= 0) return { kind: "paid" };
   return { kind: "owed", outstandingCents: owed, currency: cur, quoteCents: bill.totalCents, cardKeptCents: cardKept, collectedCents: collected };

@@ -86,6 +86,25 @@ create unique index payment_charge_attempts_active_session_payment_uniq
 -- with the refund, so the balance is unchanged) adds back to what is outstanding; a payment_reversal does NOT. This supersedes the 0393 header sentence that says
 -- a reversal raises the balance due. refunded_cents still reports ALL money returned (the Refunded figure); outstanding_cents is what a new tender may take.
 -- ---------------------------------------------------------------------------
+-- WHICH CARD MONEY COUNTS (Sam, 27 Nov 2026: Stripe TEST-mode money is not real money). A studio "has gone live" once it has at least one SUCCEEDED card attempt with
+-- stripe_livemode = true. Before that, every card attempt counts toward capacity exactly as it always did, so test-mode environments (CI, dev, staging, the fake-Stripe
+-- lane) behave unchanged. After it, an attempt that is not live no longer counts: an old pilot test charge can never block collecting real money. The mode is derived here
+-- from the rows, never passed in by a caller (an owner could call the commands directly and claim any mode). ONE definition, used by the position and so by the refusal,
+-- the card wall and every command. Statements and analytics are live-only regardless and are not changed by this.
+create function public.studio_has_gone_live(p_studio uuid) returns boolean
+language sql stable security definer set search_path = pg_catalog, pg_temp
+as $$
+  select exists (select 1 from public.payment_charge_attempts a where a.studio_id = p_studio and a.stripe_livemode = true and a.status = 'succeeded');
+$$;
+create index payment_charge_attempts_live_succeeded_idx on public.payment_charge_attempts (studio_id) where stripe_livemode = true and status = 'succeeded';
+create function public.card_counts_toward_capacity(p_studio uuid, p_livemode boolean) returns boolean
+language sql stable security definer set search_path = pg_catalog, pg_temp
+as $$
+  select p_livemode is true or not public.studio_has_gone_live(p_studio);
+$$;
+revoke all privileges on function public.studio_has_gone_live(uuid) from public, anon, authenticated, service_role;
+revoke all privileges on function public.card_counts_toward_capacity(uuid, boolean) from public, anon, authenticated, service_role;
+
 create function public.visit_payment_position(p_studio uuid, p_appointment uuid)
 returns table (bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
                card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean)
@@ -105,7 +124,8 @@ as $$
       select coalesce(sum(a.amount_cents), 0)::integer as card
         from public.payment_charge_attempts a
        where a.studio_id = p_studio and a.appointment_id = p_appointment and a.charge_reason = 'session_payment'
-         and a.visit_bill_id is not null and a.status in ('ready', 'pending_stripe', 'succeeded')) c
+         and a.visit_bill_id is not null and a.status in ('ready', 'pending_stripe', 'succeeded')
+         and public.card_counts_toward_capacity(p_studio, a.stripe_livemode)) c
     -- Money returned: payment_refund_money (0393), the one definition, for every settled payment of the visit.
     cross join lateral (
       select coalesce(sum(m.succeeded_cents), 0)::integer as refunded
@@ -120,7 +140,10 @@ as $$
     cross join lateral (
       select coalesce(sum(pr.amount_cents), 0)::integer as reduced
         from public.payment_refunds pr
-       where pr.studio_id = p_studio and pr.appointment_id = p_appointment and pr.kind = 'price_reduction' and pr.status = 'succeeded') d
+        left join public.payment_charge_attempts pa on pa.id = pr.attempt_id
+       where pr.studio_id = p_studio and pr.appointment_id = p_appointment and pr.kind = 'price_reduction' and pr.status = 'succeeded'
+         -- a reduction on a card payment that does not count (see studio_has_gone_live) adds back nothing: the card itself was never subtracted
+         and (pr.attempt_id is null or public.card_counts_toward_capacity(p_studio, pa.stripe_livemode))) d
    where b.studio_id = p_studio and b.appointment_id = p_appointment and b.superseded_at is null;
 $$;
 revoke all privileges on function public.visit_payment_position(uuid, uuid) from public, anon, authenticated, service_role;

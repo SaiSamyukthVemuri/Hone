@@ -27,13 +27,18 @@ export async function readBilledVisits(
     // and visit_payment_position counts it for a billed attempt. Dropping it left a refunded visit reading "paid".
     readInChunks<{ appointment_id: string; attempt_id: string | null; amount_cents: number; status: string; legacy: boolean; kind: string }>(ids, (chunk) =>
       supabase.from("payment_refunds").select("appointment_id, attempt_id, amount_cents, status, legacy, kind").eq("studio_id", studioId).in("appointment_id", chunk)),
-    readInChunks<{ id: string; appointment_id: string; status: string | null; amount_cents: number | null; refund_status: string | null; refund_amount_cents: number | null }>(ids, (chunk) =>
-      supabase.from("payment_charge_attempts").select("id, appointment_id, status, amount_cents, refund_status, refund_amount_cents").eq("studio_id", studioId).eq("charge_reason", "session_payment").not("visit_bill_id", "is", null).in("appointment_id", chunk)),
+    readInChunks<{ id: string; appointment_id: string; status: string | null; amount_cents: number | null; refund_status: string | null; refund_amount_cents: number | null; stripe_livemode: boolean | null }>(ids, (chunk) =>
+      supabase.from("payment_charge_attempts").select("id, appointment_id, status, amount_cents, refund_status, refund_amount_cents, stripe_livemode").eq("studio_id", studioId).eq("charge_reason", "session_payment").not("visit_bill_id", "is", null).in("appointment_id", chunk)),
     // A refund made in the Stripe dashboard that the owner has not confirmed: the visit is never "paid" while it is open (it reads as a refund in flight).
     readInChunks<{ appointment_id: string | null; amount_cents: number }>(ids, (chunk) =>
       supabase.from("payment_refund_reviews").select("appointment_id, amount_cents").eq("studio_id", studioId).is("resolved_at", null).in("appointment_id", chunk)),
   ]);
   if (!ext.ok || !refs.ok || !attempts.ok || !reviews.ok) return { ok: false };
+  // studio_has_gone_live (0394): once the studio has a succeeded LIVE card attempt, a price reduction on a non-live card adds back nothing (that card was never subtracted).
+  const live = await supabase.from("payment_charge_attempts").select("id").eq("studio_id", studioId).eq("stripe_livemode", true).eq("status", "succeeded").limit(1);
+  if (live.error) return { ok: false };
+  const studioLive = (live.data?.length ?? 0) > 0;
+  const testAttempts = new Set(attempts.rows.filter((a) => a.stripe_livemode !== true).map((a) => a.id));
   const billedAttempts = new Set(attempts.rows.map((a) => a.id));
   for (const b of bills.rows) {
     billed.set(b.appointment_id, {
@@ -41,7 +46,7 @@ export async function readBilledVisits(
       currency: b.currency,
       externals: ext.rows.filter((r) => r.appointment_id === b.appointment_id).map((r) => ({ amountCents: r.amount_cents, state: r.state })),
       refunds: [
-        ...refs.rows.filter((r) => r.appointment_id === b.appointment_id && keepsRefundForBilledVisit({ legacy: r.legacy, attemptId: r.attempt_id }, billedAttempts)).map((r) => ({ amountCents: r.amount_cents, status: r.status, kind: r.kind })),
+        ...refs.rows.filter((r) => r.appointment_id === b.appointment_id && keepsRefundForBilledVisit({ legacy: r.legacy, attemptId: r.attempt_id }, billedAttempts)).map((r) => ({ amountCents: r.amount_cents, status: r.status, kind: r.kind, ...(studioLive && r.attempt_id && testAttempts.has(r.attempt_id) ? { uncounted: true } : {}) })),
         // The attempt's own refund columns (Stripe's cumulative statement) can say more came back than its rows do: that difference is returned money (payment_refund_money, 0393).
         ...attempts.rows.filter((a) => a.appointment_id === b.appointment_id && a.status === "succeeded" && typeof a.amount_cents === "number").flatMap((a) => {
           const mine = refs.rows.filter((r) => r.attempt_id === a.id);

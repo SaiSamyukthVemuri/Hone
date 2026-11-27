@@ -15,6 +15,7 @@ const S = vi.hoisted(() => ({
   stripeCalls: 0,
   executeCalls: 0,
   executeResult: null as null | Record<string, unknown>,
+  sessions: [{ id: "s1", deleted_at: null, created_at: "2026-11-01T00:00:00Z" }] as Array<{ id: string; deleted_at: string | null; created_at: string }>,
   prior: null as null | Record<string, unknown>,
   refundCalls: [] as unknown[],
   refundOutcome: { outcome: "succeeded", message: "Refund recorded." } as { outcome: string; message: string },
@@ -48,9 +49,16 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
       const self = () => chain;
+      // sessions behaves like the table: .is("deleted_at", null) keeps live rows, .order("created_at"/"id", desc) sorts, maybeSingle takes the first.
+      let liveOnly = false;
       Object.assign(chain, {
-        select: self, eq: self, not: self, limit: self,
-        maybeSingle: async () => (table === "sessions" ? { data: { id: "s1" }, error: null } : { data: S.prior, error: null }),
+        select: self, eq: self, not: self, limit: self, order: self,
+        is: (col: string, v: unknown) => { if (col === "deleted_at" && v === null) liveOnly = true; return chain; },
+        maybeSingle: async () => {
+          if (table !== "sessions") return { data: S.prior, error: null };
+          const rows = S.sessions.filter((r) => !liveOnly || r.deleted_at === null).sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+          return { data: rows[0] ? { id: rows[0].id } : null, error: null };
+        },
         insert: (row: unknown) => { S.inserts.push(row); return { select: () => ({ single: async () => (S.insertError ? { data: null, error: S.insertError } : { data: { id: "att1" }, error: null }) }) }; },
       });
       return chain;
@@ -70,7 +78,7 @@ const form = (o: Record<string, string>) => { const f = new FormData(); for (con
 
 beforeEach(() => {
   S.role = "owner"; S.enabled = true; S.command = { result: "recorded", id: "p1", state: "confirmed" }; S.commandCalls = [];
-  S.executeResult = null; S.insertError = null; S.inserts = []; S.stripeCalls = 0; S.executeCalls = 0; S.prior = null; S.refundCalls = []; S.refundOutcome = { outcome: "succeeded", message: "Refund recorded." };
+  S.executeResult = null; S.sessions = [{ id: "s1", deleted_at: null, created_at: "2026-11-01T00:00:00Z" }]; S.insertError = null; S.inserts = []; S.stripeCalls = 0; S.executeCalls = 0; S.prior = null; S.refundCalls = []; S.refundOutcome = { outcome: "succeeded", message: "Refund recorded." };
   S.ledger = { bill: { id: "b", totalCents: 22500, currency: "cad", referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "x" }, cards: [], externals: [], refunds: [] };
 });
 
@@ -188,6 +196,32 @@ describe("a card for reserved money never reaches Stripe", () => {
     expect(await prep()).toMatchObject({ ok: false, code: "submission_reused" });
     S.prior = { id: "first-attempt", amount_cents: 7500, currency: "cad", appointment_id: APPT, status: "cancelled" };
     expect(await prep()).toMatchObject({ ok: false, code: "submission_reused" });
+  });
+});
+
+describe("the chart a split card payment attaches to (Codex P2 on #1827)", () => {
+  const prepCard = () => prepareSplitCardPaymentAction(form({ appointment_id: APPT, amount_dollars: "50.00", expected_currency: "cad", submission_id: SUB }));
+  it("a deleted chart is skipped: with a deleted chart and its live replacement, the attempt is attached to the replacement", async () => {
+    S.sessions = [
+      { id: "deleted-old", deleted_at: "2026-11-02T00:00:00Z", created_at: "2026-11-03T00:00:00Z" },
+      { id: "live-replacement", deleted_at: null, created_at: "2026-11-01T00:00:00Z" },
+    ];
+    await prepCard();
+    expect(S.inserts).toHaveLength(1);
+    expect(S.inserts[0]).toMatchObject({ session_id: "live-replacement" });
+  });
+  it("only a deleted chart exists: nothing is prepared (no_session)", async () => {
+    S.sessions = [{ id: "deleted-old", deleted_at: "2026-11-02T00:00:00Z", created_at: "2026-11-03T00:00:00Z" }];
+    expect(await prepCard()).toMatchObject({ ok: false, code: "no_session" });
+    expect(S.inserts).toHaveLength(0);
+  });
+  it("two live charts: the newest one, always", async () => {
+    S.sessions = [
+      { id: "older", deleted_at: null, created_at: "2026-11-01T00:00:00Z" },
+      { id: "newer", deleted_at: null, created_at: "2026-11-05T00:00:00Z" },
+    ];
+    await prepCard();
+    expect(S.inserts[0]).toMatchObject({ session_id: "newer" });
   });
 });
 
