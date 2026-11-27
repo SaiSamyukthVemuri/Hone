@@ -7,7 +7,7 @@ import {
   STATUS_LABEL, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
-  confirmTransferAction, prepareSplitCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
+  confirmTransferAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
   voidTransferAction, type SplitActionResult, type SplitState,
 } from "@/app/(app)/visit-payment-actions";
 
@@ -126,8 +126,13 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const cents = parseDollarsToCents(amount);
   const unknown = showCheckingStatus(phase);
   const transfers = ledger.externals.filter((e) => e.state === "pending_confirmation");
-  // Cash and transfer payments can be refunded here (recorded at once). A card payment's refund is a Stripe call and has its own control.
-  const refundable = ledger.externals.filter((e) => e.state === "confirmed").map((e) => ({ key: `ext:${e.id}`, label: methodLabel(e.method), cents: e.amountCents, id: e.id }));
+  // Choose ONE payment to refund against. Cash and transfers are recorded at once; a card refund asks Stripe (and may say "Checking refund status").
+  const stillRefundable = (match: (r: (typeof ledger.refunds)[number]) => boolean, total: number) =>
+    total - ledger.refunds.filter((r) => r.status !== "failed" && match(r)).reduce((n, r) => n + r.amountCents, 0);
+  const refundable = [
+    ...ledger.cards.filter((c) => c.status === "succeeded").map((c) => ({ key: `card:${c.id}`, label: "Card", cents: stillRefundable((r) => r.attemptId === c.id, c.amountCents), id: c.id, card: true })),
+    ...ledger.externals.filter((e) => e.state === "confirmed").map((e) => ({ key: `ext:${e.id}`, label: methodLabel(e.method), cents: stillRefundable((r) => r.externalPaymentId === e.id, e.amountCents), id: e.id, card: false })),
+  ].filter((r) => r.cents > 0);
   const tenderLabel = tender === "card" ? "Charge card" : tender === "paid_cash" ? "Record cash received" : "Record transfer";
   const submitLabel = cents ? `${tenderLabel} ${fmt(cents)}` : tenderLabel;
 
@@ -212,7 +217,21 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
 
       {refundable.length > 0 && !unknown && (
         <RefundForm received={refundable} fmt={fmt} busy={busy}
-          onSubmit={async (v) => { setBusy(true); try { apply(await refundExternalPaymentAction(form({ payment_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: submission }))); } finally { setBusy(false); } }} />
+          onSubmit={async (v) => {
+            setBusy(true);
+            try {
+              if (v.card) {
+                const r = await refundCardPaymentAction(form({ attempt_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: submission }));
+                apply(r);
+                // Lost answer: keep the SAME submission so checking again re-reads the one refund, never makes another.
+                if (r.checking) { setSubmission(submission); setNote({ tone: "info", message: "Checking refund status" }); }
+              } else {
+                apply(await refundExternalPaymentAction(form({ payment_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: submission })));
+              }
+            } catch {
+              setNote({ tone: "blocked", message: "Checking refund status. Do not refund again yet; reload and check this payment's history." });
+            } finally { setBusy(false); }
+          }} />
       )}
     </section>
   );
@@ -243,8 +262,8 @@ function PendingTransfer(props: { id: string; label: string; amount: string; bus
 }
 
 function RefundForm(props: {
-  received: { key: string; label: string; cents: number; id: string }[]; fmt: (c: number) => string; busy: boolean;
-  onSubmit: (v: { paymentId: string; amount: string; kind: "price_reduction" | "payment_reversal"; reason: string }) => Promise<void>;
+  received: { key: string; label: string; cents: number; id: string; card: boolean }[]; fmt: (c: number) => string; busy: boolean;
+  onSubmit: (v: { paymentId: string; amount: string; kind: "price_reduction" | "payment_reversal"; reason: string; card: boolean }) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const [paymentId, setPaymentId] = useState(props.received[0]?.id ?? "");
@@ -260,7 +279,7 @@ function RefundForm(props: {
         <div className="mt-3 flex flex-col gap-3" data-testid="split-refund-form">
           <label className="text-sm font-medium">Payment to refund
             <select className={input} value={paymentId} onChange={(e) => setPaymentId(e.target.value)}>
-              {props.received.map((r) => <option key={r.key} value={r.id}>{r.label} {props.fmt(r.cents)}</option>)}
+              {props.received.map((r) => <option key={r.key} value={r.id}>{r.label}, up to {props.fmt(r.cents)} refundable</option>)}
             </select>
           </label>
           <fieldset className="flex flex-col gap-2">
@@ -277,7 +296,7 @@ function RefundForm(props: {
             <input className={input} value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
           </label>
           <button type="button" className={primary} disabled={props.busy || cents === null || reason.trim() === ""}
-            onClick={() => void props.onSubmit({ paymentId, amount, kind, reason: reason.trim() }).then(() => { setAmount(""); setReason(""); })}>
+            onClick={() => void props.onSubmit({ paymentId, amount, kind, reason: reason.trim(), card: props.received.find((r) => r.id === paymentId)?.card ?? false }).then(() => { setAmount(""); setReason(""); })}>
             {cents ? `Record ${props.fmt(cents)} ${kind === "price_reduction" ? "price reduction" : "refund"}` : "Record refund"}
           </button>
         </div>

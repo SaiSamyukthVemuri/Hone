@@ -129,6 +129,7 @@ export function commandNote(code: string, ctx: { collectableCents?: number; curr
       return { tone: "blocked", message: "This amount is reserved for a pending transfer. Confirm the transfer when the money arrives, or cancel it to collect this amount another way." };
     case "exceeds_balance": case "PY002":
       return { tone: "blocked", message: `That is more than is still collectable on this visit.${left}` };
+    case "refund_failed": return { tone: "blocked", message: "Stripe could not complete this refund. Nothing was returned." };
     case "exceeds_refundable": return { tone: "blocked", message: "That is more than is left to refund on this payment. Choose a smaller amount." };
     case "exceeds_bill": return { tone: "blocked", message: "A price reduction cannot be more than the bill." };
     case "confirmed_is_final": return { tone: "blocked", message: "A confirmed payment cannot be cancelled. If the money went back to the client, record a refund." };
@@ -228,4 +229,18 @@ export function billedOutstanding(
   const owed = bill.totalCents - collected - cardKept + handedBack;
   if (owed <= 0) return { kind: "paid" };
   return { kind: "owed", outstandingCents: owed, currency: cur, quoteCents: bill.totalCents, cardKeptCents: cardKept, collectedCents: collected };
+}
+
+
+/**
+ * The share of a charge's platform fee returned with one partial card refund (US pilot fee, HON-90): proportional to the amount refunded, rounded
+ * down, and the LAST refund returns exactly what is left so the fee returned never exceeds the fee taken and a full refund returns all of it.
+ * A charge with no fee (null or 0) returns none (null). $100 charge, $0.50 fee, $40 refund = $0.20.
+ */
+export function proportionalFeeReturn(args: { feeCents: number | null; chargeCents: number; refundCents: number; alreadyRefundedCents: number; alreadyReturnedCents: number }): number | null {
+  const { feeCents, chargeCents, refundCents, alreadyRefundedCents, alreadyReturnedCents } = args;
+  if (feeCents === null || feeCents <= 0 || chargeCents <= 0 || refundCents <= 0) return null;
+  const left = Math.max(0, feeCents - alreadyReturnedCents);
+  if (alreadyRefundedCents + refundCents >= chargeCents) return left;
+  return Math.min(left, Math.floor((feeCents * refundCents) / chargeCents));
 }

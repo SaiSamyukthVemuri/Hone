@@ -256,3 +256,41 @@ export async function runSplitCardPaymentAction(formData: FormData): Promise<Spl
   // needs_manual_review, not_found, not_authorized: not a definite answer about the money.
   return { outcome: "unknown", state: await after() };
 }
+
+// ---------------------------------------------------------------------------
+// Partial refund of a CARD payment
+// ---------------------------------------------------------------------------
+import { refundCardPaymentPartial } from "@/lib/billing/payment-partial-refund";
+
+export type CardRefundResult = SplitActionResult & { checking?: boolean; refundId?: string | null };
+
+/**
+ * Refund (or reduce the price by) part of ONE card payment. request_payment_refund (owner-only, under the visit's lock) caps the amount at what is
+ * still refundable and records a pending_stripe row; only then is Stripe asked, once, with the row id as the idempotency key. If the answer is lost
+ * the row stays pending and `checking: true` tells the screen to say "Checking refund status" and offer only a re-check, never a second refund.
+ * Calling again with the SAME submission id and the existing refund id re-checks without creating anything.
+ */
+export async function refundCardPaymentAction(formData: FormData): Promise<CardRefundResult> {
+  const who = await owner();
+  if (!who) return refuse("not_owner");
+  const appointmentId = str(formData.get("appointment_id"));
+  const attemptId = str(formData.get("attempt_id"));
+  const kind = str(formData.get("kind"));
+  const submissionId = str(formData.get("submission_id"));
+  const cents = parseDollarsToCents(str(formData.get("amount_dollars")));
+  const reason = str(formData.get("reason"));
+  if (!UUID.test(appointmentId) || !UUID.test(attemptId) || !UUID.test(submissionId) || cents === null || reason === "" || reason.length > 500
+      || (kind !== "price_reduction" && kind !== "payment_reversal")) return refuse("invalid_input");
+  const row = await callCommand("request_payment_refund", {
+    p_studio_id: who.studioId, p_appointment_id: appointmentId, p_attempt_id: attemptId, p_external_payment_id: null,
+    p_amount_cents: cents, p_kind: kind, p_reason: reason, p_submission_id: submissionId,
+  });
+  if ((row.result !== "requested" && row.result !== "already_requested") || !row.id) return finish(who.studioId, appointmentId, row.result, row.id);
+
+  // The ledger row decides whether Stripe still needs asking: a repeated request returns the first row, and a settled row is not sent again.
+  const sent = await refundCardPaymentPartial({ refundId: row.id, studioId: who.studioId, feeReturnedCents: null });
+  const out = await finish(who.studioId, appointmentId, sent.outcome === "failed" ? "refund_failed" : row.result, row.id);
+  if (sent.outcome === "unknown") return { ...out, ok: true, checking: true, refundId: row.id, note: { tone: "info", message: "Checking refund status" } };
+  if (sent.outcome === "failed" || sent.outcome === "blocked") return { ...out, ok: false, refundId: row.id, note: { tone: "blocked", message: sent.message } };
+  return { ...out, refundId: row.id, note: { tone: "ok", message: sent.message } };
+}

@@ -15,6 +15,8 @@ const S = vi.hoisted(() => ({
   stripeCalls: 0,
   executeCalls: 0,
   prior: null as null | Record<string, unknown>,
+  refundCalls: [] as unknown[],
+  refundOutcome: { outcome: "succeeded", message: "Refund recorded." } as { outcome: string; message: string },
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -26,6 +28,9 @@ vi.mock("@/lib/billing/visit-payments", () => ({
   splitPaymentsEnabled: async () => S.enabled,
   loadVisitLedger: async () => ({ ok: true, ledger: S.ledger }),
   callCommand: async (fn: string, args: Record<string, unknown>) => { S.commandCalls.push([fn, args]); return S.command; },
+}));
+vi.mock("@/lib/billing/payment-partial-refund", () => ({
+  refundCardPaymentPartial: async (a: unknown) => { S.refundCalls.push(a); return S.refundOutcome; },
 }));
 vi.mock("@/lib/billing/session-payment-eligibility", () => ({
   getSessionPaymentEligibility: async () => ({
@@ -53,7 +58,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
 
 import {
   confirmTransferAction, prepareSplitCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
-  startSplitBillAction, voidTransferAction,
+  startSplitBillAction, voidTransferAction, refundCardPaymentAction,
 } from "@/app/(app)/visit-payment-actions";
 
 const APPT = "22222222-2222-4222-8222-222222222222";
@@ -63,7 +68,7 @@ const form = (o: Record<string, string>) => { const f = new FormData(); for (con
 
 beforeEach(() => {
   S.role = "owner"; S.enabled = true; S.command = { result: "recorded", id: "p1", state: "confirmed" }; S.commandCalls = [];
-  S.insertError = null; S.inserts = []; S.stripeCalls = 0; S.executeCalls = 0; S.prior = null;
+  S.insertError = null; S.inserts = []; S.stripeCalls = 0; S.executeCalls = 0; S.prior = null; S.refundCalls = []; S.refundOutcome = { outcome: "succeeded", message: "Refund recorded." };
   S.ledger = { bill: { id: "b", totalCents: 22500, currency: "cad", referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "x" }, cards: [], externals: [], refunds: [] };
 });
 
@@ -193,5 +198,54 @@ describe("running or re-checking a card payment", () => {
     S.prior = { id: "a", status: "ready", currency: "cad" };
     expect(await runSplitCardPaymentAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ outcome: "succeeded" });
     expect(S.executeCalls).toBe(1);
+  });
+});
+
+describe("partial card refund", () => {
+  const f = (o: Record<string, string> = {}) => form({ appointment_id: APPT, attempt_id: PAY, kind: "payment_reversal", amount_dollars: "40.00", reason: "client unhappy", submission_id: SUB, ...o });
+
+  it("a non-owner never reaches the database or Stripe", async () => {
+    S.role = "staff";
+    expect(await refundCardPaymentAction(f())).toMatchObject({ ok: false, code: "not_owner" });
+    expect(S.commandCalls).toEqual([]);
+    expect(S.refundCalls).toEqual([]);
+  });
+  it("the database refuses more than is refundable: Stripe is never asked", async () => {
+    S.command = { result: "exceeds_refundable", id: null, state: null };
+    const out = await refundCardPaymentAction(f({ amount_dollars: "75.00" }));
+    expect(out).toMatchObject({ ok: false, code: "exceeds_refundable" });
+    expect(S.refundCalls).toEqual([]);
+  });
+  it("a $40 refund is recorded by the command first, then sent to Stripe ONCE for that refund row", async () => {
+    S.command = { result: "requested", id: "refund-row-1", state: "pending_stripe" };
+    const out = await refundCardPaymentAction(f());
+    expect(out).toMatchObject({ ok: true, refundId: "refund-row-1" });
+    expect(S.commandCalls[0][0]).toBe("request_payment_refund");
+    expect(S.commandCalls[0][1]).toMatchObject({ p_attempt_id: PAY, p_external_payment_id: null, p_amount_cents: 4000, p_kind: "payment_reversal" });
+    expect(S.refundCalls).toHaveLength(1);
+    expect(S.refundCalls[0]).toMatchObject({ refundId: "refund-row-1", studioId: "11111111-1111-4111-8111-111111111111" });
+  });
+  it("a lost Stripe answer says Checking refund status, is not an error, and offers no second refund", async () => {
+    S.command = { result: "requested", id: "refund-row-1", state: "pending_stripe" };
+    S.refundOutcome = { outcome: "unknown", message: "Checking refund status" };
+    const out = await refundCardPaymentAction(f());
+    expect(out).toMatchObject({ ok: true, checking: true, refundId: "refund-row-1" });
+    expect(out.note.message).toBe("Checking refund status");
+  });
+  it("a refusal by Stripe is shown plainly and not ok", async () => {
+    S.command = { result: "requested", id: "refund-row-1", state: "pending_stripe" };
+    S.refundOutcome = { outcome: "failed", message: "Stripe refused this refund. Nothing was returned." };
+    expect(await refundCardPaymentAction(f())).toMatchObject({ ok: false });
+  });
+  it("a repeated request (same submission) re-checks the SAME row", async () => {
+    S.command = { result: "already_requested", id: "refund-row-1", state: "pending_stripe" };
+    await refundCardPaymentAction(f());
+    expect(S.refundCalls[0]).toMatchObject({ refundId: "refund-row-1" });
+  });
+  it("kinds and amounts are validated before anything runs", async () => {
+    for (const bad of [{ kind: "discount" }, { amount_dollars: "0" }, { reason: "" }, { attempt_id: "x" }] as Record<string, string>[]) {
+      expect(await refundCardPaymentAction(f(bad)), JSON.stringify(bad)).toMatchObject({ ok: false, code: "invalid_input" });
+    }
+    expect(S.commandCalls).toEqual([]);
   });
 });

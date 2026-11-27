@@ -134,3 +134,24 @@ describe("billedOutstanding (dashboard outstanding view)", () => {
     expect(billedOutstanding({ ...bill, currency: "eur" }, [])).toEqual({ kind: "amount_unavailable" });
   });
 });
+
+import { proportionalFeeReturn } from "@/lib/billing/visit-payments-core";
+describe("proportionalFeeReturn (fee returned with a partial card refund)", () => {
+  const base = { feeCents: 50, chargeCents: 10000, alreadyRefundedCents: 0, alreadyReturnedCents: 0 };
+  it("a $40 refund of a $100 charge with a $0.50 fee returns $0.20", () => {
+    expect(proportionalFeeReturn({ ...base, refundCents: 4000 })).toBe(20);
+  });
+  it("the last refund returns exactly what is left, so the total never exceeds the fee and a full refund returns it all", () => {
+    expect(proportionalFeeReturn({ ...base, refundCents: 6000, alreadyRefundedCents: 4000, alreadyReturnedCents: 20 })).toBe(30);
+    expect(proportionalFeeReturn({ ...base, refundCents: 10000 })).toBe(50);
+    // three equal thirds of a $0.50 fee on a $100 charge: rounding down never over-returns, the remainder lands on the last one
+    const a = proportionalFeeReturn({ ...base, refundCents: 3333 })!;
+    const b = proportionalFeeReturn({ ...base, refundCents: 3333, alreadyRefundedCents: 3333, alreadyReturnedCents: a })!;
+    const c = proportionalFeeReturn({ ...base, refundCents: 3334, alreadyRefundedCents: 6666, alreadyReturnedCents: a + b })!;
+    expect(a + b + c).toBe(50);
+  });
+  it("no fee, no return", () => {
+    expect(proportionalFeeReturn({ ...base, feeCents: null, refundCents: 4000 })).toBeNull();
+    expect(proportionalFeeReturn({ ...base, feeCents: 0, refundCents: 4000 })).toBeNull();
+  });
+});

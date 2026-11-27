@@ -13,9 +13,9 @@ const GATE_PATH = path.resolve(
 const GATE = readFileSync(GATE_PATH, "utf8");
 
 describe("check-stripe-gates: refunds.create allowlist", () => {
-  it("the gate's refunds.create block now declares exactly 1", () => {
+  it("the gate's refunds.create block declares exactly 2 (full refund + HON-122 partial refund)", () => {
     expect(GATE).toMatch(
-      /name:\s*"refunds\.create"[\s\S]{0,2000}exactly:\s*1/,
+      /name:\s*"refunds\.create"[\s\S]{0,2600}exactly:\s*2/,
     );
   });
 
@@ -25,14 +25,12 @@ describe("check-stripe-gates: refunds.create allowlist", () => {
     );
   });
 
-  it("the allowlist does NOT contain any other refund file", () => {
-    // The refund-block allowlist must contain exactly one path.
+  it("the allowlist contains exactly the two reviewed refund files and no other", () => {
     const refundBlock =
-      GATE.match(/name:\s*"refunds\.create"[\s\S]{0,2000}exactly:\s*1/)?.[0] ??
+      GATE.match(/name:\s*"refunds\.create"[\s\S]{0,2600}exactly:\s*2/)?.[0] ??
       "";
-    const allowlistPaths = refundBlock.match(/"lib\/[^"]+"/g) ?? [];
-    expect(allowlistPaths.length).toBe(1);
-    expect(allowlistPaths[0]).toBe('"lib/billing/payment-refund.ts"');
+    const allowlistPaths = refundBlock.match(/^\s*"lib\/[^"]+",/gm)?.map((x) => x.trim()) ?? [];
+    expect(allowlistPaths).toEqual(['"lib/billing/payment-refund.ts",', '"lib/billing/payment-partial-refund.ts",']);
   });
 });
 

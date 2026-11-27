@@ -59,7 +59,7 @@ describe("legacy fee executor removed", () => {
     expect(gate).toMatch(/name:\s*"paymentIntents\.create"[\s\S]{0,1500}exactly:\s*1/);
     expect(gate).not.toMatch(/manual-fee-charge\.ts"/);
     // The other gates stay exact.
-    expect(gate).toMatch(/name:\s*"refunds\.create"[\s\S]{0,2000}exactly:\s*1/);
+    expect(gate).toMatch(/name:\s*"refunds\.create"[\s\S]{0,2000}exactly:\s*2/);
     expect(gate).toMatch(/name:\s*"charges\.create"[\s\S]{0,400}exactly:\s*0/);
     expect(gate).toMatch(/name:\s*"checkout\.sessions"[\s\S]{0,600}exactly:\s*0/);
     expect(gate).toMatch(/"lib\/stripe\/server\.ts"/);
