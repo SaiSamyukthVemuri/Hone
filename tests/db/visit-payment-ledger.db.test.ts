@@ -265,9 +265,9 @@ describe("payment_refunds", () => {
     const cash = await external(s, b, "paid_cash", "confirmed", 5000);
     await expect(
       adminQuery(
-        `insert into public.payment_refunds (studio_id, appointment_id, attempt_id, external_payment_id, amount_cents, currency, kind, reason, status, submission_id)
-         values ($1,$2,$3,$4,100,'cad','payment_reversal','x','pending_stripe',$5)`,
-        [s.studioId, s.appointmentId, a.id, cash, randomUUID()],
+        `insert into public.payment_refunds (studio_id, appointment_id, attempt_id, external_payment_id, amount_cents, currency, kind, reason, status, submission_id, confirmed_by_practitioner_id, confirmed_at)
+         values ($1,$2,$3,$4,100,'cad','payment_reversal','x','succeeded',$5,$6,now())`,
+        [s.studioId, s.appointmentId, a.id, cash, randomUUID(), s.practitionerId],
       ),
     ).rejects.toThrow(/one_payment_check/);
     // A refund filed under another studio's id for this payment is refused.
@@ -291,7 +291,7 @@ describe("payment_refunds", () => {
     const id = first.rows[0].id as string;
     await expect(adminQuery(`update public.payment_refunds set amount_cents=2000 where id=$1`, [id])).rejects.toThrow(/amount is fixed/);
     await expect(adminQuery(`update public.payment_refunds set reason='other' where id=$1`, [id])).rejects.toThrow(/never edited/);
-    await adminQuery(`update public.payment_refunds set status='succeeded', stripe_refund_id='re_test_1', platform_fee_returned_cents=5 where id=$1`, [id]);
+    await adminQuery(`update public.payment_refunds set status='succeeded', stripe_refund_id=$2, platform_fee_returned_cents=5 where id=$1`, [id, `re_test_${randomUUID().slice(0, 8)}`]);
     await expect(adminQuery(`update public.payment_refunds set status='failed' where id=$1`, [id])).rejects.toThrow(/settled refund is final/);
     await expect(adminQuery(`update public.payment_refunds set platform_fee_returned_cents=6 where id=$1`, [id])).rejects.toThrow(/written once/);
     await expect(adminQuery(`delete from public.payment_refunds where id=$1`, [id])).rejects.toThrow(/never deleted/);

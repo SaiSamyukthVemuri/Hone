@@ -1412,6 +1412,30 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Provenance for imported_treatment_memories: what was imported, when, and from what.",
   },
+  visit_bills: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "The one bill of a visit (migration 0393), versioned by superseding. Customer-owned financial truth with the fee-adjustment evidence staff entered. NOT included in this CSV export yet: field review first, together with visit_external_payments and payment_refunds, so the studio's payments and refunds are exported as one coherent set.",
+  },
+  visit_external_payments: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "Cash, e-transfer and other transfer payments recorded against a visit (migration 0393), including transfers still pending confirmation and voided ones. Customer-owned financial truth with a free-text note. NOT included in this CSV export yet: field review first (the note field, and pending and voided rows).",
+  },
+  payment_refunds: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "One row per refund against a selected payment (migration 0393), card and external, with the Stripe refund identifiers and the Hone platform fee returned. Customer-owned money truth, but the row also carries provider identifiers and a staff reason. NOT included in this CSV export yet: field review first, with the same provider-identifier review as payment_charge_attempts.",
+  },
   appointment_settlements: {
     kind: "pending",
     ticket: "TRUTH-01B",

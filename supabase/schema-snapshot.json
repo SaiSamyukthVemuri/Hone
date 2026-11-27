@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 291,
-    "last": "0386_export_treatment_setup_readings.sql",
-    "sha256": "47548599105c780e52221d2a78f9cdb0d06eda1d03d5a9af88f3cdcee846f8ff"
+    "count": 292,
+    "last": "0393_visit_payment_ledger.sql",
+    "sha256": "47746a3e39976ef47610e514bd7f95ddc5b93a3b9b99d50c6a68be397df82848"
   },
   "public": {
     "tables": [
@@ -76,6 +76,7 @@
       "payment_charge_attempts",
       "payment_consents",
       "payment_recovery_tokens",
+      "payment_refunds",
       "pending_booking_payment_sessions",
       "pending_invitations",
       "photos",
@@ -141,6 +142,8 @@
       "treatment_setup_captures",
       "treatment_setup_readings",
       "treatment_setup_submissions",
+      "visit_bills",
+      "visit_external_payments",
       "waitlist",
       "waitlist_decline_answers",
       "waitlist_decline_owner_emails",
@@ -435,6 +438,9 @@
       "payment_charge_attempts_jurisdiction_guard",
       "payment_charge_attempts_money_immutable",
       "payment_charge_attempts_touch_updated_at",
+      "payment_refundable_cents",
+      "payment_refunds_guard",
+      "payment_refunds_mirror_attempt",
       "pending_client_id_photo_object_deletions",
       "platform_lead_alerts_guard",
       "platform_rollout_check_actor",
@@ -671,6 +677,8 @@
       "validate_public_booking_slot_v2",
       "validate_public_reschedule_slot",
       "validate_schedule_scope",
+      "visit_bills_guard",
+      "visit_external_payments_guard",
       "waitlist_admission_round_consumed",
       "waitlist_answer_erase_by",
       "waitlist_closed_invited_booking_enabled",
