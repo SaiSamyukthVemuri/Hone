@@ -15,6 +15,7 @@ test("by keyboard: open, type, reach a result, follow it; the query is never sen
   const requests: { method: string; url: string; body: string | null }[] = [];
   page.on("request", (r) => requests.push({ method: r.method(), url: r.url(), body: r.postData() }));
 
+  expect((await SEARCH(page).boundingBox())?.height ?? 0, "the button is touch-sized at desktop width too").toBeGreaterThanOrEqual(44);
   await SEARCH(page).focus();
   await page.keyboard.press("Enter");
   await expect(DIALOG(page)).toBeVisible();
