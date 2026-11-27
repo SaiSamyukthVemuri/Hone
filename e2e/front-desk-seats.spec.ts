@@ -119,6 +119,24 @@ test.describe("Team page: seats", () => {
   });
 });
 
+test.describe("Team page: the ?seats notice", () => {
+  test.setTimeout(T * 3);
+
+  test("shows the fixed sentence for the two codes the reactivation action sends, and nothing for anything else", async ({ page }) => {
+    const seed = await seedE2eStudio();
+    await loginAsOwner(page, seed);
+    await page.goto("/settings/team?seats=full");
+    await expect(page.getByRole("alert").filter({ hasText: /no free front-desk seats/i })).toBeVisible({ timeout: T });
+    await page.goto("/settings/team?seats=off");
+    await expect(page.getByRole("alert").filter({ hasText: /not switched on for this studio/i })).toBeVisible({ timeout: T });
+    await page.goto("/settings/team?seats=%3Cb%3Ex%3C%2Fb%3E");
+    await expect(page.getByRole("heading", { name: /^Practitioners$/ })).toBeVisible({ timeout: T });
+    // (Next's own route announcer is also role="alert", so look for OUR sentences, not for any alert.)
+    await expect(page.getByRole("alert").filter({ hasText: /front-desk seats|front desk is not|not switched on/i })).toHaveCount(0);
+    await expect(page.getByText("<b>x</b>")).toHaveCount(0);
+  });
+});
+
 test.describe("Platform admin: Front desk screen", () => {
   test.setTimeout(T * 5);
 

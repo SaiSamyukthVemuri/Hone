@@ -70,7 +70,7 @@ async function getPendingInvitations(
   return (data ?? []) as PendingInvitation[];
 }
 
-export default async function TeamSettingsPage({ searchParams }: { searchParams?: Promise<{ seats?: string }> } = {}) {
+export default async function TeamSettingsPage({ searchParams }: { searchParams: Promise<{ seats?: string }> }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
@@ -111,7 +111,7 @@ export default async function TeamSettingsPage({ searchParams }: { searchParams?
 
       <PendingInvitations invitations={invitations} />
 
-      <FrontDesk receptionists={receptionists} seats={seats} notice={seatsNoticeMessage((await searchParams)?.seats)} />
+      <FrontDesk receptionists={receptionists} seats={seats} notice={seatsNoticeMessage((await searchParams).seats)} />
     </div>
   );
 }
