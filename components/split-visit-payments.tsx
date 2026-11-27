@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { moneyRows, visitMoneySummary } from "@/lib/billing/visit-money";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
   canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
@@ -185,6 +186,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const tenderLabel = tender === "card" ? "Charge card" : tender === "paid_cash" ? "Record cash received" : "Record transfer";
   const submitLabel = cents ? `${tenderLabel} ${fmt(cents)}` : tenderLabel;
 
+  const money = moneyRows(visitMoneySummary(ledger));
   return (
     <section aria-labelledby="split-title" data-testid="split-visit-payments" className="flex flex-col gap-4">
       <h3 id="split-title" className="text-base font-semibold">Payments for this visit</h3>
@@ -192,11 +194,13 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
       {balance && (
         <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-base" data-testid="split-balance">
           <dt>Bill total</dt><dd className="text-right font-medium">{fmt(balance.totalCents)}</dd>
-          <dt>Received</dt><dd className="text-right font-medium">{fmt(balance.confirmedCents + balance.cardCents - balance.refundedCents)}</dd>
-          {balance.pendingCents > 0 && (<><dt>Waiting for confirmation</dt><dd className="text-right font-medium">{fmt(balance.pendingCents)}</dd></>)}
+          {money.rows.map((r) => (<Fragment key={r.key}><dt data-testid={`money-${r.key}-label`}>{r.label}</dt><dd className="text-right font-medium" data-testid={`money-${r.key}`}>{fmt(r.cents)}</dd></Fragment>))}
           <dt className="font-semibold">Still to collect</dt>
           <dd className="text-right text-lg font-semibold" data-testid="split-collectable">{fmt(balance.collectableCents)}</dd>
         </dl>
+      )}
+      {balance && money.notFinalNote && (
+        <p role="status" data-testid="money-not-final" className="text-sm text-neutral-600 dark:text-neutral-400">{money.notFinalNote}</p>
       )}
       {balance && balance.pendingCents > 0 && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">

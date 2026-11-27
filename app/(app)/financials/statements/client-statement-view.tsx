@@ -1,4 +1,5 @@
 import { PendingLink } from "@/components/pending-link";
+import { MONEY_LABELS, moneyRows, statementMoneySummary } from "@/lib/billing/visit-money";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import {
   FEE_REASON_COPY,
@@ -7,6 +8,7 @@ import {
   awaitingVisitLine,
   formatLocalDate,
   paidSummaryLine,
+  partialRefundedCents,
   visitCountPhrase,
   type DocumentVisit,
   type StatementDocument,
@@ -121,7 +123,9 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
   const methods = methodBreakdown(doc);
   // Latest first, as the approved design draws it. A DISPLAY order only: the document, its totals, the CSV and the print page keep their own order.
   const visits = [...doc.visits].sort(latestFirst);
-  const total = splitCurrency(format(doc.totals.paidCents));
+  // Collected / Refunded / Net come from the ONE helper checkout and the visit page use (lib/billing/visit-money.ts).
+  const money = statementMoneySummary(doc.totals, partialRefundedCents(doc), doc.awaiting.length);
+  const total = splitCurrency(format(money.collectedCents));
   const scope = scopeHeading(doc, monthLabel);
   const refundedOrWaived = doc.totals.refundedCents > 0 || doc.totals.waivedCents > 0;
 
@@ -162,13 +166,18 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
         <h2 id="cs-summary" className="sr-only">Summary</h2>
         <div>
           <p className="font-semibold text-fg">{clientName}</p>
-          <p className="text-fg-muted">{scope} · Total paid</p>
+          <p className="text-fg-muted">{scope} · {MONEY_LABELS.collected}</p>
           {/* The figure is shown large for scanning; the verified sentence below carries the same number and is what a screen reader reads. */}
           <p aria-hidden="true" className="mt-1 text-[clamp(34px,5vw,54px)] font-semibold leading-[1.15] tracking-[-2.8px] tabular-nums text-fg max-[540px]:text-[38px]">
             {total.amount}
             {total.unit ? <small className="ml-2 text-base font-normal tracking-normal text-fg-muted">{total.unit}</small> : null}
           </p>
           <p className="sr-only">{paidSummaryLine(doc, format)}</p>
+          <dl className="mt-2 grid max-w-xs grid-cols-[1fr_auto] gap-x-4 gap-y-0.5 text-sm text-fg" data-testid="statement-money">
+            {moneyRows(money, { statement: true }).rows.filter((r) => r.key !== "collected").map((r) => (
+              <div key={r.key} className="contents"><dt className={r.key === "net" ? "font-semibold" : undefined}>{r.label}</dt><dd className="text-right tabular-nums" data-testid={`statement-money-${r.key}`}>{splitCurrency(format(r.cents)).amount}</dd></div>
+            ))}
+          </dl>
           <p className="text-sm text-fg-muted">{visitCountPhrase(doc.totals.visitCount)}{studioName ? ` · ${studioName}` : ""}</p>
         </div>
         {methods ? (
@@ -193,7 +202,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
             <p className="text-fg-muted">
               {doc.totals.refundedCents > 0 ? `${format(doc.totals.refundedCents)} refunded` : ""}
               {doc.totals.refundedCents > 0 && doc.totals.waivedCents > 0 ? " · " : ""}
-              {doc.totals.waivedCents > 0 ? `${format(doc.totals.waivedCents)} waived` : ""}. Refunds and waivers are not part of the total paid.
+              {doc.totals.waivedCents > 0 ? `${format(doc.totals.waivedCents)} waived` : ""}. Net is Collected less Refunded; waivers are not part of either.
             </p>
           ) : null}
           {off ? <p role="status">{off}</p> : null}

@@ -1,5 +1,8 @@
 "use client";
 
+import { VisitMoneyBlock } from "@/components/visit-money-block";
+import type { VisitMoneySummary } from "@/lib/billing/visit-money";
+import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { refundDisplayState } from "@/lib/billing/refund-display-state";
 import { createContext, useContext, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -221,6 +224,8 @@ export function SessionPaymentPrepareCard({
   settlementQuotedAmountCents = null,
   canRecordSettlement = true,
   visitBilled = false,
+  billedMoney = null,
+  billedCurrency = null,
   onSettlementRecorded,
   initialMethod,
   initialFeeDraft,
@@ -256,6 +261,9 @@ export function SessionPaymentPrepareCard({
   canRecordSettlement?: boolean;
   /** HON-123: the visit has a split-payments bill: the whole-payment refund control is withdrawn (refunds go through the split panel). */
   visitBilled?: boolean;
+  /** A billed visit's Collected / Refunded / Net (owner only), shown in place of the single card payment's "Paid". */
+  billedMoney?: VisitMoneySummary | null;
+  billedCurrency?: PaymentCurrency | null;
   // Pass-through to AppointmentSettlementControls, and the ONLY refresh-shaped
   // prop this card accepts.
   //
@@ -495,6 +503,9 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
+      {visitBilled && billedMoney && <VisitMoneyBlock summary={billedMoney} currency={billedCurrency} />}
+      {/* A billed visit shows Collected / Refunded / Net above instead of one card payment's "Paid". */}
+      {!(visitBilled && billedMoney) && (<>
       {activeAttempt && (
         <AttemptStatusPanel
           attempt={activeAttempt}
@@ -507,6 +518,7 @@ export function SessionPaymentPrepareCard({
           refundAction={refundAction}
         />
       )}
+      </>)}
 
       {/* PR #174 patch. Previous-terminal callout. When the latest
           historical attempt is failed / cancelled / blocked AND

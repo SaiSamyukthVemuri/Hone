@@ -714,3 +714,10 @@ export function toCsvRows(doc: StatementDocument): Cell[][] {
   for (const r of doc.notCompleted) rows.push(["not_completed", r.localDate, r.localTime, r.serviceName, r.practitionerName, null, null, "not_completed", "", null, null, null, null]);
   return rows;
 }
+
+/** Cents refunded against ONE payment in the split-payments ledger (kind refunded_partial). Those payments stay listed in full in `paidCents`; a legacy full card refund is taken OUT of it. */
+export function partialRefundedCents(doc: Pick<StatementDocument, "visits">): number {
+  let n = 0;
+  for (const v of doc.visits) n += sumKinds(v.lines, ["refunded_partial"]);
+  return n;
+}

@@ -20,7 +20,8 @@ import { LaserEntryRow } from "@/components/entry-row";
 import { SessionPerformerLine } from "@/components/session-performer-line";
 import { toPerformerOptions } from "@/lib/sessions/performer-options";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
-import { visitIsBilled } from "@/lib/billing/visit-payments";
+import { loadVisitLedger, visitIsBilled } from "@/lib/billing/visit-payments";
+import { visitMoneySummary } from "@/lib/billing/visit-money";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
 import { markAftercareExplainedAction } from "@/app/(app)/records/actions";
@@ -267,6 +268,10 @@ export default async function SessionDetailPage({
   // refuses a settlement on a billed visit; this keeps the button from being a dead end). A read that fails is treated as BILLED: hiding the controls is
   // the safe direction, offering them is not.
   const visitBilled = linkedAppointmentId && isOwner ? await visitIsBilled(studio.id, linkedAppointmentId) : false;
+  // Owner only: the billed visit's Collected / Refunded / Net, from the same ledger and helper as checkout and the statement. Unreadable = not shown (the card then falls back).
+  const billedLedger = visitBilled && linkedAppointmentId ? await loadVisitLedger(studio.id, linkedAppointmentId) : null;
+  const billedMoney = billedLedger?.ok ? visitMoneySummary(billedLedger.ledger) : null;
+  const billedCurrency = billedLedger?.ok ? (billedLedger.ledger.bill?.currency ?? null) : null;
 
   if (linkedAppointmentId) {
     const supabaseForDefault = await createClient();
@@ -1177,6 +1182,8 @@ export default async function SessionDetailPage({
           // not happened yet would be a button that always fails.
           canRecordSettlement={finishAppt?.status === "completed" && !visitBilled}
           visitBilled={visitBilled}
+          billedMoney={billedMoney}
+          billedCurrency={billedCurrency}
           // Trusted, server-derived owner flag: gates the owner-only Technical
           // payment details disclosure + the Refund button (server refund
           // authorization is unchanged; it is owner-only there too).
