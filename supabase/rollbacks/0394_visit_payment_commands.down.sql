@@ -40,10 +40,10 @@ drop function public.resolve_payment_refund_review(uuid);
 drop function public.flag_payment_refund_review(uuid, text, text, integer, text, text, bigint, text, text);
 drop function public.record_refund_sent(uuid, text);
 drop function public.get_visit_payment_position(uuid, uuid);
-drop function public.visit_payment_refusal(uuid, uuid, integer);
-drop function public.visit_payment_position(uuid, uuid);
+drop function public.visit_payment_refusal(uuid, uuid, integer, boolean);
+drop function public.visit_payment_position(uuid, uuid, boolean);
 drop index public.payment_charge_attempts_live_succeeded_idx;
-drop function public.card_counts_toward_capacity(uuid, boolean);
+drop function public.card_counts_toward_capacity(uuid, boolean, boolean);
 drop function public.studio_has_gone_live(uuid);
 
 drop index public.payment_charge_attempts_active_session_payment_uniq;

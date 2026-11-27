@@ -89,7 +89,7 @@ describe("0394 is shaped like a sealed migration", () => {
     const c = code(UP);
     expect(c).toMatch(/function public\.studio_has_gone_live\(p_studio uuid\)/);
     expect(c).toMatch(/a\.stripe_livemode = true and a\.status = 'succeeded'/);
-    expect(c).toMatch(/function public\.card_counts_toward_capacity\(p_studio uuid, p_livemode boolean\)/);
+    expect(c).toMatch(/function public\.card_counts_toward_capacity\(p_studio uuid, p_livemode boolean, p_assume_live boolean default false\)/);
     // the position's card term and its price-reduction term both go through it
     expect((c.match(/public\.card_counts_toward_capacity\(p_studio, /g) ?? []).length).toBeGreaterThanOrEqual(2);
     // no 0394 command takes a livemode argument: an owner could otherwise claim any mode
@@ -98,7 +98,11 @@ describe("0394 is shaped like a sealed migration", () => {
       const sig = c.slice(c.indexOf(`function public.${fn}(`), c.indexOf(")", c.indexOf(`function public.${fn}(`)));
       expect(sig, fn).not.toMatch(/livemode/);
     }
-    for (const fn of ["studio_has_gone_live(uuid)", "card_counts_toward_capacity(uuid, boolean)"]) {
+    // p_assume_live is passed true ONLY by the card wall, from the row being inserted; no command passes it
+    expect(c).toContain("new.amount_cents, new.stripe_livemode is true)");
+    expect((c.match(/p_assume_live/g) ?? []).length).toBeGreaterThan(0);
+    expect(c).not.toMatch(/visit_payment_refusal\(p_studio_id, p_appointment_id, p_amount_cents, true/);
+    for (const fn of ["studio_has_gone_live(uuid)", "card_counts_toward_capacity(uuid, boolean, boolean)"]) {
       expect(c).toContain(`revoke all privileges on function public.${fn} from public, anon, authenticated, service_role;`);
       expect(DOWN).toContain(`drop function public.${fn};`);
     }

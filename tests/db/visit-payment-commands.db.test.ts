@@ -369,8 +369,8 @@ describe("0394 who can run what", () => {
           'public.request_payment_refund(uuid,uuid,uuid,uuid,integer,text,text,uuid)',
           'public.get_visit_payment_position(uuid,uuid)',
           'public.finish_payment_refund(uuid,text,text,text,text,text,integer)',
-          'public.visit_payment_position(uuid,uuid)',
-          'public.visit_payment_refusal(uuid,uuid,integer)',
+          'public.visit_payment_position(uuid,uuid,boolean)',
+          'public.visit_payment_refusal(uuid,uuid,integer,boolean)',
           'public.visit_bill_supersede(uuid,uuid,integer,text,uuid)',
           'public.payment_charge_attempts_visit_bill_guard()']) f`);
     for (const row of r.rows) expect(row.anon, row.f).toBe(false);

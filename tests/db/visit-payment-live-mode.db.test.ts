@@ -102,9 +102,36 @@ describe("0394 which card money counts toward a bill's capacity", () => {
     await expect(card(s, 5000, true)).rejects.toThrow(/exceeds_balance/); // $200 live + $50 > $225: refused
   });
 
+  it("the FIRST real card of a not-yet-live studio: a $100 test charge on a $100 bill does not refuse it, and the studio then reads live", async () => {
+    const s = await visit();
+    await ensure(s);
+    await card(s, 22500, false);                                   // the whole $225 bill was paid with a TEST card
+    expect(await goneLive(s)).toBe(false);
+    await card(s, 22500, true);                                    // the row being inserted is live: the position is computed as if the studio had gone live
+    expect(await goneLive(s)).toBe(true);
+    expect(await position(s)).toMatchObject({ card_cents: 22500, outstanding_cents: 0 });
+    expect((await cash(s, 100)).result).toBe("exceeds_balance");   // over-collection on live money is still refused
+  });
+
+  it("a $60 test charge: the first live card may take the full remaining REAL balance, and one cent more is refused", async () => {
+    const s = await visit();
+    await ensure(s);
+    await card(s, 6000, false);
+    await expect(card(s, 22501, true)).rejects.toThrow(/exceeds_balance/);   // over the bill: refused even for a live row
+    await card(s, 22500, true);                                              // the whole real balance, not $165
+    expect(await position(s)).toMatchObject({ card_cents: 22500, outstanding_cents: 0 });
+  });
+
+  it("a TEST row still cannot claim the assumption: a second test card is judged with the test charge counted", async () => {
+    const s = await visit();
+    await ensure(s);
+    await card(s, 22500, false);
+    await expect(card(s, 100, false)).rejects.toThrow(/exceeds_balance/);
+  });
+
   it("no command takes the mode as an input: the mode functions are not callable by the signed-in owner", async () => {
     const s = await visit();
-    for (const sql of [`select public.studio_has_gone_live($1)`, `select public.card_counts_toward_capacity($1, false)`]) {
+    for (const sql of [`select public.studio_has_gone_live($1)`, `select public.card_counts_toward_capacity($1, false, false)`]) {
       await expect(asOwner(s, (q) => q(sql, [s.studioId]))).rejects.toThrow(/permission denied/);
     }
   });

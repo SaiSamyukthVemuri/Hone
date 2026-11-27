@@ -3,13 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 // Sam, 27 Nov 2026: the visit's TEST-mode entries are found with the statement's own signal: stripe_livemode === true is live; false, NULL or anything else is test.
-const h = vi.hoisted(() => ({ rows: {} as Record<string, unknown[]> }));
+const h = vi.hoisted(() => ({ rows: {} as Record<string, unknown[]>, noLiveAttempts: false }));
 const client = () => ({
   from: (table: string) => {
     const q: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "is", "not", "order", "limit"]) q[m] = () => q;
+    let probe = false; // the studio-live probe filters on stripe_livemode = true
+    for (const m of ["select", "is", "not", "order", "limit"]) q[m] = () => q;
+    q.eq = (col: string, v: unknown) => { if (col === "stripe_livemode" && v === true) probe = true; return q; };
     q.maybeSingle = async () => ({ data: (h.rows[table] ?? [])[0] ?? null, error: null });
-    q.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: h.rows[table] ?? [], error: null }).then(res);
+    q.then = (res: (v: unknown) => unknown) => Promise.resolve({ data: probe && h.noLiveAttempts ? [] : h.rows[table] ?? [], error: null }).then(res);
     return q;
   },
   rpc: async () => ({ data: [{ refunded_cents: h.rows.__refunded ? 4000 : 0, review_open: false }], error: null }),
@@ -39,5 +41,22 @@ describe("loadVisitLedger marks TEST-mode card entries with the statement's sign
     if (!out.ok) return;
     expect(out.ledger.cards[0].test === true).toBe(test);
     expect(out.ledger.refunds[0].test === true).toBe(test);
+  });
+});
+
+describe("studioLive when the studio has no live charge yet (0394 card wall)", () => {
+  it("is false in a test deployment and TRUE in a live deployment, so the page never blocks the first real card before the trigger runs", async () => {
+    h.noLiveAttempts = true;
+    try {
+      seed(false);
+      const prev = process.env.STRIPE_SECRET_KEY;
+      process.env.STRIPE_SECRET_KEY = "sk_test_x";
+      const test = await loadVisitLedger("s", "ap");
+      process.env.STRIPE_SECRET_KEY = "sk_live_x";
+      const live = await loadVisitLedger("s", "ap");
+      if (prev === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = prev;
+      expect(test.ok && test.ledger.studioLive).toBe(false);
+      expect(live.ok && live.ledger.studioLive).toBe(true);
+    } finally { h.noLiveAttempts = false; }
   });
 });
