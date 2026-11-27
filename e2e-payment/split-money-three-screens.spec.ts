@@ -1,0 +1,124 @@
+import { test, expect, type Locator, type Page } from "@playwright/test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { loginAsOwner } from "../e2e/helpers/flows";
+import { seedEligiblePaymentWithLogin, cleanupPaymentScenario, adminQuery, closePool, type PaymentSeed } from "./helpers/payment-fixture";
+import { resetFakeStripeLedger, clearFakeStripeOutcome, cleanupFakeStripeLedger } from "./helpers/fake-stripe-ledger-e2e";
+import { openCheckout } from "./helpers/checkout-flow";
+
+// ===========================================================================
+// One visit, three screens, the same three numbers (HON-123 / HON-122, Sam's acceptance).
+// ===========================================================================
+// $225 visit: $100 card, $50 cash, $75 transfer, then a $40 partial refund on the card. CHECKOUT, the VISIT page and the STATEMENT must each read
+// Collected $225.00, Refunded $40.00, Net $185.00, with those labels, and agree with the database (payment_refund_money and the bill).
+//
+// LIVE-MODE NOTE. The fake-Stripe lane runs in TEST mode (stripe_livemode = false on the card attempt), and the statement deliberately counts only live-mode card money.
+// No existing statement e2e seeds a live card attempt, so this one flips stripe_livemode on that one card row AFTER the checkout and visit-page checks, and only to read the
+// statement. Nothing else about the row changes.
+
+// Optional evidence: with E2E_SHOTS_DIR set, each screen is also saved at 390 wide and desktop. Unset (CI), nothing is written.
+async function shots(page: Page, name: string, target?: Locator) {
+  const dir = process.env.E2E_SHOTS_DIR;
+  if (!dir) return;
+  mkdirSync(dir, { recursive: true });
+  for (const [label, vp] of [["390", { width: 390, height: 844 }], ["desktop", { width: 1080, height: 810 }]] as const) {
+    await page.setViewportSize(vp);
+    await page.waitForTimeout(400);
+    writeFileSync(path.join(dir, `${name}-${label}.png`), target ? await target.screenshot().catch(() => page.screenshot({ fullPage: true })) : await page.screenshot({ fullPage: true }));
+  }
+  await page.setViewportSize({ width: 1080, height: 810 });
+}
+const money = (c: number) => `$${(c / 100).toFixed(2)} CAD`;
+let seed: PaymentSeed;
+
+test.beforeEach(async () => {
+  resetFakeStripeLedger();
+  clearFakeStripeOutcome();
+  seed = await seedEligiblePaymentWithLogin({ label: "money3", bookedService: { name: "Three Screens Service", priceCents: 22500 } });
+  await adminQuery(`update public.clients set email = $2 where id = $1`, [seed.clientId, `success+money3-${seed.scenario.runId}@harness.local`]);
+  await adminQuery(`update public.platform_rollouts set mode = 'pilot' where key = 'split_payments' and mode = 'off'`);
+  await adminQuery(`insert into public.platform_rollout_studios (rollout_key, studio_id) values ('split_payments', $1) on conflict do nothing`, [seed.studioId]);
+});
+test.afterEach(async () => {
+  await adminQuery(`delete from public.platform_rollout_studios where rollout_key = 'split_payments' and studio_id = $1`, [seed.studioId]).catch(() => undefined);
+  await cleanupPaymentScenario(seed.studioId).catch(() => undefined);
+  cleanupFakeStripeLedger();
+});
+test.afterAll(async () => { await closePool(); });
+
+test("the $225 / $40 / $185 case reads the same on checkout, the visit page and the statement", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+  const modal = await openCheckout(page);
+  await modal.getByRole("button", { name: "Split this payment", exact: true }).click();
+  const panel = modal.getByTestId("split-visit-payments");
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(22500));
+  const amount = (v: string) => panel.getByLabel(/^Amount \(CAD\)/).fill(v);
+  const pick = (label: string) => panel.getByText(label, { exact: true }).first().click();
+
+  await amount("100.00");
+  await panel.getByRole("button", { name: `Charge card ${money(10000)}`, exact: true }).click();
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500), { timeout: 30_000 });
+  await pick("Cash"); await amount("50.00");
+  await panel.getByRole("button", { name: `Record cash received ${money(5000)}`, exact: true }).click();
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(7500));
+  await pick("E-transfer"); await amount("75.00");
+  await panel.getByRole("button", { name: `Record transfer ${money(7500)}`, exact: true }).click();
+  await expect(panel.getByTestId("split-pending-transfer")).toBeVisible();
+
+  await panel.getByRole("button", { name: "Refund or reduce a payment" }).click();
+  const form = panel.getByTestId("split-refund-form");
+  await form.getByRole("combobox").selectOption({ index: 0 });
+  await form.getByLabel("Refund amount").fill("40.00");
+  await form.getByLabel("Reason").fill("Client unhappy with part of the visit");
+  await form.getByRole("button", { name: `Record ${money(4000)} refund`, exact: true }).click();
+  await expect.poll(async () => Number((await adminQuery(`select count(*)::int as n from public.payment_refunds where appointment_id = $1 and legacy = false and status = 'succeeded'`, [seed.appointmentId])).rows[0].n), { timeout: 30_000 }).toBe(1);
+
+  // The database's own figures, the authority the three screens must agree with.
+  const refundMoney = (await adminQuery(`select * from public.payment_refund_money((select id from public.payment_charge_attempts where appointment_id = $1 limit 1), null)`, [seed.appointmentId])).rows[0];
+  expect([Number(refundMoney.payment_cents), Number(refundMoney.succeeded_cents), Number(refundMoney.reserved_cents)]).toEqual([10000, 4000, 0]);
+  expect(Number((await adminQuery(`select total_cents from public.visit_bills where appointment_id = $1 and superseded_at is null`, [seed.appointmentId])).rows[0].total_cents)).toBe(22500);
+
+  // While the transfer is still pending it is Waiting, not Collected: $100 card + $50 cash collected, $40 refunded, $110 net.
+  await expect(panel.getByTestId("money-collected")).toHaveText(money(15000), { timeout: 30_000 });
+  await expect(panel.getByTestId("money-refunded")).toHaveText(money(4000));
+  await expect(panel.getByTestId("money-net")).toHaveText(money(11000));
+  await expect(panel.getByTestId("money-waiting")).toHaveText(money(7500));
+
+  // Confirm the transfer.
+  await page.goto("/dashboard");
+  const m2 = await openCheckout(page);
+  const p2 = m2.getByTestId("split-visit-payments");
+  await p2.getByRole("button", { name: `Confirm ${money(7500)} transfer received`, exact: true }).click();
+  await expect.poll(async () => (await adminQuery(`select state from public.visit_external_payments where appointment_id = $1 and method = 'paid_e_transfer'`, [seed.appointmentId])).rows[0]?.state, { timeout: 30_000 }).toBe("confirmed");
+
+  // 1. CHECKOUT
+  await page.goto("/dashboard");
+  const m3 = await openCheckout(page);
+  const p3 = m3.getByTestId("split-visit-payments");
+  await expect(p3.getByTestId("money-collected")).toHaveText(money(22500));
+  await expect(p3.getByTestId("money-refunded")).toHaveText(money(4000));
+  await expect(p3.getByTestId("money-net")).toHaveText(money(18500));
+  await expect(p3.getByTestId("split-balance").getByText(/^(Collected|Refunded|Net)$/)).toHaveCount(3);
+  await expect(p3.getByTestId("money-refund_pending")).toHaveCount(0);
+  await expect(p3.getByTestId("money-not-final")).toHaveCount(0);
+  await shots(page, "1-checkout", m3);
+
+  // 2. VISIT page (owner only), in place of the single card payment's "Paid".
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  const region = page.getByRole("region", { name: "Session payment" });
+  await expect(region.getByTestId("visit-money-collected")).toHaveText(money(22500));
+  await expect(region.getByTestId("visit-money-refunded")).toHaveText(money(4000));
+  await expect(region.getByTestId("visit-money-net")).toHaveText(money(18500));
+  await expect(region.getByText(/^Paid ·/)).toHaveCount(0);
+  await shots(page, "2-visit");
+
+  // 3. STATEMENT, with the card attempt read as live money (see the note at the top).
+  await adminQuery(`update public.payment_charge_attempts set stripe_livemode = true where appointment_id = $1`, [seed.appointmentId]);
+  await page.goto(`/financials/statements/${seed.clientId}`);
+  await expect(page.getByTestId("statement-money-collected")).toContainText("$225.00");
+  await expect(page.getByTestId("statement-money-refunded")).toHaveText("$40.00");
+  await expect(page.getByTestId("statement-money-net")).toHaveText("$185.00");
+  await expect(page.locator("main")).not.toContainText("Total paid");
+  await shots(page, "3-statement");
+});

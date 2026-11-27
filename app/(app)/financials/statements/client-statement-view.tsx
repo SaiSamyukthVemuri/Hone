@@ -168,7 +168,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
           <p className="font-semibold text-fg">{clientName}</p>
           <p className="text-fg-muted">{scope} · {MONEY_LABELS.collected}</p>
           {/* The figure is shown large for scanning; the verified sentence below carries the same number and is what a screen reader reads. */}
-          <p aria-hidden="true" className="mt-1 text-[clamp(34px,5vw,54px)] font-semibold leading-[1.15] tracking-[-2.8px] tabular-nums text-fg max-[540px]:text-[38px]">
+          <p aria-hidden="true" data-testid="statement-money-collected" className="mt-1 text-[clamp(34px,5vw,54px)] font-semibold leading-[1.15] tracking-[-2.8px] tabular-nums text-fg max-[540px]:text-[38px]">
             {total.amount}
             {total.unit ? <small className="ml-2 text-base font-normal tracking-normal text-fg-muted">{total.unit}</small> : null}
           </p>
