@@ -468,6 +468,8 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // HON-124 item 7. Settings > Consent forms buttons: hover, pressed, keyboard focus, tap size.
+      "consent-templates-feedback.spec.ts",
       // HON-62: the weekly-hours editor's native time inputs (keyboard
       // entry, touch tap, save/reload, untouched existing hours).
       "availability-hours-editor.spec.ts",

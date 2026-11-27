@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonClasses } from "@/components/ui/button";
 import { useState, useTransition } from "react";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import type {
@@ -140,7 +141,7 @@ export function ConsentTemplatesEditor({
             setAdding(true);
             setError(null);
           }}
-          className="self-start rounded-md border border-dashed border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", className: "self-start border-dashed" })}
         >
           + New consent form
         </button>
@@ -235,7 +236,7 @@ export function ConsentTemplatesEditor({
                             setError(null);
                           }}
                           disabled={pending}
-                          className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+                          className={buttonClasses({ variant: "secondary", size: "sm" })}
                         >
                           Edit
                         </button>
@@ -244,7 +245,7 @@ export function ConsentTemplatesEditor({
                             type="button"
                             onClick={() => handleLive(t.id, true)}
                             disabled={pending}
-                            className="rounded-md border border-neutral-900 bg-neutral-900 px-2.5 py-1 font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                            className={buttonClasses({ variant: "primary", size: "sm" })}
                           >
                             Make live in client portal
                           </button>
@@ -254,7 +255,7 @@ export function ConsentTemplatesEditor({
                             type="button"
                             onClick={() => handleLive(t.id, false)}
                             disabled={pending}
-                            className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+                            className={buttonClasses({ variant: "secondary", size: "sm" })}
                           >
                             Hide from client portal
                           </button>
@@ -264,7 +265,7 @@ export function ConsentTemplatesEditor({
                             type="button"
                             onClick={() => handleStatus(t.id, "active")}
                             disabled={pending}
-                            className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+                            className={buttonClasses({ variant: "secondary", size: "sm" })}
                           >
                             Make active
                           </button>
@@ -274,7 +275,7 @@ export function ConsentTemplatesEditor({
                             type="button"
                             onClick={() => handleStatus(t.id, "archived")}
                             disabled={pending}
-                            className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium text-neutral-500 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
+                            className={buttonClasses({ variant: "secondary", size: "sm" })}
                           >
                             Archive
                           </button>
@@ -477,7 +478,7 @@ function TemplateForm({
           type="button"
           onClick={submit}
           disabled={pending}
-          className="rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+          className={buttonClasses({ variant: "primary", size: "sm" })}
         >
           {pending
             ? "Saving..."
@@ -489,7 +490,7 @@ function TemplateForm({
           type="button"
           onClick={onCancel}
           disabled={pending}
-          className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Cancel
         </button>
