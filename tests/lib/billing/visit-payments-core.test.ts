@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
 import {
   canStartCharge, cardReduce, commandNote, historyLines, parseDollarsToCents, showCheckingStatus, visitBalance,
   type CardPhase, type VisitLedger,
@@ -98,7 +100,9 @@ describe("the card phase never offers a second charge while the outcome is unkno
     expect(showCheckingStatus(s)).toBe(true);
     s = cardReduce(s, { type: "status", outcome: "succeeded" });
     expect(s).toEqual({ phase: "succeeded", attemptId: "a1" });
-    expect(canStartCharge(s)).toBe(false);                                  // paid: nothing more to charge here
+    // A payment that SUCCEEDED does not block the next one: a split visit still has a balance. (Whether more may be charged is the database's call.)
+    expect(canStartCharge(s)).toBe(true);
+    expect(cardReduce(s, { type: "submit" })).toEqual({ phase: "preparing" });
   });
   it("only a definite failure re-enables the charge", () => {
     let s: CardPhase = cardReduce(cardReduce(cardReduce({ phase: "idle" }, { type: "submit" }), { type: "prepared", attemptId: "a1" }), { type: "result", outcome: "failed", message: "Declined" });
@@ -153,5 +157,16 @@ describe("proportionalFeeReturn (fee returned with a partial card refund)", () =
   it("no fee, no return", () => {
     expect(proportionalFeeReturn({ ...base, feeCents: null, refundCents: 4000 })).toBeNull();
     expect(proportionalFeeReturn({ ...base, feeCents: 0, refundCents: 4000 })).toBeNull();
+  });
+});
+
+describe("a partial card payment is not 'Paid' on the roster", () => {
+  it("$100 card on a $225 bill stays chargeable (Checkout stays open); fully paid is paid; unknown is unavailable", async () => {
+    const { billedPaymentState } = await import("@/lib/billing/billed-visits");
+    const bill = { totalCents: 22500, currency: "cad", externals: [], refunds: [] };
+    expect(billedPaymentState(bill, [{ status: "succeeded", amount_cents: 10000 }])).toBe("chargeable");
+    expect(billedPaymentState(bill, [{ status: "succeeded", amount_cents: 22500 }])).toBe("paid");
+    expect(billedPaymentState(bill, [{ status: "pending_stripe", amount_cents: 10000 }])).toBe("unavailable");
+    expect(billedPaymentState({ ...bill, externals: [{ amountCents: 22500, state: "pending_confirmation" }] }, [])).toBe("chargeable");
   });
 });

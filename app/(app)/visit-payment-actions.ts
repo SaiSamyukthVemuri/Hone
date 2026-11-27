@@ -294,3 +294,29 @@ export async function refundCardPaymentAction(formData: FormData): Promise<CardR
   if (sent.outcome === "failed" || sent.outcome === "blocked") return { ...out, ok: false, refundId: row.id, note: { tone: "blocked", message: sent.message } };
   return { ...out, refundId: row.id, note: { tone: "ok", message: sent.message } };
 }
+
+// ---------------------------------------------------------------------------
+// Receipt for ONE card payment of a split visit
+// ---------------------------------------------------------------------------
+import { sendPaymentChargeReceiptAction } from "@/app/(app)/clients/[id]/sessions/[sessionId]/payment-actions";
+
+/**
+ * Sends the receipt for one succeeded card payment. The existing receipt sender claims the attempt row once, so a double click or a retry sends ONE
+ * email; this wrapper only checks the attempt belongs to this studio's billed visit and maps the answer to plain copy.
+ */
+export async function sendSplitCardReceiptAction(formData: FormData): Promise<SplitActionResult> {
+  const who = await owner();
+  if (!who) return refuse("not_owner");
+  const appointmentId = str(formData.get("appointment_id"));
+  const attemptId = str(formData.get("attempt_id"));
+  if (!UUID.test(appointmentId) || !UUID.test(attemptId)) return refuse("invalid_input");
+  const own = await createAdminClient().from("payment_charge_attempts").select("id")
+    .eq("id", attemptId).eq("studio_id", who.studioId).eq("appointment_id", appointmentId).not("visit_bill_id", "is", null).maybeSingle();
+  if (own.error || !own.data) return refuse("not_found");
+  const f = new FormData();
+  f.set("attempt_id", attemptId);
+  const r = await sendPaymentChargeReceiptAction(f);
+  const state = await finish(who.studioId, appointmentId, r.ok || r.outcome === "already_sent" ? "receipt_sent" : "receipt_failed");
+  const message = r.ok ? `Receipt sent to ${r.emailTo}.` : r.outcome === "already_sent" ? "This receipt was already sent." : r.error;
+  return { ...state, ok: r.ok || r.outcome === "already_sent", note: { tone: r.ok || r.outcome === "already_sent" ? "ok" : "blocked", message } };
+}

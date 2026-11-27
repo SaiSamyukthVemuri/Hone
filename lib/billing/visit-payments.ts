@@ -40,7 +40,7 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).order("recorded_at"),
       supabase.from("payment_refunds").select("id, amount_cents, kind, status, attempt_id, external_payment_id, reason, requested_at, platform_fee_returned_cents")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).eq("legacy", false).order("requested_at"),
-      createAdminClient().from("payment_charge_attempts").select("id, amount_cents, status, created_at")
+      createAdminClient().from("payment_charge_attempts").select("id, amount_cents, status, created_at, receipt_sent_at")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).eq("charge_reason", "session_payment").not("visit_bill_id", "is", null).order("created_at"),
     ]);
     if (bills.error || externals.error || refunds.error || cards.error) return { ok: false };
@@ -75,7 +75,7 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
     const cds: LedgerCard[] = [];
     for (const r of (cards.data ?? []) as Record<string, unknown>[]) {
       if (typeof r.id !== "string" || num(r.amount_cents) === null) return { ok: false };
-      cds.push({ kind: "card", id: r.id, amountCents: r.amount_cents as number, status: String(r.status), at: String(r.created_at), platformFeeCents: null });
+      cds.push({ kind: "card", id: r.id, amountCents: r.amount_cents as number, status: String(r.status), at: String(r.created_at), platformFeeCents: null, receiptSent: typeof r.receipt_sent_at === "string" });
     }
     return { ok: true, ledger: { bill, cards: cds, externals: ext, refunds: refs } };
   } catch {

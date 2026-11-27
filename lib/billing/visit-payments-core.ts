@@ -31,6 +31,8 @@ export type LedgerCard = {
   kind: "card"; id: string; amountCents: number; status: "ready" | "pending_stripe" | "succeeded" | "failed" | string; at: string;
   /** Hone's fee on this charge (0392), owner/admin breakdown only. null = none. */
   platformFeeCents: number | null;
+  /** The receipt for this payment was already sent (payment_charge_attempts.receipt_sent_at). Optional: absent = unknown, treated as not sent. */
+  receiptSent?: boolean;
 };
 export type LedgerExternal = {
   kind: "external"; id: string; method: ExternalMethod; amountCents: number; state: "confirmed" | "pending_confirmation" | "voided"; at: string; note: string | null;
@@ -174,7 +176,7 @@ export type CardEvent =
 
 export function cardReduce(s: CardPhase, e: CardEvent): CardPhase {
   switch (e.type) {
-    case "submit": return s.phase === "idle" || s.phase === "failed" ? { phase: "preparing" } : s;   // never from unknown or charging
+    case "submit": return s.phase === "idle" || s.phase === "failed" || s.phase === "succeeded" ? { phase: "preparing" } : s;   // never from unknown or charging; a finished payment does not block the next one
     case "prepared": return s.phase === "preparing" ? { phase: "charging", attemptId: e.attemptId } : s;
     case "prepare_refused": return s.phase === "preparing" ? { phase: "failed", attemptId: null, message: e.message } : s;
     case "lost_response": return s.phase === "charging" ? { phase: "unknown", attemptId: s.attemptId } : s;
@@ -187,8 +189,8 @@ export function cardReduce(s: CardPhase, e: CardEvent): CardPhase {
   }
 }
 
-/** The one rule the screen follows: a new charge may be started only from idle or after a definite failure. */
-export const canStartCharge = (s: CardPhase) => s.phase === "idle" || s.phase === "failed";
+/** The one rule the screen follows: a new charge may be started only from idle or after a DEFINITE result (a payment that succeeded or failed). Never while preparing, charging or unknown. */
+export const canStartCharge = (s: CardPhase) => s.phase === "idle" || s.phase === "failed" || s.phase === "succeeded";
 export const showCheckingStatus = (s: CardPhase) => s.phase === "unknown";
 
 

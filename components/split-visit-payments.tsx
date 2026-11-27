@@ -7,7 +7,7 @@ import {
   STATUS_LABEL, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
-  confirmTransferAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
+  confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
   voidTransferAction, type SplitActionResult, type SplitState,
 } from "@/app/(app)/visit-payment-actions";
 
@@ -176,6 +176,13 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         <PendingTransfer key={t.id} id={t.id} label={methodLabel(t.method)} amount={fmt(t.amountCents)} busy={busy}
           onConfirm={async () => { setBusy(true); try { apply(await confirmTransferAction(form({ payment_id: t.id }))); } finally { setBusy(false); } }}
           onVoid={async (reason) => { setBusy(true); try { apply(await voidTransferAction(form({ payment_id: t.id, reason }))); } finally { setBusy(false); } }} />
+      ))}
+
+      {ledger.cards.filter((c) => c.status === "succeeded" && !c.receiptSent).map((c) => (
+        <button key={c.id} type="button" className={secondary} disabled={busy}
+          onClick={async () => { setBusy(true); try { apply(await sendSplitCardReceiptAction(form({ attempt_id: c.id }))); } finally { setBusy(false); } }}>
+          Send receipt for {fmt(c.amountCents)} card payment
+        </button>
       ))}
 
       <ul className="flex flex-col divide-y divide-neutral-200 dark:divide-neutral-800" aria-label="Payment history" data-testid="split-history">

@@ -7,6 +7,7 @@ import { todayInTz } from "@/lib/booking/tz";
 import { getAppointmentSettlements } from "@/lib/billing/appointment-settlement";
 import type { SettlementMethod } from "@/lib/billing/settlement-types";
 import { settlementCoverage } from "@/lib/billing/settlement-coverage";
+import { readBilledVisits, billedPaymentState } from "@/lib/billing/billed-visits";
 
 // Bounded, tenant-scoped batch loader for the dashboard/calendar checkout cell:
 // given the visible appointment ids, return each appointment's coarse
@@ -419,7 +420,20 @@ export async function getAppointmentPaymentStates(
 
   const freeLoad = await getFreeAppointmentIds(studioId, ids, studioTimezone);
 
+  // HON-123. A visit with a split-payments BILL is paid when its ledger says nothing is owed and stays chargeable while something is: a $100 card
+  // payment on a $225 visit is NOT "Paid" (that hid Checkout, so the balance could never be collected). A failed read is unavailable.
+  const billedLoad = await readBilledVisits(supabase, studioId, ids);
+
   for (const apptId of ids) {
+    const bill = billedLoad.ok ? billedLoad.billed.get(apptId) : undefined;
+    if (!billedLoad.ok) {
+      out.set(apptId, "unavailable");
+      continue;
+    }
+    if (bill) {
+      out.set(apptId, billedPaymentState(bill, attemptsByAppt.get(apptId) ?? []));
+      continue;
+    }
     const hasSession = apptHasSession.has(apptId);
     const attempts = attemptsByAppt.get(apptId) ?? [];
     // Stage 2: resolved WITHOUT freeness, purely to see whether transaction
