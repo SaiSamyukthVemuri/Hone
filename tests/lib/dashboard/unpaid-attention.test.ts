@@ -256,10 +256,18 @@ describe("AO2 / U2: every other money form either counts or forces 'Amount unava
   });
   it("a BILLED visit whose card payment sits on a soft-deleted chart is never reported as owing the money it already collected (Codex P2)", async () => {
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
-    db.rows.payment_charge_attempts = [card({ amount_cents: 10000 })];
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000, appointment_id: "a1", charge_reason: "session_payment", visit_bill_id: "bill-1" })];
     db.rows.visit_bills = [{ appointment_id: "a1", total_cents: 10000, currency: "cad" }];
     const out = await balanceOf();
     expect(out.some((b) => (b as { kind: string }).kind === "owed")).toBe(false);
+  });
+  it("a PAID billed visit whose chart was soft-deleted is not on the attention list at all (parity with the roster: paid, not 'Amount unavailable')", async () => {
+    db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000, appointment_id: "a1", charge_reason: "session_payment", visit_bill_id: "bill-1", stripe_livemode: true })];
+    db.rows.visit_bills = [{ appointment_id: "a1", total_cents: 10000, currency: "cad" }];
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok && r.items.length).toBe(0);
+    expect(r.ok && r.unlisted).toBe(0);                 // paid: not "Amount unavailable" either
   });
   it("a failed charge on a deleted session is nothing", async () => {
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];

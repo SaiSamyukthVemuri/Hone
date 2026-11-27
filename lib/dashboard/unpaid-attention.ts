@@ -201,8 +201,11 @@ export async function loadUnpaidAttention(opts: {
     if (bill && a.status === "completed" && Date.parse(a.ends_at) <= Date.parse(nowIso)) {
       // Money that may exist but is not provable here (a charge on a deleted chart) makes the balance UNAVAILABLE, never owed: the card rows of that chart are deliberately not in
       // cardsByAppt, so subtracting them would report a fully paid bill as owing (Codex P2 on #1827).
-      if ((unproven.get(a.id)?.size ?? 0) > 0) return { kind: "amount_unavailable" as const };
-      return billedOutstanding(bill, cardsByAppt.get(a.id) ?? []);
+      // The bill carries the visit's card payments read BY APPOINTMENT (readBilledVisits), so a charge on a deleted chart IS proven and counted there (the same set the roster uses);
+      // every other unproven form still makes the amount unavailable.
+      const unprovenForms = [...(unproven.get(a.id) ?? [])].filter((f) => !(bill.cards && f === "deleted_session_charge"));
+      if (unprovenForms.length > 0) return { kind: "amount_unavailable" as const };
+      return billedOutstanding(bill, bill.cards ?? cardsByAppt.get(a.id) ?? []);
     }
     let quoteCents: number | null = null;
     // Same priority as the settlement coverage logic (lib/billing/settlement-coverage.ts): the settlement's recorded quote first; today's
