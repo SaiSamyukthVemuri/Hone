@@ -1,5 +1,11 @@
 # 03 Security and privacy
 
+> **HIPAA status (issue #828):** Hone is **not** verified HIPAA compliant.
+> The PHI flow map, processor register and gap matrix are in
+> [security/hipaa-readiness-assessment.md](./security/hipaa-readiness-assessment.md).
+> Agreements, configuration and cost decisions are in
+> [security/hipaa-decision-packet.md](./security/hipaa-decision-packet.md).
+
 ## Session payment amount authority
 
 The **reference price** is resolved **server-side** from current records at the
