@@ -80,7 +80,7 @@ const NAV_LINK_BASE = "rounded-md px-3 py-2";
  * repaired, and it is a shape change rather than colour alone because the fill
  * appears.
  */
-const NAV_LINK_CURRENT = "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100";
+export const NAV_LINK_CURRENT = "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100";
 const NAV_LINK_IDLE = "hover:bg-neutral-100 dark:hover:bg-neutral-900";
 
 export function PrimaryNavLink({

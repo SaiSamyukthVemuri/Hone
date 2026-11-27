@@ -532,6 +532,12 @@ export const BROWSER_GROUPS = {
       // anybody out, which is exactly the pair of facts SIGNOUT-01 learned had
       // to be checked together.
       "signout-acknowledgement.spec.ts",
+      // HON-124 PR 1. Both phone menus (keyboard + touch, aria-current, Escape
+      // focus return), the skip link on the marketing and app shells, the app's
+      // sticky header against anchors and upward focus, and the public booking
+      // progress / double-press / taken-time feedback at 390x844. Books
+      // publicly, so it is also in PUBLIC_BOOKING_SPECS below.
+      "hon124-nav-booking-mobile.spec.ts",
     ],
   },
   google: {
@@ -591,6 +597,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "book-next-available-fast.spec.ts",
   "core-memory-loop.spec.ts",
   "dashboard-treatment-memory-inline.spec.ts",
+  "hon124-nav-booking-mobile.spec.ts",
   "mobile-ux.spec.ts",
   "move-appointment-custom-time.spec.ts",
   "move-appointment-mobile-submit.spec.ts",
