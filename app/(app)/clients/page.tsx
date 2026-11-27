@@ -1,5 +1,4 @@
 import { directoryHref } from "@/lib/clients/directory-query";
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -177,12 +176,12 @@ export default async function ClientsPage({
             </p>
           )}
         </div>
-        <Link
+        <PendingLink
           href="/clients/new"
           className="inline-flex min-h-11 items-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           + Add client
-        </Link>
+        </PendingLink>
       </div>
 
       <ViewTabs current={view} />

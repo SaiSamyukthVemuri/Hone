@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/components/pending-link", () => ({
-  PendingLink: ({ href, children }: { href: string; children?: unknown }) => createElement("a", { href }, children as never),
+  PendingLink: ({ href, children, pendingLabel: _l, ...rest }: { href: string; children?: unknown; pendingLabel?: string; [k: string]: unknown }) => createElement("a", { href, ...rest }, children as never),
 }));
 vi.mock("@/components/pending-button", () => ({ PendingButton: () => null }));
 vi.mock("@/components/formatted-date-time", () => ({ FormattedDateTime: () => null }));

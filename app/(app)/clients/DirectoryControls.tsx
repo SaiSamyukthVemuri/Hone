@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { FOCUS_RING } from "@/components/ui/control-base";
+import { FOCUS_RING, cx } from "@/components/ui/control-base";
+import { spinnerClasses } from "@/components/ui/spinner";
 import { useRouter } from "next/navigation";
 import {
   directoryHref,
@@ -99,7 +100,7 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
       {archived && <input type="hidden" name="view" value="archived" />}
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className={`${CONTROL} flex w-full min-w-0 items-center focus-within:ring-2 focus-within:ring-focus-ring sm:w-auto sm:flex-1`}>
+        <div className={`${CONTROL} relative flex w-full min-w-0 items-center focus-within:ring-2 focus-within:ring-focus-ring sm:w-auto sm:flex-1`}>
           <button
             type="submit"
             aria-label="Search"
@@ -122,6 +123,11 @@ export function DirectoryControls({ state }: { state: DirectoryControlsState }) 
             autoComplete="off"
             className="min-h-11 min-w-0 flex-1 bg-transparent pr-3 text-base outline-hidden placeholder:text-neutral-500 pointer-fine:text-sm"
           />
+          {/* The visible half of the form's pending state (HON-109): any control in this form (search, sort, filter, last visit) starts the
+              same navigation, so one mark in the field says "working" for all of them. The live region is mounted always and only its text
+              changes, so it is announced. Out of flow: the field never changes size. */}
+          {pending ? <span data-pending-mark="true" aria-hidden="true" className={cx("pointer-events-none absolute right-3 top-1/2 -translate-y-1/2", spinnerClasses("sm"))} /> : null}
+          <span role="status" className="sr-only">{pending ? "Updating clients…" : ""}</span>
         </div>
         <label className="flex min-w-0 max-w-full items-center gap-2 text-sm text-neutral-600 dark:text-neutral-400">
           Sort by

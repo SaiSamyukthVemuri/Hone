@@ -9,6 +9,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(app)/dashboard/attention-actions", () => ({ dismissAttentionAction: vi.fn(), restoreAttentionAction: vi.fn() }));
 vi.mock("next/link", () => ({
   default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never),
+  useLinkStatus: () => ({ pending: false }),
 }));
 const { NeedsAttentionPanel, hiddenCardsLabel, NEEDS_ATTENTION_COMPACT_COUNT } = await import(
   "@/app/(app)/dashboard/needs-attention-panel"

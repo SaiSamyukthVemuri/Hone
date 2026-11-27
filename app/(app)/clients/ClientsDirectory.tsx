@@ -262,17 +262,18 @@ function DirectoryRowView({
           </>
         )}
         <div className="relative col-start-2 row-start-1 row-span-3 flex flex-col items-end lg:col-auto lg:row-auto lg:flex-row lg:items-center lg:justify-end">
-          <Link
+          <PendingLink
             id={overviewRowLinkId(row.id)}
             href={selected ? href(state) : href(state, { client: row.id })}
             scroll={false}
+            pendingLabel="Opening details…"
             aria-label={`Details for ${row.displayName}`}
             aria-expanded={selected}
             aria-current={selected ? "true" : undefined}
             className="inline-flex min-h-11 items-center gap-1 rounded px-2 text-xs font-medium text-neutral-600 hover:underline dark:text-neutral-300"
           >
             Details <span aria-hidden="true">{selected ? "▾" : "›"}</span>
-          </Link>
+          </PendingLink>
           {archived && <UnarchiveRowControl client={{ id: row.id }} />}
         </div>
       </div>
