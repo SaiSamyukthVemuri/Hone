@@ -64,23 +64,23 @@ describe("pinned-note edit — server action contract", () => {
 
   it("rejects empty text and over-length before touching the DB", () => {
     const b = editBody();
-    expect(b).toMatch(/if \(!text\) throw/);
+    expect(b).toMatch(/if \(!text\) return actionFailed/); // HON-124 item 19: returned, not thrown (production redacts a throw)
     expect(b).toMatch(/MAX_PINNED_NOTE_LENGTH/);
   });
 
   it("optimistic concurrency: validates original_text and guards the UPDATE on the note's current text", () => {
     const b = editBody();
     expect(b).toMatch(/const originalText = trimmedString\(formData\.get\("original_text"\)\)/);
-    expect(b).toMatch(/if \(!originalText\) throw/);
+    expect(b).toMatch(/if \(!originalText\) return actionFailed/);
     expect(b).toMatch(/\.eq\("text", originalText\)/); // CAS: only lands if unchanged
   });
 
   it("rejects a raced / stale / deleted / foreign note with ONE fixed safe message (no raw DB leak)", () => {
     const b = editBody();
     expect(b).toMatch(
-      /That note changed or is no longer available\. Refresh and try again\./,
+      /That note changed or is no longer available\. Reload the page and try again\./,
     );
-    expect(b).toMatch(/if \(error\) throw new Error\("Could not update the note\. Please try again\."\)/);
+    expect(b).toMatch(/if \(error\) return actionFailed\("Could not update the note\. Try again, and contact support if it keeps happening\."\)/);
     expect(b).not.toMatch(/error\.message/); // edit path never surfaces raw DB text
   });
 });

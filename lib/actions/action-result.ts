@@ -14,9 +14,12 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export const ACTION_OK: ActionResult = { ok: true };
 
-export function actionFailed(error: string): ActionResult {
+export function actionFailed(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
+
+/** A result that carries the saved record back to the caller (so it can be drawn without waiting for a refreshed page). */
+export type DataResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /** The sentence when nothing more specific is known: names the next action, never the cause. */
 export const GENERIC_SAVE_FAILURE = "Could not save. Check your connection and try again. If it keeps happening, contact support.";
@@ -28,4 +31,14 @@ export const LOST_REQUEST_FAILURE = "Could not reach Hone, so this may not have 
  */
 export function actionFailureMessage(err: unknown, fallback: string = GENERIC_SAVE_FAILURE): string {
   return isServerActionTransportFailure(err) ? LOST_REQUEST_FAILURE : fallback;
+}
+
+/**
+ * True only for an explicit, well-formed failure. Everything else a form receives (a success result, the OLD pre-result return shape, or
+ * undefined from a server that has not deployed yet) is read as "the call went through", exactly as a resolved action was read before results
+ * existed. During a deploy a browser can hold the new client while an old server answers: reading `result.ok` on an undefined result would
+ * throw, report a failure for a write that may have succeeded, and invite a duplicate resubmit.
+ */
+export function isActionFailure(result: unknown): result is { ok: false; error: string } {
+  return typeof result === "object" && result !== null && (result as { ok?: unknown }).ok === false && typeof (result as { error?: unknown }).error === "string";
 }

@@ -177,7 +177,7 @@ const CASES: Case[] = [
   {
     name: "addClientPricingAction",
     run: () => addClientPricingAction(form({ client_id: ID_B, service_name: "Synthetic", price: "10" })),
-    refused: (o) => /Only the studio owner/.test(o.error ?? ""),
+    refused: (o) => (o.value as { ok?: boolean; error?: string } | undefined)?.ok === false && /Only the studio owner/.test((o.value as { error: string }).error), // HON-124 item 19: a RETURNED refusal
   },
   {
     name: "deleteClientPricingAction",
@@ -187,7 +187,7 @@ const CASES: Case[] = [
   {
     name: "removeClientPinnedNoteAction",
     run: () => removeClientPinnedNoteAction(form({ note_id: ID_A, client_id: ID_B })),
-    refused: (o) => /Only the studio owner/.test(o.error ?? ""),
+    refused: (o) => (o.value as { ok?: boolean; error?: string } | undefined)?.ok === false && /Only the studio owner/.test((o.value as { error: string }).error), // HON-124 item 19: a RETURNED refusal
   },
 ];
 
@@ -267,7 +267,7 @@ describe("pinned cautions: edit own only, owner edits any", () => {
   it("a practitioner's update is scoped to cautions THEY created", async () => {
     state.role = "practitioner";
     const outcome = await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
-    expect(outcome.error).toMatch(/changed or is no longer available/);
+    expect((outcome.value as { error?: string }).error).toMatch(/changed or is no longer available/);
     expect(state.eqs).toContainEqual(["created_by_practitioner_id", "prac-2"]);
     expect(state.eqs).toContainEqual(["studio_id", "studio-1"]);
   });
@@ -282,6 +282,6 @@ describe("pinned cautions: edit own only, owner edits any", () => {
   it("a foreign or author-less caution gives a non-owner the same refusal as a missing one (no author disclosure)", async () => {
     state.role = "practitioner";
     const outcome = await withAdminBuilder(() => settled(() => editClientPinnedNoteAction(editForm())));
-    expect(outcome.error).toBe("That note changed or is no longer available. Refresh and try again.");
+    expect(outcome.value).toEqual({ ok: false, error: "That note changed or is no longer available. Reload the page and try again." });
   });
 });

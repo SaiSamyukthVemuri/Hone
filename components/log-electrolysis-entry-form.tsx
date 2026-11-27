@@ -39,6 +39,7 @@ import { appendComment } from "@/lib/comments";
 import { pickSavedLabel } from "@/lib/saved-label";
 import { ChipSelector } from "./chip-selector";
 import { MultiChipSelector } from "./multi-chip-selector";
+import { actionFailureMessage, isActionFailure } from "@/lib/actions/action-result";
 
 type FormState = {
   areas: string[];
@@ -126,7 +127,7 @@ type Props = {
   lastEntry: ElectrolysisEntry | null;
   /** Sticky defaults for probe_type + machine_frequency (latest in-session entry). */
   stickyDefaults: StickyDefaults;
-  action: (formData: FormData) => Promise<void>;
+  action: (formData: FormData) => Promise<{ ok: true } | { ok: false; error: string; code?: string } | void>;
 };
 
 const PROBE_SIZE_OPTIONS: ReadonlyArray<string> = [...PROBE_SIZES, "Other"];
@@ -146,6 +147,7 @@ export function LogElectrolysisEntryForm({
     machine_frequency: stickyDefaults.machine_frequency,
   }));
   const [error, setError] = useState<string | null>(null);
+  const [needsReload, setNeedsReload] = useState(false);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -200,13 +202,20 @@ export function LogElectrolysisEntryForm({
 
     startTransition(async () => {
       try {
-        await action(fd);
+        const result = await action(fd);
+        if (isActionFailure(result)) {
+          // CLINICAL: code "unverified" means the row was INSERTED but could not be read back (addElectrolysisEntryAction's PERSISTED-but-UNVERIFIED
+          // state), so it MAY have saved. Say that and block a resubmit until the session is reloaded: adding it again would duplicate a clinical entry.
+          if ((result as { code?: string }).code === "unverified") setNeedsReload(true);
+          setError(result.error); // everything typed stays
+          return;
+        }
         // After save, reset everything except the sticky pair.
         setState((s) => blankStateWithStickyFrom(s));
         setSavedLabel(pickSavedLabel());
         window.setTimeout(() => setSavedLabel(null), 1500);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to add entry.");
+        setError(actionFailureMessage(err, "Could not add the entry, and it may not have saved. Check the session before adding it again."));
       }
     });
   }
@@ -517,7 +526,7 @@ export function LogElectrolysisEntryForm({
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || needsReload}
           className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           {pending ? "Adding…" : "Add entry"}

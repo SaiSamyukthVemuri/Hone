@@ -39,11 +39,11 @@ describe("addLaserEntryAction — calls create_laser_entry", () => {
   it("preserves its equipment-params shaping and zone requirement", () => {
     expect(body).toMatch(/p_equipment_params:/);
     expect(body).toMatch(/Object\.keys\(equipmentParams\)\.length > 0 \? equipmentParams : null/);
-    expect(body).toMatch(/if \(!zone\) throw new Error\("Zone is required\."\)/);
+    expect(body).toMatch(/if \(!zone\) return actionFailed\("Enter the treatment zone, then add the entry again\."\)/); // HON-124 item 19: returned, same condition
   });
 
   it("preserves its error message and revalidation contract", () => {
-    expect(body).toMatch(/throw new Error\(`Failed to add entry: \$\{dbErrorCode\(error\)\}`\)/);
+    expect(body).toMatch(/return actionFailed\(userFacingDbFailure\("add the entry", error, "add_laser_entry_failed"\)\)/);
     expect(body).toMatch(/revalidatePath\(`\/clients\/\$\{clientId\}\/sessions\/\$\{sessionId\}`\)/);
   });
 

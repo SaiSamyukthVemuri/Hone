@@ -11,6 +11,7 @@ import {
 import type { LaserEntry } from "@/lib/types/database";
 import { appendComment } from "@/lib/comments";
 import { ChipSelector } from "./chip-selector";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type FormState = {
   zone: string;
@@ -61,7 +62,7 @@ type Props = {
   clientId: string;
   lastEntry: LaserEntry | null;
   treatmentCounts: Record<string, number>;
-  action: (formData: FormData) => Promise<void>;
+  action: (formData: FormData) => Promise<ActionResult>;
 };
 
 export function LogLaserEntryForm({
@@ -118,13 +119,17 @@ export function LogLaserEntryForm({
 
     startTransition(async () => {
       try {
-        await action(fd);
+        const result = await action(fd);
+        if (isActionFailure(result)) {
+          setError(result.error); // everything typed stays; nothing was saved
+          return;
+        }
         setState(emptyState());
         setTreatmentTouched(false);
         setShowSaved(true);
         window.setTimeout(() => setShowSaved(false), 1500);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to add entry.");
+        setError(actionFailureMessage(err, "Could not add the entry, and it may not have saved. Check the session before adding it again."));
       }
     });
   }

@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useRef, useState, useTransition } from "react";
 import type { ClientPinnedNote } from "@/lib/types/database";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 export const MAX_LENGTH = 200;
 
@@ -121,9 +122,9 @@ type Props = {
   /** The signed-in viewer, derived on the server; it decides which controls show. */
   viewer: { isOwner: boolean; practitionerId: string };
   notes: ClientPinnedNote[];
-  addAction: (formData: FormData) => Promise<unknown>;
-  editAction: (formData: FormData) => Promise<unknown>;
-  removeAction: (formData: FormData) => Promise<void>;
+  addAction: (formData: FormData) => Promise<DataResult<unknown>>;
+  editAction: (formData: FormData) => Promise<DataResult<unknown>>;
+  removeAction: (formData: FormData) => Promise<ActionResult>;
 };
 
 export function ClientPinnedNotesCard({
@@ -156,10 +157,14 @@ export function ClientPinnedNotesCard({
     setError(null);
     startTransition(async () => {
       try {
-        await addAction(fd);
+        const result = await addAction(fd);
+        if (isActionFailure(result)) {
+          setError(result.error); // the typed note stays
+          return;
+        }
         setText("");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to pin note.");
+        setError(actionFailureMessage(err, "Could not pin the note. Check your connection and try again."));
       }
     });
   }
@@ -196,12 +201,16 @@ export function ClientPinnedNotesCard({
     setError(null);
     startTransition(async () => {
       try {
-        await editAction(fd);
+        const result = await editAction(fd);
+        if (isActionFailure(result)) {
+          setError(result.error); // the edit stays open with the typed text
+          return;
+        }
         setEditingId(null);
         setEditText("");
         setEditOriginal("");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to update note.");
+        setError(actionFailureMessage(err, "Could not update the note. Check your connection and try again."));
       }
     });
   }
@@ -213,9 +222,10 @@ export function ClientPinnedNotesCard({
     setError(null);
     startTransition(async () => {
       try {
-        await removeAction(fd);
+        const result = await removeAction(fd);
+        if (isActionFailure(result)) setError(result.error);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to remove note.");
+        setError(actionFailureMessage(err, "Could not remove the note. Check your connection and try again."));
       }
     });
   }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { softDeleteSessionAction } from "./actions";
+import { actionFailureMessage, isActionFailure } from "@/lib/actions/action-result";
 
 type Props = {
   sessionId: string;
@@ -35,13 +36,15 @@ export function DeleteSessionForm({ sessionId, clientId }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      await softDeleteSessionAction(formData);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Failed to delete session.";
-      if (message.includes("NEXT_REDIRECT")) {
-        return;
+      const result = await softDeleteSessionAction(formData);
+      if (isActionFailure(result)) {
+        setError(result.error); // the typed reason stays
+        setSubmitting(false);
       }
-      setError(message);
+    } catch (e) {
+      // A successful delete redirects; that arrives as a redirect signal, not a failure.
+      if (String((e as { digest?: unknown } | null)?.digest ?? "").startsWith("NEXT_REDIRECT")) return;
+      setError(actionFailureMessage(e, "Could not delete the session. Check your connection and try again."));
       setSubmitting(false);
     }
   }

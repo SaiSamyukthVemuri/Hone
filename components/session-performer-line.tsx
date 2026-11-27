@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { PerformerOption } from "@/lib/sessions/performer-options";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type Props = {
   sessionId: string;
@@ -13,7 +14,7 @@ type Props = {
   performerName?: string | null;
   // The session's original author, when someone else performed it.
   recordedByName?: string | null;
-  updatePerformerAction: (formData: FormData) => Promise<void>;
+  updatePerformerAction: (formData: FormData) => Promise<ActionResult>;
 };
 
 // PR #199 (Chloe iPad retest): the session page showed the performer
@@ -58,13 +59,18 @@ export function SessionPerformerLine({
 
     startTransition(async () => {
       try {
-        await updatePerformerAction(fd);
+        const result = await updatePerformerAction(fd);
+        if (isActionFailure(result)) {
+          setState("error");
+          setError(result.error); // the editor stays open on the typed choice
+          return;
+        }
         setState("saved");
         setEditing(false);
         setTimeout(() => setState("idle"), 1500);
       } catch (err) {
         setState("error");
-        setError(err instanceof Error ? err.message : "Failed to save.");
+        setError(actionFailureMessage(err, "Could not save who performed this session. Check your connection and try again."));
       }
     });
   }

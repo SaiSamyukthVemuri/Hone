@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type Props = {
   clientId: string;
-  action: (formData: FormData) => Promise<void>;
+  action: (formData: FormData) => Promise<ActionResult>;
 };
 
 export function AddPricingForm({ clientId, action }: Props) {
@@ -34,12 +35,16 @@ export function AddPricingForm({ clientId, action }: Props) {
 
     startTransition(async () => {
       try {
-        await action(fd);
+        const result = await action(fd);
+        if (isActionFailure(result)) {
+          setError(result.error); // typed values stay in the fields
+          return;
+        }
         setService("");
         setPrice("");
         setNotes("");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to add pricing.");
+        setError(actionFailureMessage(err, "Could not add the price. Check your connection and try again."));
       }
     });
   }
