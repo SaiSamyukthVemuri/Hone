@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { StudioTimedBlock } from "@/lib/types/database";
 import { TIMED_BLOCK_LABEL } from "./calendar-format";
 import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 import {
   formatClockLabel,
   isAllDayInterval,
@@ -150,7 +151,7 @@ export function TimedBlockEditDrawer({
         router.refresh();
         onClose();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Could not delete this block.");
+        setError(actionFailureMessage(e, "Could not remove this block. Check your connection and try again."));
       }
     });
   }

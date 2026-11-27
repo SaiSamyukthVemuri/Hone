@@ -18,6 +18,7 @@ import {
   type ViewScope,
 } from "./ScopeField";
 import { SectionLabel } from "@/components/ui/section-label";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
 type Props = {
   rules: ReadonlyArray<StudioRecurringBreakRule>;
@@ -186,11 +187,12 @@ export function RecurringBreaksSection({
         resetForm();
       } catch (e) {
         setError(
-          e instanceof Error
-            ? e.message
-            : editingId
-              ? "Failed to update recurring break."
-              : "Failed to add recurring break.",
+          actionFailureMessage(
+            e,
+            editingId
+              ? "Could not update this recurring break, and it may not have saved. Check your connection, then check the list before trying again."
+              : "Could not add this recurring break, and it may not have saved. Check your connection, then check the list before trying again.",
+          ),
         );
       }
     });
@@ -207,7 +209,7 @@ export function RecurringBreaksSection({
           setError(result.error);
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to toggle rule.");
+        setError(actionFailureMessage(e, "Could not change this recurring break. Check your connection and try again."));
       }
     });
   }
@@ -224,7 +226,7 @@ export function RecurringBreaksSection({
         }
         if (editingId === id) resetForm();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to delete rule.");
+        setError(actionFailureMessage(e, "Could not remove this recurring break. Check your connection and try again."));
       }
     });
   }

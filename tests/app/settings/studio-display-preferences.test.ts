@@ -134,6 +134,10 @@ describe("updateStudioDisplayPreferencesAction", () => {
       form({ birthday_reminder_color: "green", time_format: "12h" }),
     );
     expect(result.ok).toBe(false);
+    // HON-124 item 19: a sentence with the next step, never the code or the raw message.
+    const err = (result as { error: string }).error;
+    expect(err).toMatch(/permission to save the display preferences/);
+    expect(err).not.toMatch(/42501|permission denied|Failed to update/);
     // Only the single combined attempt ran; there is no second, colour-only write.
     expect(updates).toHaveLength(1);
   });

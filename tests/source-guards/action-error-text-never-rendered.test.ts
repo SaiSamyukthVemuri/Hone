@@ -12,17 +12,12 @@ import path from "node:path";
 const ROOT = path.resolve(__dirname, "../..");
 
 const NOT_YET_CONVERTED: Record<string, string> = {
-  // B-group: actions already RETURN {ok:false,error}; only the rare unexpected-throw catch still prints the text
-  "app/(app)/settings/availability/RecurringBreaksSection.tsx": "B-group fallback catch (actions return errors); convert in the fallback-catch PR",
-  "app/(app)/settings/availability/TimedBlocksSection.tsx": "B-group fallback catch (actions return errors); convert in the fallback-catch PR",
-  "app/(app)/calendar/TimedBlockEditDrawer.tsx": "B-group fallback catch (actions return errors); convert in the fallback-catch PR",
-  "app/(app)/settings/calendar/StudioDisplayPreferencesForm.tsx": "B-group fallback catch; its action also returns 'Failed to update display preferences: <code>'",
   // payments: held until #1821 (Stripe onboarding rework) merges
   "app/(app)/settings/payments/PaymentsSettings.tsx": "payments PR: waits for #1821 onboarding rework",
   // outside item 19: the sign-in provider's own message, a different surface
   "app/(auth)/login/page.tsx": "auth provider message; not a settings/client server action",
 };
-const CEILING = 6;
+const CEILING = 2;
 
 // err/e/error/ex/caught . message, or `instanceof Error ? x.message`, after comments are removed.
 const LEAK = /\b(?:err|e|error|ex|caught)(?: as [A-Za-z]+)?\.message\b/;
@@ -58,5 +53,24 @@ describe("no form renders a caught error's own text", () => {
       expect(f in NOT_YET_CONVERTED).toBe(false);
       expect(leaking).not.toContain(f);
     }
+  });
+});
+
+describe("the fallback catches name the next step", () => {
+  const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
+  it.each([
+    "app/(app)/settings/availability/RecurringBreaksSection.tsx",
+    "app/(app)/settings/availability/TimedBlocksSection.tsx",
+    "app/(app)/calendar/TimedBlockEditDrawer.tsx",
+    "app/(app)/settings/calendar/StudioDisplayPreferencesForm.tsx",
+  ])("%s maps a caught error through actionFailureMessage and reads result.error for expected failures", (f) => {
+    const s = read(f);
+    expect(s).toContain("actionFailureMessage(");
+    expect(s).toMatch(/result\.error/);
+  });
+  it("the display-preferences action returns a code-free sentence", () => {
+    const s = read("app/(app)/settings/studio/actions.ts");
+    expect(s).not.toContain("Failed to update display preferences");
+    expect(s).toContain('userFacingDbFailure("save the display preferences"');
   });
 });
