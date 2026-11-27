@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PageRevision } from "@/app/_components/marketing/PageRevision";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
 import { SkipLink } from "@/app/_components/marketing/SkipLink";
@@ -317,6 +318,7 @@ export default function ChartingRecordsPage() {
           title="See a session charted"
           body="We reply within one business day to set a time, then chart a session with you and pull a procedure record."
         />
+        <PageRevision path="/features/charting-records" />
       </main>
       <SiteFooter />
       <SafeAnalytics />

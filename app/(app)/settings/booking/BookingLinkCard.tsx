@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useId } from "react";
 import { SectionLabel } from "@/components/ui/section-label";
+import { CopyButton } from "@/components/copy-button";
 
 type Props = {
   slug: string;
@@ -16,17 +17,7 @@ export function BookingLinkCard({
 }: Props) {
   const url = `${origin}/book/${slug}`;
   const display = `${origin.replace(/^https?:\/\//, "")}/book/${slug}`;
-  const [copied, setCopied] = useState(false);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API unavailable; the URL is visible in the input for manual copy.
-    }
-  }
+  const textId = useId();
 
   if (variant === "inline") {
     return (
@@ -34,6 +25,7 @@ export function BookingLinkCard({
         <SectionLabel as="p">Your booking link</SectionLabel>
         <div className="flex flex-wrap items-center gap-3">
           <a
+            id={textId}
             href={url}
             target="_blank"
             rel="noreferrer"
@@ -41,32 +33,32 @@ export function BookingLinkCard({
           >
             {display}
           </a>
-          <button
-            type="button"
-            onClick={copy}
-            className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-950"
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
+          <CopyButton
+            value={url}
+            selectTargetId={textId}
+            ariaLabel="Copy booking link"
+            size="sm"
+          />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <input
+        id={textId}
+        aria-label="Booking link"
         readOnly
         value={display}
-        className="w-full rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+        className="min-w-0 flex-1 rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
       />
-      <button
-        type="button"
-        onClick={copy}
-        className="shrink-0 rounded-md border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
+      <CopyButton
+        value={url}
+        selectTargetId={textId}
+        ariaLabel="Copy booking link"
+        className="shrink-0"
+      />
     </div>
   );
 }
