@@ -22,6 +22,7 @@ import {
   type ViewScope,
 } from "./ScopeField";
 import { SectionLabel } from "@/components/ui/section-label";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
 type Props = {
   studioTimezone: string;
@@ -211,11 +212,12 @@ export function TimedBlocksSection({
         // expected-error paths inside the action return typed
         // results above; anything reaching here is a true crash.
         setError(
-          e instanceof Error
-            ? e.message
-            : editingId
-              ? "Failed to update block."
-              : "Failed to add block.",
+          actionFailureMessage(
+            e,
+            editingId
+              ? "Could not update this block, and it may not have saved. Check your connection, then check the list before trying again."
+              : "Could not add this block, and it may not have saved. Check your connection, then check the list before trying again.",
+          ),
         );
       }
     });
@@ -261,7 +263,7 @@ export function TimedBlocksSection({
           resetForm();
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to delete block.");
+        setError(actionFailureMessage(e, "Could not remove this block. Check your connection and try again."));
       }
     });
   }

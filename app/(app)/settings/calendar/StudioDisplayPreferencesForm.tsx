@@ -10,6 +10,7 @@ import type { BirthdayReminderColor } from "@/lib/types/database";
 import type { TimeFormat } from "@/lib/booking/tz";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
 const TIME_FORMAT_OPTIONS: ReadonlyArray<{ value: TimeFormat; label: string }> =
   [
@@ -61,7 +62,7 @@ export function StudioDisplayPreferencesForm({
           feedback.failed(result.error);
         }
       } catch (err) {
-        feedback.failed(err instanceof Error ? err.message : "Failed to save.");
+        feedback.failed(actionFailureMessage(err));
       }
     });
   }

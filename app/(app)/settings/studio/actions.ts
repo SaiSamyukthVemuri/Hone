@@ -103,7 +103,7 @@ export async function updateStudioDisplayPreferencesAction(
     // 0109 is applied on every database (hosted history is complete below it),
     // so a missing time_format_preference column is a real error here, never a
     // reason to report "Saved" for a write that stored only the colour.
-    return { ok: false, error: `Failed to update display preferences: ${dbErrorCode(error)}` };
+    return { ok: false, error: userFacingDbFailure("save the display preferences", error, "update_studio_display_prefs_failed") };
   }
 
   revalidatePath("/dashboard");
