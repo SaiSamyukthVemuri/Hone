@@ -399,7 +399,7 @@ describe("the step that emits the matrix actually RUNS", () => {
         }
       }
     }
-  });
+  }, 30_000); // drives the real emit step through several classifications: ~4 s alone, over the 5 s default under load
 });
 
 describe("the split covers the same specs, once and only once", () => {
