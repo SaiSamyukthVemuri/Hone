@@ -82,6 +82,23 @@ describe("booking-link copy control (reference)", () => {
   });
 });
 
+describe("composes the Button primitive (touch floor, focus, press)", () => {
+  it("every variant carries the primitive's 44px touch floor, focus ring and press treatment, and no hand-rolled button remains", async () => {
+    setClipboard({ writeText: () => Promise.resolve() });
+    const inline = render(createElement(BookingLinkCard, { slug: "s", variant: "inline" })).querySelector("button")!;
+    const card = render(createElement(BookingLinkCard, { slug: "s" })).querySelector("button")!;
+    const plain = render(createElement(CopyButton, { value: "x" })).querySelector("button")!;
+    for (const b of [inline, card, plain]) {
+      expect(b.className).toContain("min-h-[44px]");
+      expect(b.className).toMatch(/focus-visible/);
+      expect(b.getAttribute("type")).toBe("button");
+    }
+    const src = readFileSync(path.resolve(__dirname, "../..", "components/copy-button.tsx"), "utf8");
+    expect(src).not.toMatch(/<button\b/);
+    expect(src).toMatch(/from "@\/components\/ui\/button"/);
+  });
+});
+
 describe("a value shown nowhere else is revealed on failure", () => {
   it("renders a read-only, selected field with the value", async () => {
     setClipboard(undefined);
@@ -91,6 +108,34 @@ describe("a value shown nowhere else is revealed on failure", () => {
     const f = h.querySelector("input[readonly]") as HTMLInputElement;
     expect(f.value).toBe("https://hone.care/book/x");
     expect(f.selectionEnd).toBe(f.value.length);
+  });
+  it("stays mounted and focused after the announcement timer, until dismissed; a successful retry also clears it", async () => {
+    vi.useFakeTimers();
+    try {
+      setClipboard(undefined);
+      const h = render(createElement(CopyButton, { value: "https://hone.care/book/x", label: "Copy link", revealOnFail: true }));
+      await act(async () => { h.querySelector("button")!.click(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+      expect(h.querySelector('[data-testid="copy-fallback"]')).not.toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(7000); }); // past the 6s announcement timer
+      expect(h.textContent).not.toMatch(/Couldn’t copy/); // the announcement cleared...
+      const f = h.querySelector("input[readonly]") as HTMLInputElement; // ...but the field did not
+      expect(f).not.toBeNull();
+      expect(document.activeElement).toBe(f);
+      expect(f.selectionEnd).toBe(f.value.length);
+      // a successful retry removes it
+      setClipboard({ writeText: () => Promise.resolve() });
+      await act(async () => { h.querySelector("button")!.click(); });
+      expect(h.querySelector('[data-testid="copy-fallback"]')).toBeNull();
+      // and Dismiss removes it
+      setClipboard(undefined);
+      await act(async () => { h.querySelector("button")!.click(); });
+      const dismiss = [...h.querySelectorAll("button")].find((b) => b.textContent === "Dismiss")!;
+      await act(async () => { dismiss.click(); });
+      expect(h.querySelector('[data-testid="copy-fallback"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

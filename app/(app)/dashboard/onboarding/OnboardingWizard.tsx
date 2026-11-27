@@ -65,7 +65,7 @@ function ProgressBar({
 }
 
 function CopyLinkButton({ url }: { url: string }) {
-  return <CopyButton value={url} label="Copy link" copiedLabel="Copied" revealOnFail className={SECONDARY_BTN} />;
+  return <CopyButton value={url} label="Copy link" copiedLabel="Copied" revealOnFail />;
 }
 
 function StatusChip({ status }: { status: OnboardingStepState["status"] }) {

@@ -64,7 +64,6 @@ export function InviteForm() {
             value={message}
             label="Copy message"
             selectTargetId="invite-share-message"
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-950"
           />
           <button
             type="button"

@@ -37,7 +37,7 @@ export function BookingLinkCard({
             value={url}
             selectTargetId={textId}
             ariaLabel="Copy booking link"
-            className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-950"
+            size="sm"
           />
         </div>
       </div>
@@ -57,7 +57,7 @@ export function BookingLinkCard({
         value={url}
         selectTargetId={textId}
         ariaLabel="Copy booking link"
-        className="shrink-0 rounded-md border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+        className="shrink-0"
       />
     </div>
   );

@@ -40,6 +40,8 @@ test.describe("booking link copy control, iPhone viewport", () => {
     await expect(COPY(page)).toHaveText("Copied");
     await expect(page.getByRole("status").filter({ hasText: "Copied" })).toHaveCount(1);
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(link.replace(/^https?:\/\//, ""));
+    // the touch floor: the primitive's 44px minimum on a touch device
+    expect((await COPY(page).boundingBox())!.height).toBeGreaterThanOrEqual(43.5);
     await expectNoHorizontalScroll(page);
   });
 
