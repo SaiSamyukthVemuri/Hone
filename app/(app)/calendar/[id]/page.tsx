@@ -50,6 +50,7 @@ import { PostcareSection } from "@/components/appointment/postcare-section";
 import { buildPostcareEmail } from "@/lib/email/templates/postcare";
 import { ManualFeeChargeCard } from "./ManualFeeChargeCard";
 import { projectFeeEligibility } from "@/lib/billing/manual-fee-card-view";
+import { CONTROL_MIN_TOUCH, TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
 import { getManualFeeChargeEligibility } from "@/lib/billing/manual-fee-eligibility";
 import {
   appointmentDisplayStatus,
@@ -424,7 +425,7 @@ export default async function AppointmentDetailPage({
     <div className="flex flex-col gap-6">
       <Link
         href={backHref}
-        className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+        className={cx(CONTROL_MIN_TOUCH, "self-start text-sm text-neutral-500", TEXT_LINK_FEEDBACK)}
       >
         ← Calendar
       </Link>
@@ -718,7 +719,7 @@ export default async function AppointmentDetailPage({
               anything. */}
           {cancellationInsight?.follow_up_allowed === true && (
             <details className="mt-1 text-neutral-700 dark:text-neutral-300">
-              <summary className="cursor-pointer text-xs font-medium uppercase tracking-wider text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300">
+              <summary className={cx("cursor-pointer text-xs font-medium uppercase tracking-wider text-neutral-500", TEXT_LINK_FEEDBACK)}>
                 Suggested follow-up message
               </summary>
               <p className="mt-2 whitespace-pre-line text-sm">
@@ -988,7 +989,7 @@ function ClientBriefingCard({
       <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <Link
           href={`/clients/${client.id}`}
-          className="text-base font-medium hover:underline"
+          className={cx("text-base font-medium", TEXT_LINK_FEEDBACK)}
         >
           {client.name}
         </Link>
@@ -1011,19 +1012,19 @@ function ClientBriefingCard({
       >
         <Link
           href={`/clients/${client.id}`}
-          className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           View profile
         </Link>
         <Link
           href={`/clients/${client.id}/edit`}
-          className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Edit client
         </Link>
         <Link
           href={`/clients/${client.id}?tab=health`}
-          className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Health &amp; Forms
         </Link>
@@ -1035,13 +1036,13 @@ function ClientBriefingCard({
           href={`/clients/${client.id}?tab=treatment&create_plan=1&returnTo=${encodeURIComponent(
             `/calendar/${appointmentId}`,
           )}`}
-          className="rounded-md border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 font-medium text-white hover:bg-neutral-800 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+          className={buttonClasses({ variant: "primary", size: "sm" })}
         >
           Create treatment plan
         </Link>
         <Link
           href={`/clients/${client.id}?tab=treatment`}
-          className="rounded-md border border-neutral-300 px-2.5 py-1.5 font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           View treatment plans
         </Link>
@@ -1118,7 +1119,7 @@ function IntakeStatusLine({
         ·{" "}
         <Link
           href={practitionerIntakeReviewHref(clientId)}
-          className="text-neutral-700 hover:underline dark:text-neutral-300"
+          className={cx("text-neutral-700 dark:text-neutral-300", TEXT_LINK_FEEDBACK)}
         >
           Review intake
         </Link>
@@ -1135,7 +1136,7 @@ function IntakeStatusLine({
         ·{" "}
         <Link
           href={practitionerIntakeReviewHref(clientId)}
-          className="text-neutral-700 hover:underline dark:text-neutral-300"
+          className={cx("text-neutral-700 dark:text-neutral-300", TEXT_LINK_FEEDBACK)}
         >
           Review intake
         </Link>
@@ -1385,7 +1386,7 @@ function ChartSessionCard({
         <p className="mt-2">
           <Link
             href={`/clients/${clientId}/sessions/${linkedSession.id}`}
-            className="font-medium hover:underline"
+            className={cx("font-medium", TEXT_LINK_FEEDBACK)}
           >
             <FormattedDateTime iso={linkedSession.started_at} />
           </Link>
@@ -1405,7 +1406,7 @@ function ChartSessionCard({
       </p>
       <Link
         href={`/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(appointmentId)}`}
-        className="self-start rounded-md border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:border-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        className={buttonClasses({ variant: "primary", size: "sm", className: "self-start" })}
       >
         + Chart session
       </Link>
@@ -1496,7 +1497,7 @@ function NextStepCard({
       </div>
       <Link
         href={ctaHref}
-        className="self-start rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+        className={buttonClasses({ variant: "primary", size: "sm", className: "self-start" })}
       >
         {ctaLabel}
       </Link>
@@ -1540,7 +1541,7 @@ function TreatmentPlanCard({
           <p className="mt-2 text-xs">
             <Link
               href={`/clients/${clientId}?tab=treatment`}
-              className="text-neutral-700 hover:underline dark:text-neutral-300"
+              className={cx("text-neutral-700 dark:text-neutral-300", TEXT_LINK_FEEDBACK)}
             >
               Open treatment plans
             </Link>
@@ -1563,7 +1564,7 @@ function TreatmentPlanCard({
             {clientId ? (
               <Link
                 href={`/clients/${clientId}?tab=treatment`}
-                className="font-medium hover:underline"
+                className={cx("font-medium", TEXT_LINK_FEEDBACK)}
               >
                 {p.name}
               </Link>
