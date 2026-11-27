@@ -1,0 +1,12 @@
+{
+  "purpose": "The one field of OPS's W-1 baseline that must change because the window-read manifest gained g09d. No other baseline field changes. This file is a proposal, not a baseline: the machines lane holds no baseline file (OPS assembles it at the window), so it is an edit, not a replacement.",
+  "edit": {
+    "path": "manifest_sha256",
+    "current": "c2af651c9b87720e4332e25a4b6b34831f07c5dbf94dc394fcc6805ae8d6b4b2",
+    "proposed": "2b1608a9ec43caf97bd9ead3fe1d10895652a080a4b8ae0a891a17be3038cd94",
+    "derivation": "sha256 of the MANIFEST.sha256 file text (14 lines, g09d included); `sha256sum MANIFEST.sha256`. With the g09d line removed the text hashes to the current value."
+  },
+  "diff": "- \"manifest_sha256\": \"c2af651c9b87720e4332e25a4b6b34831f07c5dbf94dc394fcc6805ae8d6b4b2\"\n+ \"manifest_sha256\": \"2b1608a9ec43caf97bd9ead3fe1d10895652a080a4b8ae0a891a17be3038cd94\"",
+  "unchanged_fields": ["runner_sha256 (run-window-read.sh is unchanged, ec9b7c56...)", "project_ref_sha256", "planned_duration_minutes", "g4_max_age_hours", "g3", "g09", "required_checks"],
+  "also_required": "Every capture sidecar must be produced by the runner while MANIFEST.sha256 is the 14-file one, so each meta file's manifest_sha256 equals the proposed value. A sidecar made under the 13-file manifest fails S0-14 ('captured under a different manifest'). Re-run any already captured file."
+}

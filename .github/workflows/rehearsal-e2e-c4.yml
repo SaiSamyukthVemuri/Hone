@@ -1,0 +1,50 @@
+# REHEARSAL - NEVER MERGE. E2E-C4: the reviewed Mac scripts as ONE chain in ONE fake HOME on macOS arm64 (see
+# rehearsal/e2e-c4/e2e-chain.sh for exactly what is real and what is stubbed). No hosted call, no hosted database, no secrets:
+# the database is a throwaway local PostgreSQL on 127.0.0.1; the only network use is fetching the public supabase CLI release.
+name: rehearsal-e2e-c4
+
+on:
+  pull_request:
+    paths:
+      - "rehearsal/e2e-c4/**"
+      - ".github/workflows/rehearsal-e2e-c4.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-chain:
+    name: seven download lines, then pitr-backups -> c4 S0a -> c4 row 4 -> s1-apply -> s1read (macOS arm64)
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Platform facts
+        run: |
+          uname -sm
+          /bin/bash --version | head -1
+          /bin/zsh --version
+          node --version
+          python3 --version
+          date -u
+      - name: The chain
+        env:
+          E2E_WORK: ${{ runner.temp }}/e2e
+        run: /bin/bash rehearsal/e2e-c4/e2e-chain.sh
+      - name: What the Postgres log says on a failure
+        if: failure()
+        run: tail -n 40 "$RUNNER_TEMP/e2e/pg/pg.log" 2>/dev/null || true
+      - name: Keep the transcripts and step table
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-c4
+          path: |
+            ${{ runner.temp }}/e2e/*.out
+            ${{ runner.temp }}/e2e/steps.tsv
+            ${{ runner.temp }}/e2e/build.log
+            ${{ runner.temp }}/e2e/home/hone-s1/e2e-calls.log
+          retention-days: 3
