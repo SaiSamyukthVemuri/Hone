@@ -868,6 +868,9 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   record_email_attempt: "--sD",
   record_email_result: "--sD",
   record_new_client_waitlist_conversion: "--sD",
+  // 0213: service_role only, security definer. The two public lead forms call these through the service-role client; no signed-in or anonymous role can run them.
+  record_platform_demo_request: "--sD",
+  record_platform_early_access_signup: "--sD",
   record_setup_submission_with_identity: "-u-D",
   record_sms_delivery_status: "--sD",
   record_sms_result: "--sD",

@@ -11,6 +11,7 @@ import {
 } from "@/lib/email/new-client-waitlist-send";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { recordOpsAlert } from "@/lib/ops/alerts";
+import { dbErrorCode } from "@/lib/logging/error-class";
 import {
   maskRecipient,
   resolveLeadAlertRecipients,
@@ -335,7 +336,7 @@ async function settle(
       alert_id: row.alert_id,
       attempt: row.attempt,
       outcome: s.outcome,
-      code: error.code ?? null,
+      code: dbErrorCode(error),
     });
     return "settle_error";
   }
@@ -393,7 +394,7 @@ async function claimAndSend(
     log("error", {
       event: "platform_lead_alert_claim_failed",
       alert_id: alertId,
-      code: error.code ?? null,
+      code: dbErrorCode(error),
     });
     return "claim_error";
   }
@@ -544,7 +545,7 @@ async function recordBlocked(
       event: "platform_lead_alert_blocked_record_failed",
       alert_id: alertId,
       blocked: code,
-      code: error.code ?? null,
+      code: dbErrorCode(error),
     });
     return { ok: false };
   }

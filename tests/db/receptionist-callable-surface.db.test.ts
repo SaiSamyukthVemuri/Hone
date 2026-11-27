@@ -432,13 +432,22 @@ describe("F3: tables that hold a row are tried for read, update and delete; empt
         if (weak) weakInserts.add(t);
         const allowSel = k === "recA" && t === "studio_receptionists" ? 1 : 0;
         if (!(v.sel.kind === "error:42501" || (v.sel.kind === "ok" && v.sel.rows === allowSel) || (t in GLOBAL_REFERENCE && k !== "anon" && v.sel.kind === "ok"))) findings.push(`select ${t} as ${k}: ${v.sel.kind} ${v.sel.rows ?? ""}`);
-        if (!weak && v.ins.kind !== "error:42501") findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
+        // A table whose unconditional INSERT policy is intended (a public form) is allowed to accept this insert; once ANOTHER suite has left a row
+        // in it, the template insert reaches the policy and fails only on a unique key (or succeeds), which is that same by-design policy. Its reads,
+        // updates and deletes below stay required closed.
+        if (!weak && v.ins.kind !== "error:42501" && !(t in ANON_INSERT_BY_DESIGN)) findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
         if (!(v.upd.kind === "error:42501" || (v.upd.kind === "ok" && v.upd.rows === 0))) findings.push(`update ${t} as ${k}: ${v.upd.kind} ${v.upd.rows ?? ""}`);
         if (!(v.del.kind === "error:42501" || (v.del.kind === "ok" && v.del.rows === 0))) findings.push(`delete ${t} as ${k}: ${v.del.kind} ${v.del.rows ?? ""}`);
       }
     }
     expect(findings, "a table a receptionist, stranger or anon can read, insert into, update or delete from").toEqual([]);
-    expect([...weakInserts].sort(), "tables with no template row where the insert was stopped by a constraint or trigger before the policy could be shown (pinned; seed a row to prove the policy)").toEqual(Object.keys(INSERT_UNPROVEN).sort());
+    // One-directional on the shared CI database, exactly as the vacuity guard above: other suites leave rows in some of these tables (the lead-form
+    // suites leave demo_requests and waitlist rows), and a table that now holds a row is proved by the dynamic check, so it drops out of the weak set.
+    // The weak set must be a SUBSET of the pin; the exact match is asserted only when HONE_FRESH_DB=1 says the database is fresh.
+    const pinned = Object.keys(INSERT_UNPROVEN).sort();
+    const weakList = [...weakInserts].sort();
+    expect(weakList.filter((t) => !pinned.includes(t)), "tables with no template row where the insert was stopped by a constraint or trigger before the policy could be shown, and that are NOT pinned (seed a row to prove the policy, or pin with a reason)").toEqual([]);
+    if (process.env.HONE_FRESH_DB === "1") expect(weakList, "fresh database: the weak inserts equal the pin").toEqual(pinned);
   });
 });
 
