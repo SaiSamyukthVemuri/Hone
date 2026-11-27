@@ -1069,6 +1069,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "Platform payment review surface, cross-studio.",
   },
   {
+    route: "/admin/front-desk",
+    reason: "Platform front desk switch and seat control, cross-studio.",
+  },
+  {
     route: "/admin/rollouts",
     reason: "Platform rollout control, cross-studio.",
   },

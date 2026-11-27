@@ -74,6 +74,7 @@ describe("behaviour of the real Team page, by role (queries mocked, page and com
       }),
     }));
     vi.doMock("@/lib/appointments/review-link", () => ({ shouldShowReviewLink }));
+    vi.doMock("@/lib/desk/seats", () => ({ readFrontDeskSummary: async () => null })); // the owner's front desk summary (0390) is not what this test is about
     vi.doMock("../../../app/(app)/settings/team/actions", () => ({ removePractitionerAction: vi.fn(), revokeInvitationAction: vi.fn() }));
     const { default: Page } = await import("../../../app/(app)/settings/team/page");
     return { html: renderToStaticMarkup(await Page()), getPractitionersForStudio, shouldShowReviewLink };

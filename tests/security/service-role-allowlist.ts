@@ -364,6 +364,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAdmin",
   },
   {
+    path: "app/admin/front-desk/page.tsx",
+    purpose: "Operator-only Front Desk control page: reads one studio's switch and seat grants (with the grant reasons) and the studio NAMES for the picker.",
+    why: "No practitioner session; the switch and seat tables have no client grant at all, and the page is cross-studio by nature. Gated by the platform-admin check on the page (and the layout); it shows names only, never an id, owner email, client or clinical data. Grant reasons are shown to platform admins only.",
+    scopeGuard: "requirePlatformAdmin",
+  },
+  {
+    path: "lib/desk/seats.ts",
+    purpose: "The studio owner's own front desk entitlement summary: switch on or off and seat numbers, no reasons.",
+    why: "The summary command is a service-role-only database function that re-verifies the active OWNER of the studio in the database, so a forged studio or practitioner id gets not_authorized and never another studio's numbers. The only callers run after the server has resolved the owner.",
+    scopeGuard: "p_owner_practitioner_id",
+  },
+  {
     path: "app/admin/rollouts/page.tsx",
     purpose: "Operator-only rollout control page: reads the platform rollout mode and pilot studio NAMES, and operator display labels.",
     why: "No practitioner session; the platform tables have no client grant at all, and pilot studios are cross-studio by nature. Gated by the platform-admin check on the page (and the layout); it shows names only, never an id, owner email or clinical data.",

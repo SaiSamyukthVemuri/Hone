@@ -284,6 +284,8 @@ export const BROWSER_GROUPS = {
       "calendar-week-starts-sunday.spec.ts",
       "desk-calendar.spec.ts",
       "desk-finder-and-isolation.spec.ts",
+      // The Front Desk switch and seats (0390): revoke, expiry and switch-off close the desk on the next request; the owner Team page and the platform admin screen.
+      "front-desk-seats.spec.ts",
       // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
       // (date passed vs treatment recorded), owner-only, and read-only unless the owner presses Change practitioner.
       "review-assignments-navigation.spec.ts",

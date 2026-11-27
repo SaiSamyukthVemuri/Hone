@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readSelectedStudioId } from "@/lib/supabase/selected-studio";
 import { isDeskEnabled } from "@/lib/desk/flag";
 import { resolveDeskMembership, type ReceptionistRow } from "@/lib/desk/membership";
+import { frontDeskStudioIds, type AccessSupabase } from "@/lib/desk/access";
 
 // The ONLY identity guard the desk routes use. requirePractitionerWithStudio() is untouched: a receptionist-only user
 // is still sent to /no-access by every app page. Reads studio_receptionists through the signed-in client, so row-level
@@ -30,7 +31,10 @@ const loadDeskRows = cache(async (): Promise<DeskRows> => {
   if (error) throw new Error("Failed to load receptionist membership");
   // A fixed order, so the chooser's positional labels ("Studio 1", "Studio 2") mean the same studio on every load and a
   // receptionist cannot open the wrong one because the database returned the rows in another order.
-  const rows = [...((data ?? []) as ReceptionistRow[])].sort((a, b) => (a.studio_id < b.studio_id ? -1 : a.studio_id > b.studio_id ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // The per-studio gate (0390): only studios where the Front Desk is switched on for the studio AND this receptionist holds a seat. A row
+  // outside that set is as good as absent, so a switched-off, revoked or expired studio fails the very next request.
+  const allowed = await frontDeskStudioIds(supabase as unknown as AccessSupabase);
+  const rows = [...((data ?? []) as ReceptionistRow[]).filter((row) => allowed.has(row.studio_id))].sort((a, b) => (a.studio_id < b.studio_id ? -1 : a.studio_id > b.studio_id ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return { kind: "authenticated", rows };
 });
 

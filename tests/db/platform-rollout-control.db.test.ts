@@ -28,8 +28,8 @@ const audit = () => adminQuery(`select actor_user_id, actor_email, actor_role, s
 beforeAll(async () => {
   const have = await adminQuery(`select to_regclass('public.platform_rollouts') as t`);
   if (!have.rows[0].t) await adminQuery(readFileSync(SQL_PATH, "utf8"));
-  A = await seedStudio("rollout-a");
-  B = await seedStudio("rollout-b");
+  A = await seedStudio("rollout-a", { frontDesk: false });
+  B = await seedStudio("rollout-b", { frontDesk: false });
   created.push(A.studioId, B.studioId);
   await adminQuery(`delete from public.platform_rollout_studios`);
   await adminQuery(`update public.platform_rollouts set mode='off', updated_by=null`);
@@ -76,7 +76,7 @@ describe("the resolver (fails closed)", () => {
     await setMode("off");
   });
   it("deleting a pilot studio removes its membership (cascade)", async () => {
-    const S = await seedStudio("rollout-del");
+    const S = await seedStudio("rollout-del", { frontDesk: false });
     await setMode("pilot");
     await add(S.studioId);
     expect((await adminQuery(`select count(*)::int n from public.platform_rollout_studios where studio_id=$1`, [S.studioId])).rows[0].n).toBe(1);
@@ -227,5 +227,13 @@ describe("rollback", () => {
     await adminQuery(RB);
     expect((await adminQuery(`select to_regclass('public.platform_rollouts') as t`)).rows[0].t).toBeNull();
     await adminQuery(readFileSync(SQL_PATH, "utf8")); // re-apply so later suites on this stack still find it
+    // The replay recreated the table as 0362 made it. When 0390 is on this stack (the Front Desk key and its refusal of mode 'all'), put back
+    // exactly what 0390 adds to this table, or every later file that switches a studio on finds no 'front_desk' row.
+    if ((await adminQuery(`select to_regclass('public.studio_front_desk_seats') as t`)).rows[0].t) {
+      await adminQuery(`alter table public.platform_rollouts drop constraint platform_rollouts_key_check;
+        alter table public.platform_rollouts add constraint platform_rollouts_key_check check (key in ('charting_new_view_xcell', 'front_desk'));
+        alter table public.platform_rollouts add constraint platform_rollouts_front_desk_mode_check check (key <> 'front_desk' or mode in ('off', 'pilot'));
+        insert into public.platform_rollouts (key) values ('front_desk') on conflict do nothing;`);
+    }
   });
 });

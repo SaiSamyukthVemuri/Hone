@@ -53,6 +53,8 @@ export async function acceptInvitationAction(
   if (res.status === "conflict") redirect("/no-access?reason=invite-conflict");
   if (res.status === "ambiguous") redirect("/no-access?reason=invite-ambiguous");
   if (res.status === "no_invitation") redirect("/no-access");
+  // The studio's Front Desk is not switched on, or every seat is taken (0390). The invitation stays pending; nothing was linked.
+  if (res.status === "front_desk_off" || res.status === "seat_limit") redirect("/no-access?reason=front-desk-unavailable");
 
   // Complete acceptance only when the governed command confirms success.
   // Missing or unknown responses must not clear selection or imply a join.

@@ -47,6 +47,12 @@ export default async function AdminLayout({
               Rollouts
             </Link>
             <Link
+              href="/admin/front-desk"
+              className="text-neutral-200 hover:text-white"
+            >
+              Front desk
+            </Link>
+            <Link
               href="/admin/ops-alerts"
               className="text-neutral-200 hover:text-white"
             >

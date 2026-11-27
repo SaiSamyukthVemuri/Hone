@@ -59,7 +59,7 @@ export default async function NoAccessPage({
   // no cross-tenant information). These only apply to a 0-membership user.
   const inviteIssue =
     !multiple &&
-    (reason === "invite-conflict" || reason === "invite-ambiguous");
+    (reason === "invite-conflict" || reason === "invite-ambiguous" || reason === "front-desk-unavailable");
 
   const heading = multiple
     ? "Choose a studio"
@@ -72,6 +72,8 @@ export default async function NoAccessPage({
       ? "This invitation couldn't be completed automatically. Please contact the studio or Hone support so it can be sorted out."
       : reason === "invite-ambiguous"
         ? "There is more than one pending invitation for your account. Please contact the studio or Hone support so it can be resolved."
+        : reason === "front-desk-unavailable"
+          ? "The front desk isn't available for this studio yet. Your invitation is still waiting. Please ask the studio owner, who can contact Hone."
         : "Hone is currently invite-only for supervised studios. Use the email address your studio invitation was sent to, or contact Hone if you believe you should have access.";
 
   return (

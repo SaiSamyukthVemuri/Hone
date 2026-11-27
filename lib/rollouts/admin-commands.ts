@@ -28,9 +28,9 @@ export type RolloutOutcome = { kind: "ok"; value: string } | { kind: "refused" }
 // statement committed, so it is UNKNOWN.
 const REFUSAL_CLASSES = /^(22|23|42|P0)[0-9A-Z]{3}$/;
 
-const defaultRpc: RolloutRpc = (fn, args) => createAdminClient().rpc(fn, args) as unknown as ReturnType<RolloutRpc>;
+export const defaultRpc: RolloutRpc = (fn, args) => createAdminClient().rpc(fn, args) as unknown as ReturnType<RolloutRpc>;
 
-async function call(rpc: RolloutRpc, fn: string, args: Record<string, unknown>): Promise<RolloutOutcome> {
+export async function call(rpc: RolloutRpc, fn: string, args: Record<string, unknown>): Promise<RolloutOutcome> {
   try {
     const { data, error } = await rpc(fn, args);
     if (error) return typeof error.code === "string" && REFUSAL_CLASSES.test(error.code) ? { kind: "refused" } : { kind: "unknown" };

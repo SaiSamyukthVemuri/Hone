@@ -15,7 +15,11 @@ function buildShareMessage(email: string): string {
   return `Tell ${email}: visit hone.care, click Sign in, use ${email}. They will be added to your team automatically.`;
 }
 
-export function InviteForm() {
+// "unknown" (could not be read) and "available" leave the choice open: the database refuses a receptionist invitation when the Front Desk is off
+// or no seat is free (0390), so this prop only decides what to OFFER and what to say.
+export type ReceptionistInvites = "available" | "off" | "full" | "unknown";
+
+export function InviteForm({ receptionistInvites = "unknown" }: { receptionistInvites?: ReceptionistInvites }) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState<"practitioner" | "owner" | "receptionist">("practitioner");
@@ -137,7 +141,9 @@ export function InviteForm() {
         >
           <option value="practitioner">Practitioner</option>
           <option value="owner">Owner</option>
-          <option value="receptionist">Receptionist (front desk)</option>
+          <option value="receptionist" disabled={receptionistInvites === "off" || receptionistInvites === "full"}>
+            Receptionist (front desk){receptionistInvites === "off" ? " - not switched on" : receptionistInvites === "full" ? " - no free seat" : ""}
+          </option>
         </select>
       </label>
       <div className="flex items-center gap-3">
