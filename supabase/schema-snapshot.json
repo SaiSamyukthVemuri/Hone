@@ -3,7 +3,7 @@
   "migrations": {
     "count": 293,
     "last": "0394_visit_payment_commands.sql",
-    "sha256": "55ab313034b66e8766f060902f3d6a6f35346dd29b8d1de6d5b17b27d9a0f7a8"
+    "sha256": "ae5a1d8ec15c1a81b3a7bb6f19738d20d46c30ad348b7d41e658038d3024ccf3"
   },
   "public": {
     "tables": [

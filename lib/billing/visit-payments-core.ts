@@ -256,3 +256,11 @@ export function proportionalFeeReturn(args: { feeCents: number | null; chargeCen
   if (alreadyRefundedCents + refundCents >= chargeCents) return left;
   return Math.min(left, Math.floor((feeCents * refundCents) / chargeCents));
 }
+
+/**
+ * Which refund rows belong in a billed visit's ledger. A refund the split flow wrote always does. A LEGACY row is the mirror of a refund made on the attempt itself (the older
+ * refund control, or a refund made in Stripe and reported by its webhook): it counts when its attempt belongs to the bill, because visit_payment_position counts it. A legacy
+ * row of an attempt that is not on the bill is the old single-payment record and is read as before (not here).
+ */
+export const keepsRefundForBilledVisit = (r: { legacy: boolean; attemptId: string | null }, billedAttemptIds: ReadonlySet<string>): boolean =>
+  !r.legacy || (r.attemptId !== null && billedAttemptIds.has(r.attemptId));

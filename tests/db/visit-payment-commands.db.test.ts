@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Client } from "pg";
-import { adminQuery, asUser, closePool } from "./helpers/harness";
+import { adminQuery, asUser, closePool, resolveLocalDbUrl } from "./helpers/harness";
 import { cleanupPaymentScenario, seedQuickCheckoutScenario, type PaymentScenario } from "./helpers/payment-seed";
 
 // 0394 — the visit payment commands (HON-123 / HON-122), proved on the real migrated database. Synthetic values only.
@@ -188,7 +188,7 @@ describe("0394 a pending transfer RESERVES its amount (both click orders and a r
 
   it("overlap is FORCED, not hoped for: while another transaction holds the visit's lock, a card waits behind it, then is refused", async () => {
     const { s, transferId } = await reserved();
-    const holder = new Client({ connectionString: process.env.HONE_LOCAL_DB_URL });
+    const holder = new Client({ connectionString: resolveLocalDbUrl() });
     await holder.connect();
     try {
       await holder.query("begin");

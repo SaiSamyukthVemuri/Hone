@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { keepsRefundForBilledVisit } from "@/lib/billing/visit-payments-core";
 import type {
   ExternalMethod, LedgerBill, LedgerCard, LedgerExternal, LedgerRefund, VisitCurrency, VisitLedger,
 } from "@/lib/billing/visit-payments-core";
@@ -48,8 +49,8 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).is("superseded_at", null).maybeSingle(),
       supabase.from("visit_external_payments").select("id, method, amount_cents, state, recorded_at, note")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).order("recorded_at"),
-      supabase.from("payment_refunds").select("id, amount_cents, kind, status, attempt_id, external_payment_id, reason, requested_at, platform_fee_returned_cents")
-        .eq("studio_id", studioId).eq("appointment_id", appointmentId).eq("legacy", false).order("requested_at"),
+      supabase.from("payment_refunds").select("id, amount_cents, kind, status, attempt_id, external_payment_id, reason, requested_at, platform_fee_returned_cents, legacy")
+        .eq("studio_id", studioId).eq("appointment_id", appointmentId).order("requested_at"),
       createAdminClient().from("payment_charge_attempts").select("id, amount_cents, status, created_at, receipt_sent_at")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).eq("charge_reason", "session_payment").not("visit_bill_id", "is", null).order("created_at"),
     ]);
@@ -73,9 +74,11 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
         state: r.state as LedgerExternal["state"], at: String(r.recorded_at), note: typeof r.note === "string" ? r.note : null,
       });
     }
+    const billedAttempts = new Set<string>(((cards.data ?? []) as Record<string, unknown>[]).flatMap((c) => (typeof c.id === "string" ? [c.id] : [])));
     const refs: LedgerRefund[] = [];
     for (const r of (refunds.data ?? []) as Record<string, unknown>[]) {
       if (typeof r.id !== "string" || num(r.amount_cents) === null) return { ok: false };
+      if (!keepsRefundForBilledVisit({ legacy: r.legacy === true, attemptId: typeof r.attempt_id === "string" ? r.attempt_id : null }, billedAttempts)) continue;
       refs.push({
         id: r.id, amountCents: r.amount_cents as number, kind: r.kind as LedgerRefund["kind"], status: r.status as LedgerRefund["status"],
         attemptId: typeof r.attempt_id === "string" ? r.attempt_id : null, externalPaymentId: typeof r.external_payment_id === "string" ? r.external_payment_id : null,

@@ -1,7 +1,7 @@
 "use client";
 
 import { refundDisplayState } from "@/lib/billing/refund-display-state";
-import { useState, useTransition } from "react";
+import { createContext, useContext, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { checkoutDraftAmount, useCheckoutFeeDraft, waivedVisitData, type CheckoutFeeDraft } from "@/components/checkout-fee-fields";
 import { waiveAppointmentFeeAction } from "@/app/(app)/appointment-settlement-actions";
@@ -220,6 +220,7 @@ export function SessionPaymentPrepareCard({
   settledQuotedCents = null,
   settlementQuotedAmountCents = null,
   canRecordSettlement = true,
+  visitBilled = false,
   onSettlementRecorded,
   initialMethod,
   initialFeeDraft,
@@ -252,6 +253,8 @@ export function SessionPaymentPrepareCard({
   // carry a disposition. Defaults true so the session page, which only renders
   // this card for a real session, is unchanged.
   canRecordSettlement?: boolean;
+  /** HON-123: the visit has a split-payments bill: the whole-payment refund control is withdrawn (refunds go through the split panel). */
+  visitBilled?: boolean;
   // Pass-through to AppointmentSettlementControls, and the ONLY refresh-shaped
   // prop this card accepts.
   //
@@ -466,6 +469,7 @@ export function SessionPaymentPrepareCard({
       : "Stripe is unavailable for this visit.";
 
   return (
+    <VisitBilledContext.Provider value={visitBilled}>
     <section
       className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
       aria-label="Session payment"
@@ -615,6 +619,7 @@ export function SessionPaymentPrepareCard({
 
 
     </section>
+    </VisitBilledContext.Provider>
   );
 }
 
@@ -1060,7 +1065,7 @@ function SucceededPanel({
 
         {/* PR #178 refund sub-panel: owner-only Refund button; server refund
             authorization is unchanged (owner-only there too). */}
-        <RefundSubPanel
+        <RefundSubPanelGate
           attempt={attempt}
           sessionId={sessionId}
           clientId={clientId}
@@ -1223,6 +1228,25 @@ function ReceiptSubPanel({
 //   "Live refund" / "Refund complete" / "Money returned" /
 //   "Official refund receipt"
 // ---------------------------------------------------------------------------
+/** A visit with a split-payments bill refunds a card payment from the split panel (HON-123), so the older whole-payment refund control is withdrawn for it. */
+const VisitBilledContext = createContext(false);
+
+function RefundSubPanelGate(props: RefundSubPanelProps) {
+  const billed = useContext(VisitBilledContext);
+  if (billed) {
+    return <p className="text-sm text-neutral-700 dark:text-neutral-300" data-testid="refund-moved-to-split">This visit is paid through the visit bill. Refund a payment from Payments for this visit (open Quick checkout from the calendar or dashboard).</p>;
+  }
+  return <RefundSubPanel {...props} />;
+}
+
+type RefundSubPanelProps = {
+  attempt: SessionPaymentExistingAttemptSummary;
+  sessionId: string;
+  clientId: string;
+  isOwner: boolean;
+  refundAction: RefundAction;
+};
+
 function RefundSubPanel({
   attempt,
   sessionId,

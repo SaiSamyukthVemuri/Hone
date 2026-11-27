@@ -1176,6 +1176,7 @@ export default async function SessionDetailPage({
           // with `not_completed`). Offering the controls on a visit that has
           // not happened yet would be a button that always fails.
           canRecordSettlement={finishAppt?.status === "completed" && !visitBilled}
+          visitBilled={visitBilled}
           // Trusted, server-derived owner flag: gates the owner-only Technical
           // payment details disclosure + the Refund button (server refund
           // authorization is unchanged; it is owner-only there too).

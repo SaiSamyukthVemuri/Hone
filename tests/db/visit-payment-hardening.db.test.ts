@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Client } from "pg";
-import { adminQuery, asRole, asUser, closePool, seedMember } from "./helpers/harness";
+import { adminQuery, asRole, asUser, closePool, resolveLocalDbUrl, seedMember } from "./helpers/harness";
 import { cleanupPaymentScenario, seedQuickCheckoutScenario, type PaymentScenario } from "./helpers/payment-seed";
 
 // 0393 / 0394 hardening (Insurance and Privacy review of #1827). Synthetic values only. Each block names the failure it closes; a mutation control
@@ -91,7 +91,7 @@ describe("F2 a card attempt cannot escape the wall", () => {
 
   it("the card wall takes the visit lock BEFORE it reads the bill: an insert waits for whoever holds the lock, so bill creation and an attempt serialise", async () => {
     const s = await visit();
-    const holder = new Client({ connectionString: process.env.HONE_LOCAL_DB_URL });
+    const holder = new Client({ connectionString: resolveLocalDbUrl() });
     await holder.connect();
     try {
       await holder.query("begin");
@@ -229,7 +229,7 @@ describe("F5 a billed visit cannot also take a legacy single-outcome settlement 
   });
   it("the settlement wall takes the SAME visit lock the command and ensure_visit_bill take, before it reads the bill: a settlement insert waits for whoever holds it", async () => {
     const s = await visit();
-    const holder = new Client({ connectionString: process.env.HONE_LOCAL_DB_URL });
+    const holder = new Client({ connectionString: resolveLocalDbUrl() });
     await holder.connect();
     try {
       await holder.query("begin");
@@ -261,17 +261,20 @@ describe("F5 a billed visit cannot also take a legacy single-outcome settlement 
       expect(bills > 0 && settlements > 0, `round ${i}: bills=${bills} settlements=${settlements}`).toBe(false);
     }
   });
-  it("a bill retired out of band with NO successor still refuses a settlement (any bill row refuses)", async () => {
+  it("a bill retired out of band with NO successor on its own visit still refuses a settlement (any bill row refuses, live or not)", async () => {
     const s = await visit();
+    const other = await visit();
     await ensure(s);
-    await adminQuery(`update public.visit_bills set superseded_at = now() where studio_id = $1 and appointment_id = $2`, [s.studioId, s.appointmentId]).catch(() => undefined);
-    const retired = (await adminQuery(`select count(*)::int n from public.visit_bills where studio_id = $1 and appointment_id = $2 and superseded_at is not null`, [s.studioId, s.appointmentId])).rows[0].n as number;
+    await ensure(other);
+    // The superseded-by foreign key only asks for SOME bill, so a bill can be retired by hand pointing at another visit's bill: its own visit is left with a bill row and no live bill.
+    const bid = (await adminQuery(`select id from public.visit_bills where studio_id = $1 and appointment_id = $2`, [other.studioId, other.appointmentId])).rows[0].id as string;
+    await adminQuery(`update public.visit_bills set superseded_at = now(), superseded_by_id = $3 where studio_id = $1 and appointment_id = $2`, [s.studioId, s.appointmentId, bid]);
+    expect((await adminQuery(`select count(*)::int n from public.visit_bills where studio_id = $1 and appointment_id = $2 and superseded_at is null`, [s.studioId, s.appointmentId])).rows[0].n).toBe(0);
     await expect(
       adminQuery(
         `insert into public.appointment_settlements (studio_id, appointment_id, method, amount_cents, currency, recorded_by_practitioner_id) select $1,$2,'paid_cash',22500,'cad',$3`,
         [s.studioId, s.appointmentId, s.practitionerId],
       ),
     ).rejects.toMatchObject({ code: "PY004" });
-    expect(retired, "the out-of-band retire must have been possible for this control to mean anything").toBeGreaterThanOrEqual(0);
   });
 });

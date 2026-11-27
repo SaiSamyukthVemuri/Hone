@@ -103,8 +103,7 @@ export type StatementBucket = {
   rows: number;
 };
 
-/** `reversal`: this refund returned money the client PAID against the bill (a payment reversal), so that money is no longer retained. A price-reduction refund is not marked: the bill itself was lowered. */
-export type StatementMoneyLine = { kind: StatementKind; cents: number | null; source: "card" | "settlement" | "legacy_fee"; reversal?: true };
+export type StatementMoneyLine = { kind: StatementKind; cents: number | null; source: "card" | "settlement" | "legacy_fee" };
 export type StatementVisit = {
   appointmentId: string;
   startsAt: string;
@@ -166,10 +165,9 @@ const METHOD_KIND: Record<string, StatementKind> = {
   bill_total: "bill_note",
   partial_refund: "refunded_partial",
   refund_in_flight: "unresolved",
-  reversal_refund: "refunded_partial",
 };
 
-export function classifySettlementRow(row: StatementSettlementRow, studioCurrency: string): { kind: StatementKind; cents: number | null; reversal?: true } {
+export function classifySettlementRow(row: StatementSettlementRow, studioCurrency: string): { kind: StatementKind; cents: number | null } {
   const kind = METHOD_KIND[row.method];
   if (!kind) return { kind: "unreadable", cents: null };
   // A still_owes row is a note: never money, never an amount.
@@ -178,7 +176,7 @@ export function classifySettlementRow(row: StatementSettlementRow, studioCurrenc
   if (typeof a !== "number" || !Number.isInteger(a) || a < 0) return { kind: "unreadable", cents: null };
   // Mirrors outstanding-balance: a currency that is present and different is never summed.
   if (row.currency && row.currency.toLowerCase() !== studioCurrency.toLowerCase()) return { kind: "other_currency", cents: null };
-  return row.method === "reversal_refund" ? { kind, cents: a, reversal: true } : { kind, cents: a };
+  return { kind, cents: a };
 }
 
 export function classifyLegacyFeeRow(row: StatementLegacyFeeRow, studioCurrency: string): { kind: StatementKind; cents: number | null } {
@@ -207,7 +205,7 @@ export function buildStatement(input: {
   const place = (
     appointmentId: string,
     source: StatementMoneyLine["source"],
-    c: { kind: StatementKind; cents: number | null; reversal?: true },
+    c: { kind: StatementKind; cents: number | null },
   ): void => {
     rowsIn += 1;
     const appt = apptById.get(appointmentId);
@@ -221,7 +219,7 @@ export function buildStatement(input: {
     if (appt) {
       let v = visitMap.get(appt.id);
       if (!v) visitMap.set(appt.id, (v = { appointmentId: appt.id, startsAt: appt.startsAt, practitionerId: pid, lines: [] }));
-      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source, ...(c.reversal ? { reversal: true as const } : {}) });
+      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source });
     }
   };
 

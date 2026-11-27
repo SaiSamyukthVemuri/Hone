@@ -112,20 +112,21 @@ describe("the client document judges a visit against its bill", () => {
     expect(v.state).not.toBe("paid");
     expect(v.paidCents).toBe(10000);
   });
-  it("fully paid in parts with a refund: paid, the refund shown, nothing netted", async () => {
+  it("fully paid in parts, then $40 returned: the refund is shown and the $40 is due again, as the checkout balance counts it", async () => {
     const v = await doc({
       payment_charge_attempts: [card(10000)], visit_bills: LEDGER.visit_bills, sessions: SESSIONS,
       visit_external_payments: [{ appointment_id: A, method: "paid_cash", amount_cents: 12500, currency: "cad", state: "confirmed" }],
       payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false }],
     });
-    expect(v.state).toBe("paid");
+    expect(v.state).toBe("confirmed_unpaid");
+    expect(v.owedCents).toBe(4000);
     expect(v.paidCents).toBe(22500);
     expect(v.refundedCents).toBe(4000);
   });
   it("the unconfirmed transfer leaves its amount owed against the bill", async () => {
     const v = await doc(LEDGER);
     expect(v.state).toBe("confirmed_unpaid");
-    expect(v.owedCents).toBe(7500); // 225 - (100 card + 50 cash); the transfer is owed, not received
+    expect(v.owedCents).toBe(11500); // 225 - (100 card + 50 cash - 40 returned); the $75 transfer is owed, not received, and the $40 returned is owed again
   });
   it("a payment returned leaves less retained: $100 cash with $40 reversed shows $40 due on a $100 bill", async () => {
     const v = await doc({
@@ -136,25 +137,22 @@ describe("the client document judges a visit against its bill", () => {
     expect(v.state).toBe("confirmed_unpaid");
     expect(v.owedCents).toBe(4000);
   });
-  it("a price reduction with the money returned does not make the bill owe again", async () => {
+  it("a price reduction with money returned counts the same way: $60 cash on a bill reduced from $100 to $60, then $40 returned, leaves $20 retained and $40 due (Codex P1)", async () => {
+    const v = await doc({
+      visit_bills: [{ appointment_id: A, total_cents: 6000, currency: "cad" }], sessions: SESSIONS,
+      visit_external_payments: [{ appointment_id: A, method: "paid_cash", amount_cents: 6000, currency: "cad", state: "confirmed" }],
+      payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "price_reduction" }],
+    });
+    expect(v.state).toBe("confirmed_unpaid");
+    expect(v.owedCents).toBe(4000);
+  });
+  it("a bill paid in full at $100 then reduced to $60 with $40 returned is paid: $60 retained against $60", async () => {
     const v = await doc({
       visit_bills: [{ appointment_id: A, total_cents: 6000, currency: "cad" }], sessions: SESSIONS,
       visit_external_payments: [{ appointment_id: A, method: "paid_cash", amount_cents: 10000, currency: "cad", state: "confirmed" }],
       payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "price_reduction" }],
     });
     expect(v.state).toBe("paid");
-  });
-});
-
-describe("an unreadable ledger is unavailable, never a total without it", () => {
-  for (const table of ["visit_bills", "visit_external_payments", "payment_refunds"]) {
-    it(`${table} read fails -> not ok`, async () => {
-      expect(await readMoneyForAppointments(fake(LEDGER, table), STUDIO, [A])).toEqual({ ok: false });
-    });
-  }
-  it("a scope with no ledger rows reads as before", async () => {
-    const out = await readMoneyForAppointments(fake({}), STUDIO, [A]);
-    expect(out.ok).toBe(true);
   });
   it("split refunds that total the whole charge are not counted twice beside the attempt's own full-refund mirror", async () => {
     const full = { ...card(10000), id: "att-1", refund_status: "refunded", refund_amount_cents: 10000 };

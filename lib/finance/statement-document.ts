@@ -350,13 +350,13 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
     // What the fee leaves unsettled is measured against RETAINED money and waivers ONLY. A refund is never treated as a service credit: nothing here says
     // the returned money bought anything, so refunded cents never reduce the amount owed. With a refund on record and a recorded fee still uncovered, the
     // amount owed is established only when the owner attested it against a recorded quote; otherwise the balance is not established.
-    // A split-payments visit (HON-123 / HON-122) has a BILL, the owner-recorded amount owed. Its succeeded refunds (a payment returned, or a price reduced and the
-    // money returned with it) leave less money RETAINED than was collected, so they come off what counts as covering the bill: $100 cash with $40 returned
-    // leaves $60 retained against a $100 bill, so $40 is due; a price reduced to $60 with the same $40 returned leaves $60 against $60, so nothing is. The bill
-    // itself establishes the amount owed, so no separate attestation is needed for it. (An older visit with no bill keeps the rule above unchanged.)
+    // A split-payments visit (HON-123 / HON-122) has a BILL, the owner-recorded amount owed. Every SUCCEEDED split refund, of either kind (a payment returned, or a price
+    // reduced and the money returned with it), leaves less money RETAINED than was collected, exactly as the checkout's own balance (visit_payment_position) counts it:
+    // a $100 bill with $60 cash, then a $40 price reduction and refund, is a $60 bill with $20 retained, so $40 is due; a $100 bill paid in full and reduced to $60 with
+    // $40 returned has $60 retained against $60, so nothing is. The bill itself establishes the amount owed, so no separate attestation is needed for it. An older visit
+    // with no bill keeps the rule above unchanged.
     const billed = has("bill_note");
-    const reversed = lines.reduce((n, l) => (l.reversal && l.kind === "refunded_partial" && isCents(l.cents) ? n + l.cents : n), 0);
-    const retained = billed ? Math.max(0, paid - reversed) : paid;
+    const retained = billed ? Math.max(0, paid - sumKinds(lines, ["refunded_partial"])) : paid;
     const shortfall = feeCents === null ? 0 : feeCents - retained - waived;
     if (feeCents !== null && shortfall > 0) {
       if ((attestedOwes || billed) && quoteRecorded) {
