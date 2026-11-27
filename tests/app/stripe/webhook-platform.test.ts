@@ -72,6 +72,21 @@ describe("the two webhook routes verify with their own platform's secret", () =>
     expect(claims.n).toBe(0);
   });
 
+  it("IDENTICAL secrets: the US route refuses (route separation depends on the secrets differing); the CA route is unchanged", async () => {
+    process.env.STRIPE_WEBHOOK_SECRET_US = CA_SECRET; // same value as the CA secret
+    const us = await import("@/app/api/stripe/webhook-us/route");
+    const ca = await import("@/app/api/stripe/webhook/route");
+    expect((await us.POST(req(await sign(CA_SECRET)))).status).toBe(400);
+    expect(claims.n).toBe(0);
+    expect((await ca.POST(req(await sign(CA_SECRET)))).status).toBe(200); // CA behaviour byte-for-byte as before
+    expect(claims.n).toBe(1);
+  });
+
+  it("CONTROL: with different secrets the US route accepts its own signature (the refusal above is the equality rule, not a broken fixture)", async () => {
+    const us = await import("@/app/api/stripe/webhook-us/route");
+    expect((await us.POST(req(await sign(US_SECRET)))).status).toBe(200);
+  });
+
   it("a replayed delivery is acknowledged without a second effect (the claim is the dedupe; the same id is presented each time)", async () => {
     const { POST } = await import("@/app/api/stripe/webhook-us/route");
     const sig = await sign(US_SECRET);

@@ -71,7 +71,8 @@
 
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { usWebhookStudioMismatch, webhookSecretVariable, webhookStripe } from "@/lib/stripe/webhook-platform";
+import { currentWebhookPlatform, usWebhookStudioMismatch, webhookSecretVariable, webhookStripe } from "@/lib/stripe/webhook-platform";
+import { PLATFORM_ENV } from "@/lib/stripe/platform-routing";
 import { accountToStatusSnapshot, recordAccountJurisdiction } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
@@ -118,6 +119,11 @@ function getWebhookSecretOrFail(): string {
   const secret = process.env[variable];
   if (!secret) {
     throw new Error(`${variable} is not set`);
+  }
+  // HON-90 (Privacy condition): the two routes are separated ONLY by their secrets, so identical secrets would let one platform's signed event
+  // verify on the other platform's route. The US route refuses when its secret equals the CA one. (The CA route is unchanged.)
+  if (currentWebhookPlatform() === "US" && secret === process.env[PLATFORM_ENV.CA.webhookSecret]) {
+    throw new Error("the US webhook secret must differ from the CA webhook secret");
   }
   return secret;
 }
