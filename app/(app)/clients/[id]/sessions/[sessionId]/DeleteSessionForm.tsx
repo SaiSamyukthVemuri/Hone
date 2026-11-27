@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { softDeleteSessionAction } from "./actions";
-import { actionFailureMessage } from "@/lib/actions/action-result";
+import { actionFailureMessage, isActionFailure } from "@/lib/actions/action-result";
 
 type Props = {
   sessionId: string;
@@ -37,7 +37,7 @@ export function DeleteSessionForm({ sessionId, clientId }: Props) {
     setSubmitting(true);
     try {
       const result = await softDeleteSessionAction(formData);
-      if (!result.ok) {
+      if (isActionFailure(result)) {
         setError(result.error); // the typed reason stays
         setSubmitting(false);
       }

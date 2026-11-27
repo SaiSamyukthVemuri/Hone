@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { actionFailureMessage, type ActionResult, type DataResult } from "@/lib/actions/action-result";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type Props = {
   clientId: string;
@@ -36,7 +36,7 @@ export function AddPricingForm({ clientId, action }: Props) {
     startTransition(async () => {
       try {
         const result = await action(fd);
-        if (!result.ok) {
+        if (isActionFailure(result)) {
           setError(result.error); // typed values stay in the fields
           return;
         }

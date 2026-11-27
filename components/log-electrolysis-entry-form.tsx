@@ -39,7 +39,7 @@ import { appendComment } from "@/lib/comments";
 import { pickSavedLabel } from "@/lib/saved-label";
 import { ChipSelector } from "./chip-selector";
 import { MultiChipSelector } from "./multi-chip-selector";
-import { actionFailureMessage, type ActionResult, type DataResult } from "@/lib/actions/action-result";
+import { actionFailureMessage, isActionFailure } from "@/lib/actions/action-result";
 
 type FormState = {
   areas: string[];
@@ -127,7 +127,7 @@ type Props = {
   lastEntry: ElectrolysisEntry | null;
   /** Sticky defaults for probe_type + machine_frequency (latest in-session entry). */
   stickyDefaults: StickyDefaults;
-  action: (formData: FormData) => Promise<{ ok: true } | { ok: false; error: string } | void>;
+  action: (formData: FormData) => Promise<{ ok: true } | { ok: false; error: string; code?: string } | void>;
 };
 
 const PROBE_SIZE_OPTIONS: ReadonlyArray<string> = [...PROBE_SIZES, "Other"];
@@ -147,6 +147,7 @@ export function LogElectrolysisEntryForm({
     machine_frequency: stickyDefaults.machine_frequency,
   }));
   const [error, setError] = useState<string | null>(null);
+  const [needsReload, setNeedsReload] = useState(false);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -202,7 +203,10 @@ export function LogElectrolysisEntryForm({
     startTransition(async () => {
       try {
         const result = await action(fd);
-        if (result && !result.ok) {
+        if (isActionFailure(result)) {
+          // CLINICAL: code "unverified" means the row was INSERTED but could not be read back (addElectrolysisEntryAction's PERSISTED-but-UNVERIFIED
+          // state), so it MAY have saved. Say that and block a resubmit until the session is reloaded: adding it again would duplicate a clinical entry.
+          if ((result as { code?: string }).code === "unverified") setNeedsReload(true);
           setError(result.error); // everything typed stays
           return;
         }
@@ -522,7 +526,7 @@ export function LogElectrolysisEntryForm({
       <div className="flex items-center gap-3">
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || needsReload}
           className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           {pending ? "Adding…" : "Add entry"}

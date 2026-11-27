@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useReturnFocus } from "@/components/use-return-focus";
 import type { ClientTag } from "@/lib/types/database";
-import { actionFailureMessage, type ActionResult, type DataResult } from "@/lib/actions/action-result";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type Props = {
   clientId: string;
@@ -40,7 +40,7 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
     startTransition(async () => {
       try {
         const result = await addAction(fd);
-        if (!result.ok) {
+        if (isActionFailure(result)) {
           setError(result.error); // the typed tag stays
           return;
         }
@@ -77,7 +77,7 @@ export function ClientTagsCard({ clientId, tags, addAction, removeAction }: Prop
     startTransition(async () => {
       try {
         const result = await removeAction(fd);
-        if (!result.ok) {
+        if (isActionFailure(result)) {
           setError(result.error); // dialog stays open so the failure is read and retryable
           return;
         }

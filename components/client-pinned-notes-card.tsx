@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef, useState, useTransition } from "react";
 import type { ClientPinnedNote } from "@/lib/types/database";
-import { actionFailureMessage, type ActionResult, type DataResult } from "@/lib/actions/action-result";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 export const MAX_LENGTH = 200;
 
@@ -158,7 +158,7 @@ export function ClientPinnedNotesCard({
     startTransition(async () => {
       try {
         const result = await addAction(fd);
-        if (!result.ok) {
+        if (isActionFailure(result)) {
           setError(result.error); // the typed note stays
           return;
         }
@@ -202,7 +202,7 @@ export function ClientPinnedNotesCard({
     startTransition(async () => {
       try {
         const result = await editAction(fd);
-        if (!result.ok) {
+        if (isActionFailure(result)) {
           setError(result.error); // the edit stays open with the typed text
           return;
         }
@@ -223,7 +223,7 @@ export function ClientPinnedNotesCard({
     startTransition(async () => {
       try {
         const result = await removeAction(fd);
-        if (!result.ok) setError(result.error);
+        if (isActionFailure(result)) setError(result.error);
       } catch (err) {
         setError(actionFailureMessage(err, "Could not remove the note. Check your connection and try again."));
       }

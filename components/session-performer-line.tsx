@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import type { PerformerOption } from "@/lib/sessions/performer-options";
-import { actionFailureMessage, type ActionResult, type DataResult } from "@/lib/actions/action-result";
+import { actionFailureMessage, isActionFailure, type ActionResult, type DataResult } from "@/lib/actions/action-result";
 
 type Props = {
   sessionId: string;
@@ -60,7 +60,7 @@ export function SessionPerformerLine({
     startTransition(async () => {
       try {
         const result = await updatePerformerAction(fd);
-        if (!result.ok) {
+        if (isActionFailure(result)) {
           setState("error");
           setError(result.error); // the editor stays open on the typed choice
           return;
