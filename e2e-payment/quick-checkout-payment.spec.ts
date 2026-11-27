@@ -70,6 +70,7 @@ test.beforeAll(async () => {
   // authority for what to charge today.
   seed = await seedEligiblePaymentWithLogin({
     label: "success",
+    appointmentStatus: "confirmed",
     bookedService: { name: "Quick Checkout Success", priceCents: 22500 },
   });
 });
@@ -113,7 +114,7 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
       [seed.sessionId],
     )
   ).rows[0] as Record<string, unknown>;
-  expect(facts.appt_status).toBe("completed");
+  expect(facts.appt_status).toBe("confirmed");
   expect(facts.session_started).toBe(true);
   expect(facts.not_finalized).toBe(true);
   expect(facts.card_status).toBe("active");
@@ -135,14 +136,21 @@ test("iPad success journey: dashboard → prepare → confirm → execute → pe
   await page.goto("/dashboard");
 
   // --- Locate the fixture appointment; Checkout visible, Paid not (steps 6-8).
-  const checkoutButton = page.getByTestId("checkout-button");
+  const row = page.locator(`#appointment-${seed.appointmentId}`);
+  const checkoutButton = row.getByRole("button", { name: "Checkout", exact: true });
   await expect(checkoutButton).toBeVisible();
   await expect(page.getByTestId("appointment-payment-paid")).toHaveCount(0);
 
   // --- Open quick checkout; confirm context, amount, saved-card, no ids (9-13).
   await checkoutButton.click();
+  const draft = page.getByRole("alertdialog");
+  await expect(draft.getByRole("button", { name: "Stripe", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await draft.getByRole("button", { name: "Finish visit and review card charge", exact: true }).click();
   const modal = page.getByTestId("quick-checkout-modal");
   await expect(modal).toBeVisible();
+  expect((await adminQuery("select status from public.appointments where id = $1", [seed.appointmentId])).rows[0].status).toBe("completed");
+  expect(await getSessionPaymentAttemptRows(seed.sessionId)).toHaveLength(0);
+  expect(countEffectsForAccount(seed.connectedAccountId)).toBe(0);
   await expect(modal.getByText(seed.clientName)).toBeVisible();
   // F-PAY-001 + F-PAY-002: the booked price is the server's decision, rendered
   // not edited — and quick checkout shows exactly what session detail shows.
