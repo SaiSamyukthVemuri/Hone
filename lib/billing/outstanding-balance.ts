@@ -23,6 +23,13 @@ export type OutstandingCard = {
   refundAmountCents: number | null;
   /** The provider's own refund state (payment_charge_attempts.stripe_refund_status), when recorded. */
   providerRefundStatus?: string | null;
+  /**
+   * TRUE only when the signed complete cumulative full-refund receipt exists (payment_charge_attempts.stripe_charge_refund_event_id
+   * IS NOT NULL, migration 0240). The id never travels, only whether it exists. The receipt is monotonic and separate from a
+   * single refund's status, so a single refund recorded failed/canceled beside it is history, not a disagreement (same rule as
+   * lib/billing/refund-display-state.ts, #1427).
+   */
+  cumulativeFullRefundVerified?: boolean;
   currency: string | null;
 };
 
@@ -103,6 +110,15 @@ function cardKept(c: OutstandingCard): number | null {
   if (!KNOWN_OURS.includes(ours) || !KNOWN_PROVIDER.includes(provider)) return null;
   if (ours === "pending_stripe") return null;
   if (ours === "succeeded") {
+    // Verified cumulative completion BEFORE the single refund's status; only when our recorded amount is exactly the whole
+    // charge (valid integers), so the whole charge went back and nothing is kept. Anything else falls to the rules below.
+    if (
+      c.cumulativeFullRefundVerified === true &&
+      Number.isInteger(c.amountCents) && c.amountCents >= 0 &&
+      c.refundAmountCents === c.amountCents
+    ) {
+      return 0;
+    }
     if (provider !== null && provider !== "succeeded") return null;
     if (typeof c.refundAmountCents !== "number" || c.refundAmountCents < 0) return null;
     return Math.max(0, c.amountCents - c.refundAmountCents);

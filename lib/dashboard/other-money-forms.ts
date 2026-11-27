@@ -25,6 +25,7 @@ export const MONEY_FORMS: ReadonlyArray<{ table: string; form: string; handling:
   { table: "payment_charge_attempts", form: "card payment in flight (pending_stripe)", handling: "unavailable", note: "money may or may not have moved" },
   { table: "payment_charge_attempts", form: "refund succeeded, amount unreadable", handling: "unavailable", note: "AO1: not 'no refund'" },
   { table: "payment_charge_attempts", form: "refund pending or requiring action (ours or the provider's)", handling: "unavailable", note: "the refund may or may not have moved money" },
+  { table: "payment_charge_attempts", form: "refund completed by a verified cumulative full-refund receipt (a single refund may read failed or canceled beside it)", handling: "counted", note: "stripe_charge_refund_event_id: the whole charge went back, nothing kept; only whether the receipt exists is read" },
   { table: "payment_charge_attempts", form: "refund failed or canceled", handling: "counted", note: "the money stayed: the full charge is kept" },
   { table: "payment_charge_attempts", form: "charge on a soft-deleted session", handling: "unavailable", note: "U2: cannot be attributed to the visit" },
   { table: "payment_charge_attempts", form: "late-cancellation or no-show fee (succeeded or pending)", handling: "unavailable", note: "a fee is not a credit toward the session price" },
