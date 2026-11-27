@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { PendingGetForm, PendingSubmit } from "@/components/pending-get-form";
+import { PendingLink } from "@/components/pending-link";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import {
   ANALYTICS_ACCESS_NOTE,
@@ -138,7 +140,7 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
   // :has() rule shows that group while the Custom option is selected. The submit button is always there, so every choice works without script, and the
   // submitted names and values are exactly the ones the loader's strict parser reads.
   return (
-    <form method="get" action={action} className="group flex flex-wrap items-end justify-end gap-2" aria-label="Period and team member">
+    <PendingGetForm action={action} className="group flex flex-wrap items-end justify-end gap-2" aria-label="Period and team member">
       <label className="flex flex-col gap-1 text-xs text-fg-muted">
         <span className="sr-only">Period</span>
         <select name="period" defaultValue={params.periodKind} aria-label="Period" className={INPUT}>
@@ -161,7 +163,7 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
       {hidden.map(([name, value]) => (
         <input key={name} type="hidden" name={name} value={value} />
       ))}
-      <button type="submit" className={BUTTON}>Show</button>
+      <PendingSubmit className={BUTTON}>Show</PendingSubmit>
       <div className="hidden basis-full flex-wrap items-end justify-end gap-2 group-has-[option[value=custom]:checked]:flex" data-custom-range="">
         <label className="flex flex-col gap-1 text-xs text-fg-muted">
           From
@@ -179,7 +181,7 @@ export function Controls({ params, options, action = OVERVIEW_PATH, hidden = [] 
           </select>
         </label>
       </div>
-    </form>
+    </PendingGetForm>
   );
 }
 
@@ -196,7 +198,7 @@ export function Tabs({ current = "Overview", query = "" }: { current?: "Overview
               {t === current ? (
                 <span aria-current="page" className={cx("inline-flex items-center rounded-lg bg-surface px-4 py-2 font-semibold text-fg shadow-[0_1px_3px_#0002]", CONTROL_MIN_TOUCH)}>{t}</span>
               ) : link ? (
-                <a href={link} className={cx("inline-flex items-center rounded-lg px-4 py-2 text-fg-muted hover:text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)}>{t}</a>
+                <PendingLink href={link} className={cx("inline-flex items-center rounded-lg px-4 py-2 text-fg-muted hover:text-fg", CONTROL_MIN_TOUCH, FOCUS_RING)}>{t}</PendingLink>
               ) : (
                 <span aria-disabled="true" className={cx("inline-flex items-center rounded-lg px-4 py-2 text-fg-muted", CONTROL_MIN_TOUCH)}>{t}<span className="sr-only"> (not available yet)</span></span>
               )}
@@ -267,13 +269,13 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
   const prevCount = view.previousSeries.available ? view.previousSeries.value.points.length : null;
   const curCount = view.series.available ? view.series.value.points.length : null;
   const toggle = (series: "money" | "visits", label: string) => (
-    <a
+    <PendingLink
       href={`${OVERVIEW_PATH}${overviewQuery(params, { series })}`}
       aria-current={(series === "money") === chartIsMoney ? "true" : undefined}
       className={cx("inline-flex items-center rounded-lg px-3 text-sm", CONTROL_MIN_TOUCH, FOCUS_RING, (series === "money") === chartIsMoney ? "bg-surface font-semibold shadow-[0_1px_3px_#0002]" : "text-fg-muted")}
     >
       {label}
-    </a>
+    </PendingLink>
   );
   return (
     <div className="space-y-8">
@@ -283,7 +285,7 @@ export function OverviewScreen({ view, params, notices, practitionerOptions, for
           {print ? null : (
             <div className="flex flex-wrap gap-2">
               <a href={`${OVERVIEW_PATH}/export.csv${overviewQuery(params)}`} className={BUTTON}>Export data</a>
-              <a href={`${OVERVIEW_PATH}/print${overviewQuery(params)}`} className={BUTTON}>Print / Save PDF</a>
+              <PendingLink href={`${OVERVIEW_PATH}/print${overviewQuery(params)}`} className={BUTTON}>Print / Save PDF</PendingLink>
             </div>
           )}
         </div>

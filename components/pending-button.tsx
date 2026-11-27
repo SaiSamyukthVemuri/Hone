@@ -51,6 +51,7 @@
 
 import { useFormStatus } from "react-dom";
 
+import { usePendingGetForm } from "@/components/pending-get-form";
 import { Button, type ButtonProps } from "@/components/ui/button";
 
 export type PendingButtonProps = Omit<ButtonProps, "pending" | "type"> & {
@@ -66,7 +67,10 @@ export type PendingButtonProps = Omit<ButtonProps, "pending" | "type"> & {
 };
 
 export function PendingButton({ busyLabel, disabled, ...rest }: PendingButtonProps) {
-  const { pending } = useFormStatus();
+  // A form ACTION reports through useFormStatus; a GET form that navigates (PendingGetForm) has no action, so it shares its own pending flag instead.
+  const { pending: actionPending } = useFormStatus();
+  const getFormPending = usePendingGetForm();
+  const pending = actionPending || getFormPending;
   return (
     <Button
       {...rest}

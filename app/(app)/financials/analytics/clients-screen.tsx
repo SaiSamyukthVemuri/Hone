@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { PendingLink } from "@/components/pending-link";
 import { FOCUS_RING, cx } from "@/components/ui/control-base";
 import {
   ANALYTICS_ACCESS_NOTE,
@@ -166,14 +167,14 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
                     );
                   }
                   return (
-                    <a
+                    <PendingLink
                       key={chip}
                       href={href({ chip, page: 1 })}
                       aria-current={table.value.chip === chip ? "true" : undefined}
                       className={cx("inline-flex items-center rounded-full border border-line px-3 py-1 text-sm", FOCUS_RING, table.value.chip === chip ? "bg-surface-sunken font-semibold text-fg" : "bg-surface text-fg-muted")}
                     >
                       {label} ({n === null ? "not available" : n})
-                    </a>
+                    </PendingLink>
                   );
                 })}
               </nav>
@@ -188,7 +189,7 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
                         {COLUMNS.map((c) => (
                           <th key={c.key} scope="col" aria-sort={c.sort && c.sort === table.value.sort && !columnUnknown(c.key, table.value) ? "descending" : undefined} className={cx("px-3 py-2 font-medium", c.align === "right" && "text-right")}>
                             {c.sort ? (
-                              <a href={href({ sort: c.sort, page: 1 })} className={cx("underline-offset-2 hover:underline", FOCUS_RING, c.sort === table.value.sort && "font-semibold text-fg")}>{c.label}</a>
+                              <PendingLink href={href({ sort: c.sort, page: 1 })} className={cx("underline-offset-2 hover:underline", FOCUS_RING, c.sort === table.value.sort && "font-semibold text-fg")}>{c.label}</PendingLink>
                             ) : (
                               c.label
                             )}
@@ -217,9 +218,9 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
                 <p>{clientsRowsLine(table.value.rowsFrom, table.value.rowsTo, table.value.shown, table.value.listed)}</p>
                 {table.value.pageCount > 1 ? (
                   <nav aria-label="Pages" className="flex gap-2">
-                    {table.value.page > 1 ? <a href={href({ page: table.value.page - 1 })} rel="prev" className={cx(BUTTON, "px-3")}>Previous</a> : null}
+                    {table.value.page > 1 ? <PendingLink href={href({ page: table.value.page - 1 })} rel="prev" className={cx(BUTTON, "px-3")}>Previous</PendingLink> : null}
                     <span className="self-center">Page {table.value.page} of {table.value.pageCount}</span>
-                    {table.value.page < table.value.pageCount ? <a href={href({ page: table.value.page + 1 })} rel="next" className={cx(BUTTON, "px-3")}>Next</a> : null}
+                    {table.value.page < table.value.pageCount ? <PendingLink href={href({ page: table.value.page + 1 })} rel="next" className={cx(BUTTON, "px-3")}>Next</PendingLink> : null}
                   </nav>
                 ) : null}
               </div>
@@ -245,7 +246,7 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
               {clients.chip !== "all" ? (
                 // A bookmarked or hand-typed filter can leave the table unavailable; the owner always keeps a way back to every client.
                 <p className="text-sm">
-                  <a href={href({ chip: "all", page: 1 })} data-clients-reset="" className={cx("underline", FOCUS_RING)}>All clients</a>
+                  <PendingLink href={href({ chip: "all", page: 1 })} data-clients-reset="" className={cx("underline", FOCUS_RING)}>All clients</PendingLink>
                 </p>
               ) : null}
             </>
@@ -277,7 +278,7 @@ export function ClientsScreen({ view, params, clients, notices, practitionerOpti
         <p className="max-w-3xl">{ANALYTICS_ACCESS_NOTE}</p>
       </footer>
       <p className="sr-only">
-        <a href={`${OVERVIEW_PATH}${base}`}>Back to the Overview</a>
+        <PendingLink href={`${OVERVIEW_PATH}${base}`}>Back to the Overview</PendingLink>
       </p>
     </div>
   );

@@ -398,7 +398,8 @@ describe("UI-R01 PendingButton: the leaf that owns useFormStatus", () => {
 
   it("imports nothing beyond the hook and the primitive — it is a leaf", () => {
     const imports = src.match(/^import .*$/gm) ?? [];
-    expect(imports.length).toBeLessThanOrEqual(2);
+    // The hook, the primitive, and the GET-form pending flag (HON-109): a GET form has no action for useFormStatus to read, so it shares its own.
+    expect(imports.length).toBeLessThanOrEqual(3);
   });
 });
 

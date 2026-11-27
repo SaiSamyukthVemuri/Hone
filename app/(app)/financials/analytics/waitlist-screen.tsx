@@ -2,6 +2,7 @@ import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import type { ReactNode } from "react";
 
 import { PendingButton } from "@/components/pending-button";
+import { PendingGetForm } from "@/components/pending-get-form";
 import { PendingLink } from "@/components/pending-link";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import type { WaitlistRead } from "@/lib/business-analytics/server/waitlist-read";
@@ -69,11 +70,11 @@ export function WaitlistScreen({ read, capacity }: { read: Extract<WaitlistRead,
 
     <section aria-labelledby="wl-planning" className="space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-4"><div className="space-y-1"><h2 id="wl-planning" className="text-xl font-semibold tracking-tight text-fg">Capacity to offer next</h2><p className="text-sm text-fg-muted">These controls change the capacity estimate only, not the 30-day invitation cohort.</p></div>
-        <form action="/financials/analytics/waitlist" method="get" className="flex flex-wrap items-end gap-2" aria-label="Consultation capacity">
+        <PendingGetForm action="/financials/analytics/waitlist" className="flex flex-wrap items-end gap-2" aria-label="Consultation capacity">
           <label className="flex flex-col gap-1 text-xs text-fg-muted">Consultation service<select name="service" defaultValue={params.serviceId ?? ""} className={INPUT} disabled={services.length === 0}><option value="" disabled>Choose a consultation</option>{services.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
           <label className="flex flex-col gap-1 text-xs text-fg-muted">Look ahead<select name="days" defaultValue={params.days} className={INPUT}>{WAITLIST_HORIZONS.map((days) => <option key={days} value={days}>Next {days} days</option>)}</select></label>
           <PendingButton variant="secondary" disabled={services.length === 0} busyLabel="Showing…">Show capacity</PendingButton>
-        </form>
+        </PendingGetForm>
       </div>
       <div className="grid gap-3 sm:grid-cols-3"><Metric title="Consultations that fit" value={available ? String(available.fit) : "Not available"} note={service ? `${service.name} · next ${params.days} days, including today.` : read.servicesAvailable ? "No eligible consultation selected." : "The consultation service list could not be read."} /><Metric title="Outstanding invitations" value={available ? String(available.outstanding) : "Not available"} note={available?.outstandingScope === "all" ? "Conservative fallback: every live invitation, whatever its dates." : "Live invitations competing for these dates, across services."} /><Metric title="Remaining invitation allowance" value={available ? String(available.open) : "Not available"} note="Consultations that fit minus outstanding invitations, never below zero." /></div>
       <p className="text-xs text-fg-muted">These are minimums. The estimator treats the studio as one calendar and may under-count a team’s capacity. Overlapping start times are not added together. Invitations do not reserve appointments; availability and the allowance are checked again when you invite.</p>

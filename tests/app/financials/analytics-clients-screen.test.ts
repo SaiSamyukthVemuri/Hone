@@ -180,7 +180,7 @@ describe("the Clients tab: sort, chip and page", () => {
     const html = render(view({}, { followThrough: { ok: false, reason: "read_failed" } }));
     expect(html).not.toMatch(/href="[^"]*chip=no_next_booking/);
     expect(text(html)).toContain("No next booking (not available)");
-    expect(html).toMatch(/<a[^>]*href="[^"]*"[^>]*>\s*All clients/); // the others stay links
+    expect(html).toMatch(/<a[^>]*href="[^"]*"[^>]*>[\s\S]*?All clients/); // the others stay links
     const hist = render(view({}, { history: { ok: false, reason: "too_many_appointments" } }));
     expect(hist).not.toMatch(/href="[^"]*chip=beyond_usual/);
     expect(text(hist)).toContain("Beyond usual interval (not available)");
@@ -192,7 +192,7 @@ describe("the Clients tab: sort, chip and page", () => {
     ] as const) {
       const html = render(view({ chip }, over as Partial<OverviewInput>), { sort: "spend", chip, page: 1 });
       expect(html).toContain('data-figure="cl-table"'); // the table really is unavailable
-      const reset = html.match(/<a[^>]*data-clients-reset=""[^>]*>[^<]*All clients[^<]*<\/a>/)?.[0] ?? "";
+      const reset = html.match(/<a[^>]*data-clients-reset=""[^>]*>[\s\S]*?All clients[\s\S]*?<\/a>/)?.[0] ?? "";
       expect(reset).not.toBe("");
       expect(reset).not.toContain("chip=");
       expect(reset).toContain("/financials/analytics/clients");
