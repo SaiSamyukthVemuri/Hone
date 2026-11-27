@@ -550,6 +550,8 @@ export const BROWSER_GROUPS = {
       // progress / double-press / taken-time feedback at 390x844. Books
       // publicly, so it is also in PUBLIC_BOOKING_SPECS below.
       "hon124-nav-booking-mobile.spec.ts",
+      // HON-124 item 7. Hover, pressed and keyboard-focus feedback on the shared nav rows and footer links.
+      "hon124-hover-states.spec.ts",
     ],
   },
   google: {

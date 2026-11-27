@@ -8,7 +8,7 @@ import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
 import { useSetSignOutInFlight, useSignOutInFlight } from "./signout-flight";
 import { SignOutFlightReporter } from "./SignOutFlightReporter";
-import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
+import { cx, NAV_ROW_FEEDBACK, PRESS_TRANSITION } from "@/components/ui/control-base";
 import { BUSINESS_MENU_ITEMS, BUSINESS_MENU_LABEL } from "@/lib/nav/business-menu";
 import { spinnerClasses } from "@/components/ui/spinner";
 import { isCurrentSection, NAV_LINK_CURRENT, type NavMatch } from "./PrimaryNavLink";
@@ -284,8 +284,8 @@ export function MobileMenu({
         onClick={(e) => navigate(e, item.href, item.label)}
         aria-current={currentFor(item.href, item.match) ? "page" : undefined}
         className={cx(
-          "flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900",
-          currentFor(item.href, item.match) && NAV_LINK_CURRENT,
+          "flex min-h-[44px] items-center rounded-md px-3 py-2",
+          currentFor(item.href, item.match) ? NAV_LINK_CURRENT : NAV_ROW_FEEDBACK,
           nested && "pl-6",
         )}
       >
@@ -475,8 +475,8 @@ export function MobileMenu({
                   onClick={(e) => navigate(e, item.href, item.label)}
                   aria-current={currentFor(item.href) ? "page" : undefined}
                   className={cx(
-                    "flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900",
-                    currentFor(item.href) && NAV_LINK_CURRENT,
+                    "flex min-h-[44px] items-center rounded-md px-3 py-2",
+                    currentFor(item.href) ? NAV_LINK_CURRENT : NAV_ROW_FEEDBACK,
                   )}
                 >
                   {item.label}
