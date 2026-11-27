@@ -35,6 +35,10 @@ import { recordOpsAlert } from "@/lib/ops/alerts";
 import { createUpstashReminderScanCoordinator, runReminderScanBatch, ReminderScanReadFailure, type ReminderScanPass, type ReminderScanCursor } from "@/lib/cron/reminder-scan-coordinator";
 import { recordReminderRunSuccess } from "@/lib/cron/reminder-heartbeat";
 import { buildReminderCandidateQuery, MAX_ATTEMPTS, type SentColumn, type AttemptsColumn } from "@/lib/cron/reminder-candidate-query";
+import {
+  recoverLeadAlertsOnReminderTrigger,
+  REMINDER_TRIGGER_LEAD_ALERT_REPORT_MS,
+} from "@/lib/platform-leads/alert-delivery";
 
 
 type Joined = Appointment & {
@@ -688,6 +692,47 @@ async function sendSmsReminderPass(opts: {
 
 }
 
+/**
+ * LEAD-ALERT-01: bounded operator lead-alert recovery on this trigger, on the
+ * success AND the failure path (Codex P2 4253278108, 4254097611). Gated before
+ * any database or provider call until lead alerts are configured; never
+ * throws; a lead-alert problem is its own warning ops alert and a response
+ * field, never a change to what reminders did or how the route answers.
+ */
+// This route declares no maxDuration of its own, and its ceiling is not changed here. Recovery must not push an invocation past the 60 s
+// every sibling cron route declares, so it gets only what is left of that: it runs only when at least RECOVERY_MIN_BUDGET_MS plus the report
+// reserve remain before RECOVERY_DEADLINE_MS from the route's start, and its sweep budget is cut to fit. A slow reminders run skips recovery
+// (the daily /api/cron/lead-alerts sweep and the next trigger pick the alerts up). The platform's actual limit is not read from here.
+const RECOVERY_DEADLINE_MS = 50_000;
+const RECOVERY_MIN_BUDGET_MS = 3_000;
+
+async function runLeadAlertRecovery(startedAt: number) {
+  try {
+    const left = RECOVERY_DEADLINE_MS - (Date.now() - startedAt) - REMINDER_TRIGGER_LEAD_ALERT_REPORT_MS;
+    if (left < RECOVERY_MIN_BUDGET_MS) return { ran: false as const, reason: "no_time" as const };
+    // Bounded end to end, its own failure report included (Codex P2
+    // 4259034271): at most REMINDER_TRIGGER_LEAD_ALERT_BUDGET_MS + _REPORT_MS.
+    const out = await recoverLeadAlertsOnReminderTrigger({}, { maxBudgetMs: left });
+    return out.ran
+      ? {
+          ran: true as const,
+          ok: out.summary.ok,
+          // false = stopped at its cap or budget with work possibly left (backpressure)
+          drained: out.summary.drained,
+          attempted: out.summary.attempted,
+          accepted: out.summary.accepted,
+          failed: out.summary.failed,
+          expired: out.summary.expired,
+          // claim/freeze/settle cancelled at the deadline: recovered later, neither sent nor failed
+          unknown: out.summary.unknown,
+          timed_out: out.summary.timedOut,
+        }
+      : { ran: false as const, reason: out.reason };
+  } catch {
+    return { ran: false as const, reason: "threw" as const };
+  }
+}
+
 export async function GET(req: Request) {
   if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -791,7 +836,14 @@ export async function GET(req: Request) {
           },
         });
       } catch { /* An incomplete run remains incomplete if its diagnostic fails. */ }
-      return NextResponse.json({ ok: false, error: "cron_failed" }, { status: 500 });
+      // LEAD-ALERT-01 (Codex P2 4254097611): an incomplete reminder scan is a
+      // reminders failure too, so the same bounded recovery runs after its
+      // diagnostic. The reminders' 500 is unchanged.
+      const lead_alerts = await runLeadAlertRecovery(startedAt);
+      return NextResponse.json(
+        { ok: false, error: "cron_failed", lead_alerts },
+        { status: 500 },
+      );
     }
 
     // PR #265: record a non-sensitive "last successful reminder cron run"
@@ -818,12 +870,21 @@ export async function GET(req: Request) {
       smsFailed: sms_reminder_24h.failed + sms_reminder_2h.failed,
     });
 
+    // LEAD-ALERT-01 (Codex P2 4253278108): bounded operator lead-alert
+    // recovery on this existing 15-minute trigger, AFTER every reminder pass
+    // and the heartbeat, so it can never change what reminders did. It is gated
+    // before any database or provider call until lead alerts are configured,
+    // never throws, and reports its own outcome: a lead-alert problem is an ops
+    // alert and a field below, never a failed reminders run.
+    const lead_alerts = await runLeadAlertRecovery(startedAt);
+
     return NextResponse.json({
       ok: true,
       reminder_24h,
       reminder_2h,
       sms_reminder_24h,
       sms_reminder_2h,
+      lead_alerts,
     });
   } catch {
     // Rejection values may contain private contents or hostile getters/proxies.
@@ -842,8 +903,14 @@ export async function GET(req: Request) {
         },
       });
     } catch { /* The original run remains failed if its diagnostic cannot be stored. */ }
+    // LEAD-ALERT-01 (Codex P2 4254097611): an unrelated reminders failure must
+    // not stop lead-alert retries -- the daily backstop alone cannot keep the
+    // 20-hour schedule. The SAME bounded, gated, never-throwing recovery runs
+    // here too, AFTER the reminders' own failure diagnostic. The reminders'
+    // 500 and cron_route_failed are unchanged.
+    const lead_alerts = await runLeadAlertRecovery(startedAt);
     return NextResponse.json(
-      { ok: false, error: "cron_failed" },
+      { ok: false, error: "cron_failed", lead_alerts },
       { status: 500 },
     );
   }
