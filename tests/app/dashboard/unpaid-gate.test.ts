@@ -15,6 +15,7 @@ vi.mock("@/app/(app)/dashboard/attention-actions", () => ({ dismissAttentionActi
 vi.mock("@/lib/dashboard/attention-dismissal-store", () => ({ loadMyDismissals: vi.fn(async () => ({ ok: true, rows: [] })) }));
 vi.mock("next/link", () => ({
   default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never),
+  useLinkStatus: () => ({ pending: false }),
 }));
 
 const ITEMS = [

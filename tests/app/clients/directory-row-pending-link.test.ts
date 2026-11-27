@@ -3,10 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 // The whole-row profile link must acknowledge a tap (UI-01): an uncached profile navigation keeps the old page painted until the next one arrives, so a
-// plain Link looks idle. This test sees the props the row gives PendingLink; the Details control must stay a plain, in-place link.
+// plain Link looks idle. This test sees the props the row gives PendingLink; the Details control stays an in-place link and, since HON-109, acknowledges the tap too.
 vi.mock("@/components/pending-link", () => ({
-  PendingLink: ({ href, children, pendingLabel, className }: { href: string; children?: unknown; pendingLabel?: string; className?: string }) =>
-    createElement("a", { href, "data-pending-label": pendingLabel, className }, children as never),
+  PendingLink: ({ href, children, pendingLabel, className, ...rest }: { href: string; children?: unknown; pendingLabel?: string; className?: string; [k: string]: unknown }) =>
+    createElement("a", { href, "data-pending-label": pendingLabel, className, ...rest }, children as never),
 }));
 vi.mock("@/components/pending-button", () => ({ PendingButton: () => null }));
 vi.mock("@/components/formatted-date-time", () => ({ FormattedDateTime: () => null }));
@@ -38,9 +38,9 @@ describe("the whole-row profile link acknowledges a tap", () => {
     expect(m).toContain("after:absolute");
     expect(m).toContain("after:inset-0");
   });
-  it("Details stays an in-place link that does not go through PendingLink", () => {
+  it("Details is an in-place link (query-only, no scroll) that now acknowledges the tap through PendingLink (HON-109)", () => {
     const m = html.match(/<a[^>]*aria-label="Details for Client 0"[^>]*>/)![0];
-    expect(m).not.toContain("data-pending-label");
+    expect(m).toContain('data-pending-label="Opening details…"');
     expect(m).toContain('aria-expanded="false"');
     expect(m).toContain(`href="/clients?client=${data.rows[0].id}"`);
   });

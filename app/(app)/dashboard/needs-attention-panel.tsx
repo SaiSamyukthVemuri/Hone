@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import { useRouter } from "next/navigation";
 import type {
   AttentionClient,
@@ -128,9 +129,9 @@ function ClientCard({ card, api }: { card: AttentionClient; api: DismissApi }) {
               )}
             </div>
             <span className="flex flex-wrap items-center gap-2">
-              <Link href={item.href} className={ACTION_CLASS}>
+              <PendingLink href={item.href} className={ACTION_CLASS}>
                 {item.actionLabel}
-              </Link>
+              </PendingLink>
               <DismissButton api={api} identity={itemIdentity(item)} what={`${card.clientName}, ${item.label}`} />
             </span>
           </li>
@@ -165,9 +166,9 @@ function StudioCard({ items, api }: { items: ReadonlyArray<DashboardTodoItem>; a
               )}
             </div>
             <span className="flex flex-wrap items-center gap-2">
-              <Link href={item.action.href} className={ACTION_CLASS}>
+              <PendingLink href={item.action.href} className={ACTION_CLASS}>
                 {item.action.label}
-              </Link>
+              </PendingLink>
               <DismissButton api={api} identity={studioIdentity(item)} what={`${item.subject.label}, ${item.reason}`} />
             </span>
           </li>
@@ -204,9 +205,9 @@ function DismissedView({ rows, isOwner, restore, busy }: { rows: ReadonlyArray<D
                 <span className="break-words text-sm text-neutral-700 dark:text-neutral-300">{r.label}</span>
               </div>
               <span className="flex flex-wrap items-center gap-2">
-                <Link href={r.href} className={ACTION_CLASS}>
+                <PendingLink href={r.href} className={ACTION_CLASS}>
                   {r.actionLabel}
-                </Link>
+                </PendingLink>
                 {isOwner && (
                   <button type="button" data-testid="attention-restore" disabled={busy} onClick={() => restore(r.itemKey)} className={`${ACTION_CLASS} min-h-[36px] disabled:opacity-50`}>
                     Restore

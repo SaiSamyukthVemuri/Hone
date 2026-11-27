@@ -15,7 +15,7 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn(async () => ({ rpc })) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), redirect: vi.fn() }));
-vi.mock("next/link", () => ({ default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never) }));
+vi.mock("next/link", () => ({ default: (p: { href: string; children?: unknown }) => createElement("a", { href: p.href }, p.children as never), useLinkStatus: () => ({ pending: false }) }));
 
 const { dashboardDismissalsEnabled } = await import("@/lib/dashboard/dismissals-gate");
 const { dismissAttentionAction, restoreAttentionAction } = await import("@/app/(app)/dashboard/attention-actions");

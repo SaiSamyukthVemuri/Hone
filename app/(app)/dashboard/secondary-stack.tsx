@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { PendingContainerLink } from "@/components/pending-link";
 
 import type { NewClientReadiness } from "@/lib/booking/new-client-readiness";
 import { BookingSetupCard } from "./BookingSetupCard";
@@ -253,7 +254,7 @@ export async function SecondaryStack({
   // studio-wide practice analytics an ordinary practitioner must not be shown, and the page refuses
   // them server-side before issuing a single analytics read. Rendered only under `isOwner` above.
   const capacityLink = (
-    <Link
+    <PendingContainerLink
       href="/dashboard/capacity"
       className="flex items-baseline justify-between gap-3 border-t border-neutral-200 pt-4 text-sm hover:text-neutral-900 dark:border-neutral-800 dark:hover:text-neutral-100"
     >
@@ -261,7 +262,7 @@ export async function SecondaryStack({
       <span className="text-fg-muted">
         Who is in treatment, and who has no treatment booked &rarr;
       </span>
-    </Link>
+    </PendingContainerLink>
   );
 
   return (

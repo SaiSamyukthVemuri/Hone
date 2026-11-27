@@ -327,7 +327,7 @@ describe("dashboard wiring (source pins)", () => {
     expect(LIST).not.toMatch(/<form|action=|fetch\(/);
     // each row action is still a Link, never a button
     const rowAction = LIST.slice(LIST.indexOf("{item.action.label}") - 800, LIST.indexOf("{item.action.label}"));
-    expect(rowAction).toMatch(/<Link/);
+    expect(rowAction).toMatch(/<(Pending)?Link/);
     // the only interactive control is the disclosure toggle
     const buttons = LIST.match(/<button/g) ?? [];
     expect(buttons).toHaveLength(1);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { PendingGetForm, PendingSubmit } from "@/components/pending-get-form";
 import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-context";
 import { WAITLIST_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
@@ -75,14 +76,14 @@ export function WorkspaceQueue({ initialView, waiting, invited, responses, respo
           );
         })}
       </nav>
-      <form action={WAITLIST_SEARCH_PATH} role="search" aria-label="Search the waitlist by name" className="flex w-full max-w-lg gap-2">
+      <PendingGetForm native action={WAITLIST_SEARCH_PATH} role="search" aria-label="Search the waitlist by name" className="flex w-full max-w-lg gap-2">
         <label className="min-w-0 flex-1">
           <span className="sr-only">Search the waitlist by name</span>
           <input name="q" type="search" required minLength={searchMin} maxLength={searchMax} disabled={pending}
             placeholder="Search waitlist by name" className="h-11 w-full rounded-lg border border-line bg-surface px-3 text-sm" />
         </label>
-        <button type="submit" disabled={pending} className="min-h-11 rounded-lg border border-line px-4 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:hover:bg-neutral-900">Search</button>
-      </form>
+        <PendingSubmit disabled={pending} pendingLabel="Searching…" className="min-h-11 rounded-lg border border-line px-4 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:hover:bg-neutral-900">Search</PendingSubmit>
+      </PendingGetForm>
       {children}
     </div>
   );

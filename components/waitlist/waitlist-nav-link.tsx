@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect, useState, type MouseEvent } from "react";
+
 import { cx } from "@/components/ui/control-base";
+import { spinnerClasses } from "@/components/ui/spinner";
 import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-context";
 
 /**
@@ -27,6 +30,11 @@ import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-co
  * `data-testid`; an earlier version of this primitive hardcoded one and silently
  * clobbered them, which broke the queue's existing navigation assertions. This
  * adds `data-waitlist-nav` alongside rather than replacing anything.
+ *
+ * ACKNOWLEDGES THE PRESS (HON-109). The link stays a plain anchor (a full document navigation, as before: the queue page is rebuilt from the
+ * server and nothing here may soft-navigate over an in-flight send). A plain anchor gives no sign of life until the NEW page paints, 0.5 s on the
+ * measured baseline, so a plain left click also sets a local flag that paints the app's one spinner over the control and says so to a screen
+ * reader. It starts nothing, delays nothing and changes no request; it is cleared if the page is restored from the back/forward cache.
  */
 export function WaitlistNavLink({
   href,
@@ -39,6 +47,18 @@ export function WaitlistNavLink({
   children: React.ReactNode;
 } & React.HTMLAttributes<HTMLElement>) {
   const pending = useInviteOutcomePending();
+  const [going, setGoing] = useState(false);
+  useEffect(() => {
+    const restored = (e: PageTransitionEvent) => { if (e.persisted) setGoing(false); };
+    window.addEventListener("pageshow", restored);
+    return () => window.removeEventListener("pageshow", restored);
+  }, []);
+  const { onClick, ...anchorRest } = rest;
+  const handleClick = (event: MouseEvent<HTMLElement>) => {
+    onClick?.(event);
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    setGoing(true);
+  };
 
   if (pending) {
     return (
@@ -57,8 +77,14 @@ export function WaitlistNavLink({
   }
 
   return (
-    <a {...rest} href={href} data-waitlist-nav="true" data-pending="false" className={className}>
+    <a {...anchorRest} onClick={handleClick} href={href} data-waitlist-nav="true" data-pending="false" aria-busy={going || undefined} className={cx("relative", className)}>
       {children}
+      {going ? (
+        <span data-link-pending="true" aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[inherit] bg-white/60 dark:bg-neutral-950/60">
+          <span className={spinnerClasses("sm")} />
+        </span>
+      ) : null}
+      <span role="status" className="sr-only">{going ? "Opening…" : ""}</span>
     </a>
   );
 }

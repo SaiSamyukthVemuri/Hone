@@ -414,8 +414,9 @@ describe("UI-01C: the row body and the calendar toolbar are wired to it", () => 
   const toolbar = codeOnly(toolbarSrc);
   const toggle = codeOnly(toggleSrc);
 
-  it("the appointment row body uses the container form, once", () => {
-    expect(dash.match(/<PendingContainerLink\b/g) ?? []).toHaveLength(1);
+  it("the appointment row body uses the container form, once (plus the owner's Practice capacity link, HON-109)", () => {
+    expect(dash.match(/<PendingContainerLink\b/g) ?? []).toHaveLength(2);
+    expect(dash.match(/<PendingContainerLink[\s\S]{0,120}href=\{`\/calendar\//g) ?? []).toHaveLength(1);
     expect(dash).toMatch(
       /<PendingContainerLink[\s\S]{0,300}href=\{`\/calendar\/\$\{appt\.id\}`\}/,
     );

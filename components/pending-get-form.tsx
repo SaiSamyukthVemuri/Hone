@@ -98,10 +98,10 @@ export function PendingGetForm({ action, children, native = false, ...rest }: Fo
  * disabled (the duplicate-submit guard), says `aria-busy`, and shows the app's one spinner mark in place of nothing: the label stays, the mark is added
  * beside it out of flow so the control never changes width. The live region says what is happening for a screen reader.
  */
-export function PendingSubmit({ children, className, pendingLabel = "Loading…" }: { children: ReactNode; className?: string; pendingLabel?: string }) {
+export function PendingSubmit({ children, className, pendingLabel = "Loading…", disabled = false }: { children: ReactNode; className?: string; pendingLabel?: string; disabled?: boolean }) {
   const pending = usePendingGetForm();
   return (
-    <button type="submit" disabled={pending} aria-busy={pending || undefined} data-pending={pending ? "true" : undefined} className={cx("relative", className)}>
+    <button type="submit" disabled={pending || disabled} aria-busy={pending || undefined} data-pending={pending ? "true" : undefined} className={cx("relative", className)}>
       <span className={pending ? "opacity-0" : undefined}>{children}</span>
       {pending ? <span data-pending-mark="true" aria-hidden="true" className={cx("pointer-events-none absolute inset-0 m-auto", spinnerClasses("sm"))} /> : null}
       <span role="status" className="sr-only">{pending ? pendingLabel : ""}</span>
