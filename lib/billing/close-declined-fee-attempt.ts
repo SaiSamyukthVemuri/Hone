@@ -80,7 +80,7 @@ export async function closeDeclinedFeeAttempt(args: {
   if (!piId || !row.stripe_account_id) return unclear("no_stored_payment_intent", "warning");
   if (row.stripe_status === "canceled") return { ok: true, outcome: "already_closed", appointmentId: (row.appointment_id as string | null) ?? null };
 
-  const stripe = getSessionPaymentStripe();
+  const stripe = await getSessionPaymentStripe(row.studio_id as string, "existing_account");
   let pi: Stripe.PaymentIntent;
   try {
     pi = await stripe.paymentIntents.retrieve(piId, undefined, { stripeAccount: row.stripe_account_id as string });

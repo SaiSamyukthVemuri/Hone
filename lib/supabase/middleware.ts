@@ -147,6 +147,9 @@ export async function updateSession(request: NextRequest) {
     // path match: do NOT broaden to /api/stripe/* because future Stripe
     // routes (refresh, dashboard link, etc.) should remain owner-only.
     pathname === "/api/stripe/webhook" ||
+    // HON-90: the US platform's own webhook endpoint (its own signing secret). The SAME rule applies: exact path, authenticated by the
+    // Stripe-Signature check inside the route. /api/stripe/webhook-usx or any other path under /api/stripe/ is NOT public.
+    pathname === "/api/stripe/webhook-us" ||
     // Twilio inbound SMS webhook authenticates via X-Twilio-Signature
     // (HMAC-SHA1 over the full URL plus sorted POST fields, validated
     // inside the route handler before any DB write). Exact path match

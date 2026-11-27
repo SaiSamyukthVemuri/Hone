@@ -24,6 +24,8 @@ import Stripe from "stripe";
 
 const h = vi.hoisted(() => ({
   createError: null as unknown,
+  clientThrows: false,
+  claimCalls: 0,
   createReply: null as Record<string, unknown> | null,
   retrieveReply: null as Record<string, unknown> | null,
   retrieveError: null as unknown,
@@ -72,7 +74,10 @@ vi.mock("@/lib/stripe/server", () => ({
   getStripe: () => fakeStripe,
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
-  getSessionPaymentStripe: () => fakeStripe,
+  getSessionPaymentStripe: () => {
+    if (h.clientThrows) throw new Error("studio payment jurisdiction read failed");
+    return fakeStripe;
+  },
 }));
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (input: { severity: string; event: string }) => {
@@ -138,6 +143,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
     rpc: async (name: string) => {
       if (name !== "claim_session_payment_charge_attempt") return { data: null, error: null };
+      h.claimCalls += 1;
       return {
         data: [
           {
@@ -194,6 +200,8 @@ const ATTEMPT_ROW = {
 
 beforeEach(() => {
   h.createError = null;
+  h.clientThrows = false;
+  h.claimCalls = 0;
   h.createReply = null;
   h.retrieveReply = null;
   h.retrieveError = null;
@@ -218,7 +226,7 @@ beforeEach(() => {
       stripe_payment_method_id: "pm_test",
       card_authorization_signature_id: "sig-1",
     },
-    studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false },
+    studio_payment_settings: { stripe_account_status: "enabled", stripe_charges_enabled: true, stripe_account_id: "acct_test", stripe_livemode: false },
     // Explicit verified synthetic configuration; no runtime country default.
     studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
@@ -549,5 +557,71 @@ describe("a thrown decline that carries a live PaymentIntent binds the intent id
     expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review", stripePaymentIntentId: PI.id });
     expect(h.updates).toContainEqual({ stripe_payment_intent_id: PI.id, stripe_status: "requires_payment_method" });
     expect(wroteFailed()).toBe(false);
+  });
+});
+
+// HON-90. Hone decides whether a studio may be charged, whatever the provider would allow. A sandbox US account that was NOT onboarded
+// accepted a real charge when the executor was run on an attempt prepared earlier; live Stripe refuses it itself, Hone must too.
+describe("HON-90: the charge executor refuses a studio whose account is not ready, before any Stripe request", () => {
+  const NOT_READY: Array<[string, Record<string, unknown>]> = [
+    ["restricted", { stripe_account_status: "restricted", stripe_charges_enabled: false }],
+    ["pending", { stripe_account_status: "pending", stripe_charges_enabled: false }],
+    ["status enabled but charges_enabled false", { stripe_account_status: "enabled", stripe_charges_enabled: false }],
+    ["charges_enabled true but status not enabled", { stripe_account_status: "restricted", stripe_charges_enabled: true }],
+    ["no snapshot fields at all", {}],
+  ];
+  for (const [name, patch] of NOT_READY) {
+    it(`${name}: no PaymentIntent create, and the attempt is not charged`, async () => {
+      h.rows.studio_payment_settings = { stripe_account_id: "acct_test", stripe_livemode: false, ...patch };
+      h.createReply = { id: "pi_x", status: "succeeded" } as never; // Stripe WOULD accept it
+      const r = await run();
+      expect(h.createKeys, "Stripe was never asked to charge").toEqual([]);
+      expect(r).toMatchObject({ ok: false });
+    });
+  }
+  it("CONTROL (not vacuous): the same studio with an enabled account with charges enabled does reach Stripe", async () => {
+    h.createReply = { id: "pi_x", status: "succeeded", amount: 22500, currency: "cad", latest_charge: "ch_x" } as never;
+    await run();
+    expect(h.createKeys.length).toBe(1);
+  });
+});
+
+// HON-90 (Insurance F2). The readiness guard is for the point where a NEW charge would start. A CLAIMED attempt (pending_stripe) may
+// already have a charge at Stripe, so a replay must still reconcile with it even if the account has since left 'enabled'.
+describe("HON-90: the readiness guard applies to unclaimed attempts only", () => {
+  const NOT_ENABLED = { stripe_account_id: "acct_test", stripe_livemode: false, stripe_account_status: "restricted", stripe_charges_enabled: false };
+
+  it("a claimed pending_stripe attempt with a not-enabled snapshot still reaches reconciliation (the PaymentIntent is retrieved)", async () => {
+    h.rows.studio_payment_settings = NOT_ENABLED;
+    h.claimResult = "already_pending";
+    h.claimPaymentIntentId = "pi_synthetic_original";
+    h.rows.payment_charge_attempts = { ...ATTEMPT_ROW, status: "pending_stripe", stripe_payment_intent_id: h.claimPaymentIntentId };
+    h.retrieveError = new Error("provider unreachable");
+    const r = await run();
+    expect(h.retrieveCalls, "reconciliation was reached").toBe(1);
+    expect(r).not.toMatchObject({ outcome: "lineage_mismatch" });
+    expect(h.createKeys).toEqual([]); // and no new charge is started
+  });
+
+  it("a 'ready' attempt with the same not-enabled snapshot is refused before any Stripe request", async () => {
+    h.rows.studio_payment_settings = NOT_ENABLED;
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "lineage_mismatch" });
+    expect(h.retrieveCalls).toBe(0);
+    expect(h.createKeys).toEqual([]);
+  });
+});
+
+describe("HON-90 (Codex P1) charge: the Stripe client is resolved BEFORE the claim", () => {
+  it("a failed client/jurisdiction read refuses the charge with the attempt still 'ready' (nothing claimed, nothing sent), and a retry then proceeds", async () => {
+    h.clientThrows = true;
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "blocked" });
+    expect(h.claimCalls, "no claim was made").toBe(0);
+    expect(h.createKeys).toEqual([]);
+    h.clientThrows = false;
+    h.createError = new Stripe.errors.StripeCardError(raw({ code: "card_declined", type: "card_error", statusCode: 402 }));
+    await run();
+    expect(h.createKeys, "the retry reached Stripe").toHaveLength(1);
   });
 });

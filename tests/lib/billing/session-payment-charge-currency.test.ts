@@ -95,6 +95,8 @@ function setup(attemptCurrency: unknown, jurisdiction: { payment_country: string
       card_authorization_signature_id: "sig-1",
     },
     studio_payment_settings: {
+      stripe_account_status: "enabled",
+      stripe_charges_enabled: true,
       stripe_account_id: "acct_test", stripe_livemode: false, stripe_account_country: jurisdiction.payment_country,
       stripe_account_country_conflict: null,
     },

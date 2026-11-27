@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getStripe, inferStripeLivemode } from "@/lib/stripe/server";
+import { inferStripeLivemode } from "@/lib/stripe/server";
+import { requireStripeForStudio } from "@/lib/stripe/studio-platform";
 import { dbErrorCode, stripeErrorFields, thrownErrorClass } from "@/lib/logging/error-class";
 
 // PR #135. Card-on-file Phase 1 helpers. Two server-only utilities:
@@ -141,7 +142,7 @@ export async function getOrCreateStripeCustomerForCardOnFile(params: {
   // by the RPC's idempotency key. Description / metadata carry opaque
   // ids only, enough to triage the connected-account dashboard against
   // Hone. No card-touching information and no client name are sent.
-  const stripe = getStripe();
+  const stripe = await requireStripeForStudio(studioId, "existing_account");
   let stripeCustomerId: string;
   try {
     const customer = await stripe.customers.create(
@@ -214,7 +215,7 @@ export async function createCardOnFileSetupIntent(params: {
   stripeCustomerId: string;
   cardAuthorizationSignatureId: string;
 }): Promise<SetupIntentResult> {
-  const stripe = getStripe();
+  const stripe = await requireStripeForStudio(params.studioId, "existing_account");
   const livemode = inferStripeLivemode();
   try {
     const setupIntent = await stripe.setupIntents.create(

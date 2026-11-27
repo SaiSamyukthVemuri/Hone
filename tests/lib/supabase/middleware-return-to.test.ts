@@ -60,3 +60,20 @@ describe("signed-out redirect", () => {
     expect((res.headers.get("set-cookie") ?? "").includes("hone_return_to")).toBe(false);
   });
 });
+
+// HON-90 (Insurance F1). Stripe POSTs to the webhook routes with no session, so middleware must let EXACTLY those two paths through. Driven
+// through the real middleware (importing the route directly cannot see this layer).
+describe("Stripe webhook routes are public by EXACT path only", () => {
+  const post = (path: string) => middleware(new NextRequest(new URL(path, ORIGIN), { method: "POST", body: "{}" }));
+  const redirectsToLogin = (res: Response) => res.status >= 300 && res.status < 400 && new URL(res.headers.get("location") ?? "/", ORIGIN).pathname === "/login";
+
+  it.each(["/api/stripe/webhook", "/api/stripe/webhook-us"])("%s is NOT redirected to /login", async (path) => {
+    expect(redirectsToLogin(await post(path))).toBe(false);
+  });
+  it.each(["/api/stripe/webhook-usx", "/api/stripe/webhook/x", "/api/stripe/refresh", "/api/stripe/webhook-eu", "/api/stripe/webhook-us-extra"])(
+    "%s is NOT public: a signed-out request is redirected to /login",
+    async (path) => {
+      expect(redirectsToLogin(await post(path))).toBe(true);
+    },
+  );
+});

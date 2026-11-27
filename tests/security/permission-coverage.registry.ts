@@ -485,6 +485,11 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   "app/api/stripe/webhook/route.ts": {
     POST: "not_staff(webhook)+admin",
   },
+  // HON-90: the US platform's endpoint; the same handler, signature-verified with the US platform's own secret.
+  // It holds no database client of its own: the shared handler it delegates to is registered above.
+  "app/api/stripe/webhook-us/route.ts": {
+    POST: "not_staff(webhook)",
+  },
   "app/api/twilio/inbound-sms/route.ts": {
     POST: "not_staff(webhook)+admin",
   },

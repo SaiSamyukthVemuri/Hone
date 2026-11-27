@@ -28,6 +28,10 @@ import { captureConsole } from "../lib/sms/helpers/log-capture";
 vi.mock("server-only", () => ({}));
 
 const createCustomer = vi.hoisted(() => vi.fn());
+// HON-90: the studio's platform is resolved from its verified jurisdiction row; this test is about a Canadian studio (the existing CA client).
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({
+  getStudioPaymentJurisdiction: async () => ({ ok: true, jurisdiction: { country: "CA", currency: "cad" } }),
+}));
 vi.mock("@/lib/stripe/server", () => ({
   getStripe: () => ({
     customers: { create: (...a: unknown[]) => createCustomer(...a) },

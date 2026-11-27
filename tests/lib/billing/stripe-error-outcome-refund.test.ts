@@ -23,6 +23,7 @@ const db = vi.hoisted(() => ({
   alerts: [] as Array<{ severity: string; event: string }>,
   alertInputs: [] as unknown[],
   legacyRule: false,
+  clientThrows: false,
 }));
 
 vi.mock("@/lib/billing/stripe-error-outcome", async (importOriginal) => {
@@ -41,14 +42,17 @@ vi.mock("@/lib/ops/alerts", () => ({
   },
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
-  getSessionPaymentStripe: () => ({
+  getSessionPaymentStripe: () => {
+    if (db.clientThrows) throw new Error("studio payment jurisdiction read failed");
+    return {
     refunds: {
       create: async (_params: unknown, opts: { idempotencyKey: string }) => {
         db.refundKeys.push(opts.idempotencyKey);
         throw db.refundError;
       },
     },
-  }),
+  };
+  },
 }));
 
 vi.mock("@/lib/supabase/admin-server", () => ({
@@ -282,5 +286,20 @@ describe("provider message privacy on refunds", () => {
     } finally {
       diagnostic.mockRestore();
     }
+  });
+});
+
+describe("HON-90 (Codex P1) refund: the Stripe client is resolved BEFORE the claim", () => {
+  it("a failed client/jurisdiction read leaves the attempt UNCLAIMED and a retry is possible (never refund_in_flight with nothing sent)", async () => {
+    db.clientThrows = true;
+    const first = await refund();
+    expect(first).toMatchObject({ ok: false, outcome: "database_error" });
+    expect(db.row.refund_status, "nothing was claimed").toBe(null);
+    expect(db.refundKeys).toHaveLength(0);
+    db.clientThrows = false;
+    db.refundError = new Stripe.errors.StripeCardError(raw({ code: "card_declined", statusCode: 402 }));
+    const retry = await refund();
+    expect(retry).not.toMatchObject({ outcome: "refund_in_flight" });
+    expect(db.refundKeys, "the retry reached Stripe").toHaveLength(1);
   });
 });

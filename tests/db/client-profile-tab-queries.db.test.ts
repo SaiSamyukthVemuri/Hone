@@ -201,6 +201,9 @@ const EXPECTED: Record<string, Record<string, number>> = {
     client_payment_methods: 1,
     consent_form_templates: 1,
     client_consent_signatures: 1,
+    // HON-90: the card form's publishable key is the key of the platform that owns the studio's account, resolved from the studio's own
+    // payment jurisdiction. ONE read, only here (the card block renders on Billing only); every other tab is still held to zero.
+    studio_payment_jurisdictions: 1,
   },
 };
 
@@ -217,6 +220,7 @@ const TAB_EXCLUSIVE: Record<string, string> = {
   client_portal_message_replies: "messages",
   client_portal_magic_links: "messages",
   client_payment_methods: "billing",
+  studio_payment_jurisdictions: "billing",
   imported_treatment_memories: "overview",
 };
 

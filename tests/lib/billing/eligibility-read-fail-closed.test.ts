@@ -983,3 +983,60 @@ describe("MANUAL FEE percent mode: the amount comes from the reviewed price reso
     expect(src).not.toMatch(/services\([^)]*studio_id/);
   });
 });
+
+// HON-90. Hone, not Stripe, decides whether a studio may be charged. A US Option-A (Accounts v2, full Dashboard, Stripe-managed losses) sandbox
+// account that has NOT finished onboarding still ACCEPTED a 50.00 USD charge when probed directly (a sandbox does not enforce capabilities:
+// docs.stripe.com/connect/testing). Its account looked like the object below at that moment. Whatever the provider would allow, Hone must
+// refuse to prepare a payment for it, because the studio's stored status is derived from charges_enabled and eligibility requires "enabled".
+describe("HON-90: Hone refuses a charge for a studio that is not ready, whatever Stripe would allow", () => {
+  const NOT_ONBOARDED_OPTION_A = {
+    id: "acct_option_a_probe",
+    type: "standard",
+    country: "US",
+    charges_enabled: false,
+    payouts_enabled: false,
+    details_submitted: false,
+    capabilities: { card_payments: "inactive", transfers: "inactive" },
+    requirements: { disabled_reason: "requirements.past_due", currently_due: ["identity.business_details.registered_name", "external_account"], eventually_due: [] },
+  };
+  const READY = { ...NOT_ONBOARDED_OPTION_A, charges_enabled: true, payouts_enabled: true, capabilities: { card_payments: "active", transfers: "active" }, requirements: { disabled_reason: null, currently_due: [], eventually_due: [] } };
+
+  beforeEach(() => {
+    healthySession();
+    rows("studio_payment_jurisdictions", { payment_country: "US", payment_currency: "usd" });
+  });
+
+  async function withAccount(account: unknown) {
+    const { accountToStatusSnapshot } = await import("@/lib/stripe/account");
+    const snap = accountToStatusSnapshot(account as never);
+    rows("studio_payment_settings", {
+      stripe_account_id: "acct_option_a_probe",
+      stripe_account_status: snap.status,
+      stripe_account_country: "US",
+      stripe_account_country_conflict: null,
+      stripe_livemode: false,
+    });
+    return snap;
+  }
+
+  it("the not-onboarded account's snapshot is not 'enabled', and the studio is refused with the plain-language reason", async () => {
+    const snap = await withAccount(NOT_ONBOARDED_OPTION_A);
+    expect(snap.chargesEnabled).toBe(false);
+    expect(snap.status).toBe("restricted");
+    const r = await sessionReasons();
+    expect(r.eligible).toBe(false);
+    expect(r.reasons.join(" ")).toMatch(/needs more information/i);
+  });
+
+  it("control (not vacuous): the same US/usd studio with a READY account is eligible", async () => {
+    const snap = await withAccount(READY);
+    expect(snap.status).toBe("enabled");
+    expect((await sessionReasons()).eligible).toBe(true);
+  });
+
+  it("a US studio with no verified jurisdiction row is refused even when its account is ready", async () => {
+    await withAccount(READY);
+    empty("studio_payment_jurisdictions");
+    expect((await sessionReasons()).eligible).toBe(false);
+  });
+});

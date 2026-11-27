@@ -30,10 +30,12 @@
 import Stripe from "stripe";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { isDeployedRuntime, isE2eFakeStripeEnabled } from "@/lib/stripe/e2e-fake-guard";
+import { PLATFORM_ENV, secretKeyFor, type StripePlatform } from "@/lib/stripe/platform-routing";
 
 const STRIPE_API_VERSION = "2026-04-22.dahlia" as const;
 
-let cached: Stripe | null = null;
+// One client per platform account. The CA entry is the existing singleton; a US client is built only on a deliberate getStripeFor("US").
+const cached: Partial<Record<StripePlatform, Stripe>> = {};
 
 /**
  * Throw if the supplied STRIPE_SECRET_KEY is not allowed in the
@@ -79,11 +81,11 @@ export function isPlaceholderStripeKey(raw: string): boolean {
   return /^(dummy|fake|placeholder|anything|your[_-]|example|changeme|test)/i.test(body);
 }
 
-function readSecretOrThrow(): string {
-  const raw = process.env.STRIPE_SECRET_KEY;
+function readSecretOrThrow(platform: StripePlatform): string {
+  const raw = secretKeyFor(platform, process.env);
   if (!raw || raw.length === 0) {
     throw new Error(
-      "STRIPE_SECRET_KEY is not set. Required for Stripe Phase 1 onboarding.",
+      `${PLATFORM_ENV[platform].secretKey} is not set. Required for Stripe Phase 1 onboarding.`,
     );
   }
   assertStripeKeyAllowed(raw);
@@ -109,8 +111,18 @@ function readSecretOrThrow(): string {
  * expectations. Do not bump silently.
  */
 export function getStripe(): Stripe {
-  if (cached) return cached;
-  const secret = readSecretOrThrow();
+  const stripe = getStripeFor("CA");
+  return stripe;
+}
+
+/**
+ * The Stripe client of ONE platform account. getStripe() is exactly getStripeFor("CA"): the Canadian binding, unchanged. The platform
+ * comes from routeStripePlatform() over the studio's verified payment country and currency; it is never defaulted by a caller.
+ */
+export function getStripeFor(platform: StripePlatform): Stripe {
+  const hit = cached[platform];
+  if (hit) return hit;
+  const secret = readSecretOrThrow(platform);
   // appInfo.url is informational (sent in User-Agent). We never want
   // to silently send "https://hone.care" from a Preview/Dev/misconfigured
   // production deployment: that would mis-attribute the origin in
@@ -125,12 +137,13 @@ export function getStripe(): Stripe {
   const appInfo: Stripe.AppInfo = appOrigin
     ? { name: "Hone", url: appOrigin }
     : { name: "Hone" };
-  cached = new Stripe(secret, {
+  const client = new Stripe(secret, {
     apiVersion: STRIPE_API_VERSION,
     typescript: true,
     appInfo,
   });
-  return cached;
+  cached[platform] = client;
+  return client;
 }
 
 export { STRIPE_API_VERSION };
@@ -144,14 +157,6 @@ export function inferStripeLivemode(): boolean {
   const key = process.env.STRIPE_SECRET_KEY ?? "";
   return key.startsWith("sk_live_");
 }
-
-/**
- * Country for Express connected-account creation. Hardcoded to Canada
- * for the current single-country rollout. To generalize, plumb a
- * per-studio `country` column into the schema and read it here.
- */
-export const STRIPE_CONNECT_COUNTRY: string =
-  process.env.STRIPE_CONNECT_COUNTRY ?? "CA";
 
 // ---------------------------------------------------------------------------
 // App-origin resolution

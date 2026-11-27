@@ -196,12 +196,20 @@ const RULES = [
   },
   {
     name: "accounts.create",
-    pattern: /accounts\.create\b/g,
+    pattern: /(?<!core\.)accounts\.create\b/g,
     allowlist: [
       // Stripe Connect Express account provisioning (onboarding only;
       // no charges/SetupIntents here). Test-mode gated via getStripe().
       "lib/stripe/account.ts",
     ],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    // HON-90 Option A: new US connected accounts are created through Accounts v2. Canada's v1 create above is a separate, pinned call.
+    name: "v2.core.accounts.create",
+    pattern: /core\.accounts\.create\b/g,
+    allowlist: ["lib/stripe/account.ts"],
     exactly: 1,
     stripComments: true,
   },
@@ -505,7 +513,7 @@ function evaluateUnknownStripeWrites(files) {
 // charges, checkout.sessions). This is the generic deny coverage: not a per-
 // resource allowlist (harmless reads like `stripe.invoices.retrieve` stay fine),
 // but "any unclassified mutation through the one enforced client name fails".
-const GETSTRIPE_CALL_SHAPE = /getStripe\s*\(\s*\)/g;
+const GETSTRIPE_CALL_SHAPE = /(?:getStripe(?:For)?|requireStripeForStudio|webhookStripe)\s*\([^)]*\)/g;
 function evaluateGetStripeBinding(files) {
   const offenders = []; // [{ path, snippet }]
   for (const abs of files) {
@@ -523,7 +531,7 @@ function evaluateGetStripeBinding(files) {
       // The function DEFINITION (`export function getStripe()`) is not a call.
       if (/function\s+$/.test(before)) continue;
       // Canonical binding: `const stripe = getStripe()` / `let stripe = …`.
-      if (/\b(?:const|let)\s+stripe\s*=\s*$/.test(before)) continue;
+      if (/\b(?:const|let)\s+stripe\s*=\s*(?:await\s+)?$/.test(before)) continue;
       const snippet = (before.slice(-32) + m[0]).replace(/\s+/g, " ").trim();
       offenders.push({ path: relPosix(abs), snippet });
     }

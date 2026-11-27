@@ -100,7 +100,7 @@ const BOTH_ON = { ...CONFIG, late_cancel_fee_enabled: true, no_show_fee_enabled:
 
 const ROWS: Record<string, unknown> = {
   client_payment_methods: { id: "cpm-1", studio_id: STUDIO, client_id: "c1", status: "active", stripe_livemode: false, stripe_account_id: "acct_test", stripe_customer_id: "cus_test", stripe_payment_method_id: "pm_test", card_authorization_signature_id: "sig-1" },
-  studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false },
+  studio_payment_settings: { stripe_account_status: "enabled", stripe_charges_enabled: true, stripe_account_id: "acct_test", stripe_livemode: false },
   studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
   client_stripe_customers: { stripe_customer_id: "cus_test" },
 };

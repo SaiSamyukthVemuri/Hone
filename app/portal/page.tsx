@@ -30,7 +30,7 @@ import {
 import { PortalConsentForms } from "./PortalConsentForms";
 import { withRenderedTemplateHash } from "@/lib/consent/template-snapshot";
 import { getActiveCardForStudioClient } from "@/lib/payment-methods/queries";
-import { resolveStripePublishableKey } from "@/lib/stripe/publishable-key";
+import { resolveStudioPublishableKey } from "@/lib/stripe/studio-publishable-key";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import {
   LIVE_SAVE_CARD_NOTE,
@@ -188,7 +188,7 @@ export default async function PortalHomePage() {
     cardAuthTemplate != null &&
     cardAuthSignatureSummary != null &&
     cardAuthSignatureSummary.template_version !== cardAuthTemplate.version;
-  const publishableKeyResolution = resolveStripePublishableKey();
+  const publishableKeyResolution = await resolveStudioPublishableKey(session.studioId);
   // PR #323: the deployment mode, so client-facing card-authorization copy is
   // accurate. In test env this is false (existing "no live card" copy shows);
   // in live env (after #324) the live wording shows. NOTE (docs/16): the live

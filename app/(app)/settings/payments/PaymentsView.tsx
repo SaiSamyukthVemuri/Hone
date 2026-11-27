@@ -1,3 +1,4 @@
+import { studioPublishableKeyOk } from "@/lib/stripe/studio-publishable-key";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
@@ -9,7 +10,6 @@ import {
   deriveConnectCapability,
   derivePortalCardCapability,
   portalCardCopy,
-  publishableKeyOk,
 } from "@/lib/payments/payment-status-presenter";
 import { PaymentsSettings, type StripeStatusView } from "./PaymentsSettings";
 import { CancellationFeeRulesCard } from "./CancellationFeeRulesCard";
@@ -209,7 +209,7 @@ export async function PaymentsView({ view }: { view: PaymentsViewKind }) {
     : derivePortalCardCapability({
         connect,
         hasActiveAuthorizationTemplate: authTemplate != null,
-        publishableKeyOk: publishableKeyOk(),
+        publishableKeyOk: await studioPublishableKeyOk(studio.id),
       });
   const banner = connectBannerCopy(runtimeMode, connect);
 

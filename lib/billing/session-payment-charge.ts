@@ -307,6 +307,11 @@ async function loadCardAndVerifyLineage(args: {
   expectedStripeAccountId: string;
   expectedStripeCustomerId: string;
   expectedStripePaymentMethodId: string;
+  /**
+   * HON-90. True ONLY for an unclaimed attempt (status 'ready'), where a NEW Stripe charge would start. A claimed pending_stripe attempt
+   * may already have a charge at Stripe, so it must still reach reconciliation even if the account has since left 'enabled'.
+   */
+  requireAccountReady: boolean;
 }): Promise<
   | { ok: true; card: CardRow }
   | { ok: false; reasons: string[] }
@@ -385,13 +390,19 @@ async function loadCardAndVerifyLineage(args: {
     // stripe_livemode !== livemode belt below stays as defense-in-depth).
     const { data: settings } = await admin
       .from("studio_payment_settings")
-      .select("stripe_account_id, stripe_livemode")
+      .select("stripe_account_id, stripe_livemode, stripe_account_status, stripe_charges_enabled")
       .eq("studio_id", args.studioId)
       .eq("stripe_livemode", livemode)
       .maybeSingle();
     if (!settings) {
       reasons.push("Studio payment settings are missing.");
     } else {
+      // HON-90. HONE decides whether a studio may be charged, whatever the provider would allow (a sandbox account that is not onboarded
+      // still accepted a charge; live Stripe would refuse it itself). The prepare-time check (eligibility) can be stale by charge time, so
+      // the stored snapshot must STILL show an enabled account with charges enabled, right before any Stripe call.
+      if (args.requireAccountReady && (settings.stripe_account_status !== "enabled" || settings.stripe_charges_enabled !== true)) {
+        reasons.push("The studio's Stripe account is not ready to take charges.");
+      }
       if (settings.stripe_account_id !== card.stripe_account_id) {
         reasons.push(
           "Studio is now connected to a different Stripe account.",
@@ -1149,7 +1160,7 @@ async function reconcileExistingPaymentIntent(args: {
   expectedAmountCents: number | null;
   expectedCurrency: string | null;
 }): Promise<SessionPaymentChargeResult> {
-  const stripe = getSessionPaymentStripe();
+  const stripe = await getSessionPaymentStripe(args.studioId, "existing_account");
   let pi: Stripe.PaymentIntent;
   try {
     pi = await stripe.paymentIntents.retrieve(
@@ -1541,6 +1552,7 @@ export async function runSessionPaymentCharge(args: {
     expectedStripeAccountId: attemptRow.stripe_account_id,
     expectedStripeCustomerId: attemptRow.stripe_customer_id,
     expectedStripePaymentMethodId: attemptRow.stripe_payment_method_id,
+    requireAccountReady: attemptRow.status === "ready",
   });
   if (!lineage.ok) {
     return {
@@ -1562,7 +1574,7 @@ export async function runSessionPaymentCharge(args: {
   let stripe: Stripe | undefined;
   if (attemptRow.status === "ready") {
     try {
-      stripe = getSessionPaymentStripe();
+      stripe = await getSessionPaymentStripe(attemptRow.studio_id, "new_money");
     } catch (clientErr) {
       logInternal("session_payment_stripe_client_unavailable", {
         attemptId: attemptRow.id,
@@ -1820,7 +1832,7 @@ export async function runSessionPaymentCharge(args: {
   //     metadata block carries every Hone identity column the future
   //     webhook handler or a manual reconciler needs to bind a
   //     leaked-back PaymentIntent to this attempt.
-  const sender = stripe ?? getSessionPaymentStripe();
+  const sender = stripe ?? (await getSessionPaymentStripe(attemptRow.studio_id, "new_money"));
   let pi: Stripe.PaymentIntent;
   try {
     pi = await sender.paymentIntents.create(

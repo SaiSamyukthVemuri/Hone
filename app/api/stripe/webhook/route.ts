@@ -71,7 +71,8 @@
 
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { getStripe } from "@/lib/stripe/server";
+import { currentWebhookPlatform, usWebhookStudioPlatform, webhookSecretVariable, webhookStripe } from "@/lib/stripe/webhook-platform";
+import { PLATFORM_ENV } from "@/lib/stripe/platform-routing";
 import { accountToStatusSnapshot, recordAccountJurisdiction } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { recordOpsAlert } from "@/lib/ops/alerts";
@@ -113,9 +114,16 @@ function logInternal(event: string, detail: unknown) {
 }
 
 function getWebhookSecretOrFail(): string {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  // HON-90: the CA route's variable is STRIPE_WEBHOOK_SECRET, exactly as before; the US route's is its own.
+  const variable = webhookSecretVariable();
+  const secret = process.env[variable];
   if (!secret) {
-    throw new Error("STRIPE_WEBHOOK_SECRET is not set");
+    throw new Error(`${variable} is not set`);
+  }
+  // HON-90 (Privacy condition): the two routes are separated ONLY by their secrets, so identical secrets would let one platform's signed event
+  // verify on the other platform's route. The US route refuses when its secret equals the CA one. (The CA route is unchanged.)
+  if (currentWebhookPlatform() === "US" && secret === process.env[PLATFORM_ENV.CA.webhookSecret]) {
+    throw new Error("the US webhook secret must differ from the CA webhook secret");
   }
   return secret;
 }
@@ -145,7 +153,7 @@ export async function POST(req: Request): Promise<Response> {
   //    timestamp tolerance, and parses the JSON. Failure throws.
   let event: Stripe.Event;
   try {
-    const stripe = getStripe();
+    const stripe = webhookStripe();
     const webhookSecret = getWebhookSecretOrFail();
     event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
   } catch (err) {
@@ -202,6 +210,20 @@ export async function POST(req: Request): Promise<Response> {
       return NextResponse.json({ ok: false }, { status: 500 });
     }
     studioId = data?.studio_id ?? null;
+    // HON-90: on the US route only, an account bound to a studio that is not a US studio is an UNBOUND account (never applied to it).
+    if (studioId) {
+      const platform = await usWebhookStudioPlatform(studioId);
+      if (platform === "read_failed") {
+        // A failed read is NOT a mismatch. Retryable and BEFORE the claim (nothing recorded), so Stripe redelivers; marking it processed as an
+        // unbound account would silently lose an account.updated for a real US studio.
+        logInternal("stripe_webhook_studio_platform_read_failed", { eventId: event.id, eventType: event.type });
+        return NextResponse.json({ ok: false }, { status: 500 });
+      }
+      if (platform === "mismatch") {
+        logInternal("stripe_webhook_studio_platform_mismatch", { eventId: event.id, eventType: event.type });
+        studioId = null;
+      }
+    }
   }
 
   // 5. Claim the event idempotently. The RPC enforces a partial
@@ -716,7 +738,7 @@ async function handleSetupIntentSucceeded(
   if (typeof si.payment_method !== "string" || si.payment_method.length === 0) {
     return await terminalCardRejection(event, ctx, si, "missing_payment_method");
   }
-  const stripe = getStripe();
+  const stripe = webhookStripe();
   let pm: Stripe.PaymentMethod;
   try {
     pm = await stripe.paymentMethods.retrieve(
@@ -857,7 +879,7 @@ async function resolveAccountFromEvent(
   }
   // capability.updated: refresh via accounts.retrieve.
   try {
-    const stripe = getStripe();
+    const stripe = webhookStripe();
     const account = await stripe.accounts.retrieve(stripeAccountId);
     // A successful fetch is not proof that this is the bound account. Never
     // synchronize another account's readiness or acknowledge an unverified read.

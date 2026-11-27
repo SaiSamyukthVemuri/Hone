@@ -27,6 +27,7 @@ export default async function StripeOnboardingRefreshPage() {
       studio.id,
     );
     const url = await createConnectOnboardingLink({
+      studioId: studio.id,
       stripeAccountId,
       appOrigin: getAppOrigin(),
     });
