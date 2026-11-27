@@ -108,6 +108,25 @@ export const TEXT_LINK_FEEDBACK = cx(
   "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
 );
 
+/**
+ * The PRESS ACKNOWLEDGEMENT for a control whose real acknowledgement (the spinner) needs script that may not have run yet (HON-109).
+ *
+ * WHAT IT IS. A pure-CSS `:active` treatment, painted by the stylesheet already in `<head>`, so it appears on the frame after pointer-down even when
+ * the page has not hydrated. It says ONE thing: "your press registered". It ends at release and promises no result; the spinner (PendingLink and
+ * friends) is the separate, JS-driven claim "working", and this deliberately does not look like it: a ring drawn inside the control's own edge, no mark.
+ *
+ * WHY AN OUTLINE AND NOT A FILL OR A SCALE. SURFACE_PRESS and LEAF_CONTROL_PRESS are each safe only on the families they name (see their notes), and
+ * the retired CONTROL_PRESS shows why one string cannot know what it paints on. An outline in `currentColor` is visible on ANY background because the
+ * label is already legible against it; it makes no stacking context and no containing block (unlike scale and opacity); it adds no box (a negative
+ * offset keeps it inside the control, so no neighbour moves and an `overflow` parent cannot clip it); and forced-colors mode repaints outlines in a
+ * system colour where it erases shadows. It is a SHAPE change, not colour alone, and it needs no motion, so reduced motion keeps it unchanged.
+ *
+ * WHAT IT DOES NOT DO. It does not cover the wait after release, and keyboard activation never produces an `:active` frame on a link, so a keyboard
+ * press before hydration is still unacknowledged. State that; do not claim it. NOT a family default: apply it only where a cold measurement over the
+ * 100 ms budget justifies it (today: the Waitlist queue's plain anchors and its native search form).
+ */
+export const ACK_PRESS = "active:outline-2 active:-outline-offset-2 active:outline-current";
+
 export const PRESS_TRANSITION = "hone-transition-press";
 export const UI_TRANSITION = "hone-transition-ui";
 
