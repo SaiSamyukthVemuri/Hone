@@ -157,25 +157,10 @@ describe("Layer 4: webhook processes only deployment-mode events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Static Stripe-gate money inventory unchanged (1 PI / 1 refund / 0 / 0)
+// The live-mode flag literal stays allowlisted to one file. (The 1/1/0/0 money
+// inventory is proven by tests/scripts/check-stripe-gates.test.ts.)
 // ---------------------------------------------------------------------------
-describe("static Stripe gates remain 1/1/0/0", () => {
-  const rule = (name: string) =>
-    new RegExp(
-      `name:\\s*"${name.replace(".", "\\.")}"[\\s\\S]{0,1500}?exactly:\\s*(\\d+)`,
-    );
-  it("paymentIntents.create exactly 1", () => {
-    expect(STRIPE_GATE_SCRIPT.match(rule("paymentIntents.create"))?.[1]).toBe("1");
-  });
-  it("refunds.create exactly 1", () => {
-    expect(STRIPE_GATE_SCRIPT.match(rule("refunds.create"))?.[1]).toBe("1");
-  });
-  it("charges.create exactly 0", () => {
-    expect(STRIPE_GATE_SCRIPT.match(rule("charges.create"))?.[1]).toBe("0");
-  });
-  it("checkout.sessions exactly 0", () => {
-    expect(STRIPE_GATE_SCRIPT.match(rule("checkout.sessions"))?.[1]).toBe("0");
-  });
+describe("static Stripe gate: live-mode flag allowlist", () => {
   it("STRIPE_ALLOW_LIVE_MODE=true is allowlisted to lib/stripe/server.ts only", () => {
     expect(STRIPE_GATE_SCRIPT).toMatch(/STRIPE_ALLOW_LIVE_MODE=true/);
     expect(STRIPE_GATE_SCRIPT).toMatch(/lib\/stripe\/server\.ts/);

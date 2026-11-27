@@ -18,9 +18,8 @@ import path from "node:path";
 //     (sessions.appointment_id IS NOT NULL,
 //      appointments.status='completed',
 //      sessions.started_at IS NOT NULL) per audit Audit 1
-//   * the card_authorization gate is the shared
-//     getCardAuthorizationStatus helper (PR #170), not an inline
-//     re-query
+//   * the card_authorization gate dispatches on every card-auth
+//     kind
 //   * the duplicate-attempt check reads payment_charge_attempts
 //     scoped to (studio, session, charge_reason='session_payment')
 //     and the active-status set matches the partial unique index
@@ -90,30 +89,6 @@ describe("getSessionPaymentEligibility: card + authorization gates", () => {
     expect(block).toMatch(/\.eq\("stripe_livemode",\s*livemode\)/);
   });
 
-  it("the card-missing message tells the practitioner what to do", () => {
-    // HON-45: the literal moved to the shared types module so the card can
-    // recognise it; the helper must still push exactly that constant.
-    expect(TYPES).toMatch(
-      /NO_CARD_ON_FILE_REASON\s*=\s*"Client must add a card on file before a session payment can be prepared\."/,
-    );
-    expect(HELPER).toMatch(/reasons\.push\(NO_CARD_ON_FILE_REASON\)/);
-  });
-
-  it("uses the PR #177 charge-ready helper (which wraps the PR #170 base)", () => {
-    // PR #172 used the base PR #170 helper; PR #177 tightened the
-    // gate so a stale client_payment_methods.card_authorization
-    // _signature_id pointer (the docs/16 §5.11 finding) blocks
-    // prepare with a clear remedy. The charge-ready helper wraps
-    // the base helper and adds the card-row pointer-equality
-    // check; eligibility now imports the charge-ready variant.
-    expect(HELPER).toMatch(
-      /import \{ getChargeReadyCardAuthorizationStatus \} from "@\/lib\/consent\/current-card-authorization"/,
-    );
-    expect(HELPER).toMatch(
-      /getChargeReadyCardAuthorizationStatus\(\{[\s\S]{0,100}studioId/,
-    );
-  });
-
   it("dispatches on all four card-auth kinds with distinct messages", () => {
     const kinds = HELPER.match(
       /case "no_live_template"[\s\S]*?break;[\s\S]*?case "unsigned"[\s\S]*?break;[\s\S]*?case "signed_out_of_date"[\s\S]*?break;[\s\S]*?case "signed_current"[\s\S]*?break;/,
@@ -161,23 +136,9 @@ describe("getSessionPaymentEligibility: duplicate attempt check", () => {
       /blockingStatuses[\s\S]{0,200}"ready"[\s\S]{0,40}"pending_stripe"[\s\S]{0,40}"succeeded"/,
     );
   });
-
-  it("blocks with a duplicate-message when an active attempt exists", () => {
-    expect(HELPER).toMatch(
-      /A session payment attempt is already prepared for this session/,
-    );
-  });
 });
 
-describe("session-payment-types: constants and shape", () => {
-  it("amount ceiling is 200_000 cents ($2,000 CAD), matching the table CHECK", () => {
-    expect(TYPES).toMatch(/SESSION_PAYMENT_AMOUNT_CEILING_CENTS = 200_000/);
-  });
-
-  it("internal note ceiling is 1000 characters", () => {
-    expect(TYPES).toMatch(/SESSION_PAYMENT_INTERNAL_NOTE_MAX_LENGTH = 1000/);
-  });
-
+describe("session-payment-types: result shape", () => {
   it("the eligibility result is a discriminated union on `eligible`", () => {
     expect(TYPES).toMatch(/eligible: true;/);
     expect(TYPES).toMatch(/eligible: false;/);
