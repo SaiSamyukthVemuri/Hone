@@ -38,17 +38,27 @@ export function CopyButton({
   className,
 }: Props) {
   const revealId = useId();
+  const buttonId = useId();
   const revealRef = useRef<HTMLInputElement>(null);
   const [announce, setAnnounce] = useState<"idle" | "copied" | "failed">("idle");
   const [revealed, setRevealed] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
+  // The revealed field (and its Dismiss button) unmounts; a focused element that unmounts drops focus to <body>, which strands a keyboard user
+  // (and escapes a modal's focus handling). Put focus back on the copy control, which is always mounted.
+  function focusCopyButton() {
+    requestAnimationFrame(() => document.getElementById(buttonId)?.focus());
+  }
+
   async function onClick() {
     window.clearTimeout(timer.current);
     const ok = await copyText(value);
     setAnnounce(ok ? "copied" : "failed");
-    if (ok) setRevealed(false);
+    if (ok) {
+      setRevealed(false);
+      focusCopyButton();
+    }
     else {
       if (revealOnFail && !selectTargetId) setRevealed(true);
       // wait one frame so a revealed field exists before it is selected
@@ -59,7 +69,7 @@ export function CopyButton({
 
   return (
     <>
-      <Button variant={variant} size={size} onClick={onClick} aria-label={ariaLabel} className={className}>
+      <Button id={buttonId} variant={variant} size={size} onClick={onClick} aria-label={ariaLabel} className={className}>
         {announce === "copied" ? copiedLabel : label}
       </Button>
       <span role="status" aria-live="polite" className={announce === "failed" ? "basis-full text-xs text-neutral-600 dark:text-neutral-400" : "sr-only"}>
@@ -76,7 +86,14 @@ export function CopyButton({
             onFocus={(e) => e.currentTarget.select()}
             className="min-w-0 flex-1 rounded-md border border-neutral-300 bg-neutral-50 px-3 py-2 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
           />
-          <Button variant="quiet" size="sm" onClick={() => setRevealed(false)}>
+          <Button
+            variant="quiet"
+            size="sm"
+            onClick={() => {
+              setRevealed(false);
+              focusCopyButton();
+            }}
+          >
             Dismiss
           </Button>
         </span>

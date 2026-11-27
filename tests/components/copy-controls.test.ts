@@ -125,14 +125,19 @@ describe("a value shown nowhere else is revealed on failure", () => {
       expect(f.selectionEnd).toBe(f.value.length);
       // a successful retry removes it
       setClipboard({ writeText: () => Promise.resolve() });
-      await act(async () => { h.querySelector("button")!.click(); });
+      await act(async () => { h.querySelector("button")!.click(); await vi.advanceTimersByTimeAsync(50); });
       expect(h.querySelector('[data-testid="copy-fallback"]')).toBeNull();
+      expect(document.activeElement).toBe(h.querySelector("button")); // a successful retry leaves focus on the copy button too
       // and Dismiss removes it
       setClipboard(undefined);
       await act(async () => { h.querySelector("button")!.click(); });
       const dismiss = [...h.querySelectorAll("button")].find((b) => b.textContent === "Dismiss")!;
-      await act(async () => { dismiss.click(); });
+      dismiss.focus();
+      await act(async () => { dismiss.click(); await vi.advanceTimersByTimeAsync(50); });
       expect(h.querySelector('[data-testid="copy-fallback"]')).toBeNull();
+      // focus returns to the copy button, not <body>
+      expect(document.activeElement).toBe(h.querySelector("button"));
+      expect(document.activeElement).not.toBe(document.body);
     } finally {
       vi.useRealTimers();
     }
