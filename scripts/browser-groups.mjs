@@ -235,8 +235,6 @@ export const BROWSER_GROUPS = {
       "move-appointment-responsive.spec.ts",
       "safe-willow-appointment-lifecycle.spec.ts",
       "create-plan-from-appointment.spec.ts",
-      // HON-124 item 7. The appointment page's links: hover, pressed, keyboard focus, tap size.
-      "appointment-detail-feedback.spec.ts",
       // P0 emergency: the new-client waitlist admission gate on the PUBLIC
       // booking page (waitlist UX for new clients, untouched booking UX for
       // existing clients, and the zero-business-write contract).
@@ -300,6 +298,8 @@ export const BROWSER_GROUPS = {
       // #1424 own-calendar-first default, 1280/390 matrix (opt-in: self-skips unless CAL_OWN_FIRST_E2E=1, so a targeted lane lists it but runs nothing).
       "calendar-own-first.spec.ts",
       "calendar-day-layout.spec.ts",
+      // HON-124 item 7. The appointment page's links: hover, pressed, keyboard focus, tap size.
+      "appointment-detail-feedback.spec.ts",
       "calendar-day-layout-single.spec.ts",
       // HON-48 team day view: five synthetic practitioners in one-column-per-
       // practitioner layout, Los Angeles date boundaries, same-practitioner
