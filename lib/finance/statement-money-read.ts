@@ -135,7 +135,7 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
     // Confirmed money is cash / e-transfer / other as the owner recorded it. A transfer still waiting for confirmation is owed, not received.
     ledgerRows.push({ appointmentId: e.appointment_id, method: e.state === "confirmed" ? e.method : "still_owes", amountCents: e.amount_cents, currency: e.currency, quotedAmountCents: null });
   }
-  const [feeCards, sessionCards, settlements, legacy] = await Promise.all([
+  const [feeCards, sessionCardsBySession, sessionCardsByAppt, settlements, legacy] = await Promise.all([
     readInChunks<CardDb>(ids, (chunk) =>
       supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studioId).in("charge_reason", FEE_REASONS).in("appointment_id", chunk),
     ),
@@ -144,6 +144,10 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
       : readInChunks<CardDb>([...sessionToAppt.keys()], (chunk) =>
           supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studioId).eq("charge_reason", "session_payment").in("session_id", chunk),
         ),
+    // The same payments read BY APPOINTMENT (as readBilledVisits does): a soft-deleted chart still holds real money, so a live card on it and its refunds must not drop out of the statement.
+    readInChunks<CardDb>(ids, (chunk) =>
+      supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studioId).eq("charge_reason", "session_payment").in("appointment_id", chunk),
+    ),
     readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null; quoted_amount_cents: number | null }>(ids, (chunk) =>
       supabase
         .from("appointment_settlements")
@@ -156,7 +160,9 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
       supabase.from("manual_fee_charge_attempts").select("appointment_id, status, amount_cents, currency, stripe_livemode").eq("studio_id", studioId).in("appointment_id", chunk),
     ),
   ]);
-  if (!feeCards.ok || !sessionCards.ok || !settlements.ok || !legacy.ok) return { ok: false };
+  if (!feeCards.ok || !sessionCardsBySession.ok || !sessionCardsByAppt.ok || !settlements.ok || !legacy.ok) return { ok: false };
+  // Union by id: a payment read both ways is one payment (visits without a deleted chart are unchanged).
+  const sessionCards = { rows: [...new Map([...sessionCardsBySession.rows, ...sessionCardsByAppt.rows].map((r) => [r.id, r] as const)).values()] };
 
   // Only a LIVE card payment is real money. A refund row that points at an attempt is real only when that attempt is live (cash and transfer refunds have no attempt).
   const liveAttempt = new Set<string>([...feeCards.rows, ...sessionCards.rows].filter((r) => r.stripe_livemode === true).map((r) => r.id));
@@ -181,7 +187,8 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
     if (rv.appointment_id) ledgerRows.push({ appointmentId: rv.appointment_id, method: "refund_in_flight", amountCents: rv.amount_cents, currency: rv.currency, quotedAmountCents: null, pendingCents: rv.amount_cents ?? 0 });
   }
   const cardRows: StatementCardRow[] = [];
-  for (const r of [...feeCards.rows, ...sessionCards.rows]) {
+  // One payment is one row, however many reads returned it.
+  for (const r of [...new Map([...feeCards.rows, ...sessionCards.rows].map((x) => [x.id, x] as const)).values()]) {
     const appointmentId = r.appointment_id ?? (r.session_id ? sessionToAppt.get(r.session_id) ?? null : null);
     if (!appointmentId) continue;
     // The attempt's own refund columns are Stripe's CUMULATIVE statement of the whole payment (0078, 0240). Its split rows are shown through their own lines
