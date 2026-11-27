@@ -469,7 +469,7 @@ export async function refundPaymentChargeAttempt(args: {
   //    SDK retry / a same-Stripe-keyed redelivery cannot produce
   //    a second refund object.
   // ============================================================
-  const stripe = getSessionPaymentStripe();
+  const stripe = await getSessionPaymentStripe(args.studioId);
   let refund: Stripe.Refund | null = null;
   try {
     refund = await stripe.refunds.create(

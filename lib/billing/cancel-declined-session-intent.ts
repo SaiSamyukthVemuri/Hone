@@ -142,7 +142,7 @@ export async function cancelDeclinedSessionIntent(args: {
   }
   if (row.stripe_status === "canceled") return { outcome: "already_canceled" };
 
-  const stripe = getSessionPaymentStripe();
+  const stripe = await getSessionPaymentStripe(row.studio_id as string);
   const account = row.stripe_account_id as string;
   let pi: Stripe.PaymentIntent;
   try {
