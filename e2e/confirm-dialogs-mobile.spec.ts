@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { seedE2eStudio, seedE2eMember, seedConfirmedAppointment, getClientIdByEmail, getOwnerPractitionerId, sql } from "./helpers/seed";
+import { randomUUID } from "node:crypto";
+import { seedE2eStudio, seedE2eMember, seedConfirmedAppointment, getOwnerPractitionerId, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
 // HON-124 item 14. Destructive staff actions ask first, through the house confirm dialog, at iPhone width (390x844) by touch emulation AND keyboard:
@@ -112,11 +113,11 @@ test.describe("destructive actions ask first", () => {
 
   test("cancel an appointment: Keep appointment changes nothing, Confirm cancels it", async ({ page }) => {
     const seed = await seedE2eStudio();
-    const clientId = await getClientIdByEmail(seed.studioId, seed.clientEmail);
-    expect(clientId).not.toBeNull();
+    const clientId = randomUUID();
+    await sql("insert into public.clients (id, studio_id, name, email) values ($1,$2,$3,$4)", [clientId, seed.studioId, "Confirm Client", `confirm-client-${seed.runId}@harness.local`]);
     const practitionerId = await getOwnerPractitionerId(seed.studioId);
     const start = new Date(Date.now() + 48 * 3_600_000);
-    const apptId = await seedConfirmedAppointment(seed.studioId, practitionerId, clientId!, start.toISOString(), new Date(start.getTime() + 3_600_000).toISOString());
+    const apptId = await seedConfirmedAppointment(seed.studioId, practitionerId, clientId, start.toISOString(), new Date(start.getTime() + 3_600_000).toISOString());
     await loginAsOwner(page, seed);
     await page.goto(`/calendar/${apptId}`);
     const trigger = page.getByRole("button", { name: "Cancel appointment", exact: true });
