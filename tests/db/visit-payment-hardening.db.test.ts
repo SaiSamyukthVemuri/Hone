@@ -7,6 +7,7 @@ import { cleanupPaymentScenario, seedQuickCheckoutScenario, type PaymentScenario
 // 0393 / 0394 hardening (Insurance and Privacy review of #1827). Synthetic values only. Each block names the failure it closes; a mutation control
 // (scripts kept with the review, not in the repo) turns each one red by removing exactly that guard.
 
+type Q = (t: string, p?: unknown[]) => Promise<{ rows: Array<Record<string, unknown> & { result?: string; bill_id?: string; payment_id?: string; refund_id?: string; status?: string; outstanding_cents?: number; confirmed_cents?: number; pending_cents?: number; card_cents?: number; refunded_cents?: number; total_cents?: number; state?: string; visit_bill_id?: string | null; legacy?: boolean }> }>;
 const created: string[] = [];
 async function visit(opts: { attempt?: "none" | "ready" } = {}): Promise<PaymentScenario> {
   const s = await seedQuickCheckoutScenario({ appointmentStatus: "completed", withSession: true, attempt: opts.attempt ?? "none", bookedService: { name: "Synthetic service", priceCents: 22500 } });
@@ -21,7 +22,7 @@ afterAll(async () => {
   await closePool();
 });
 
-const owner = <T,>(s: PaymentScenario, fn: (q: (t: string, p?: unknown[]) => Promise<{ rows: any[] }>) => Promise<T>) => asUser(s.practitionerUserId, fn);
+const owner = <T,>(s: PaymentScenario, fn: (q: Q) => Promise<T>) => asUser(s.practitionerUserId, fn);
 const ensure = (s: PaymentScenario) => owner(s, (q) => q(`select * from public.ensure_visit_bill($1,$2,null,null,false)`, [s.studioId, s.appointmentId])).then((r) => r.rows[0]);
 const pay = (s: PaymentScenario, method: string, cents: number) =>
   owner(s, (q) => q(`select * from public.record_visit_external_payment($1,$2,$3,$4,$5,null)`, [s.studioId, s.appointmentId, method, cents, randomUUID()])).then((r) => r.rows[0]);
@@ -53,7 +54,7 @@ describe("F1 every command is owner-only inside the database", () => {
     const cash = await pay(s, "paid_cash", 5000);
     const xfer = await pay(s, "paid_other_external", 2500);
     const mate = await seedMember({ studioId: s.studioId } as never, "colleague");
-    const as = <T,>(fn: (q: (t: string, p?: unknown[]) => Promise<{ rows: any[] }>) => Promise<T>) => asUser(mate.userId, fn);
+    const as = <T,>(fn: (q: Q) => Promise<T>) => asUser(mate.userId, fn);
     const before = { ext: await countRows(s, "visit_external_payments"), bills: await countRows(s, "visit_bills") };
     const r1 = (await as((q) => q(`select * from public.record_visit_external_payment($1,$2,'paid_cash',100,$3,null)`, [s.studioId, s.appointmentId, randomUUID()]))).rows[0];
     const r2 = (await as((q) => q(`select * from public.confirm_visit_external_payment($1,$2)`, [s.studioId, xfer.payment_id]))).rows[0];
@@ -158,7 +159,7 @@ describe("F4 only a SUCCEEDED refund frees collectable capacity", () => {
     await expect(pay(s, "paid_cash", 5000)).resolves.toMatchObject({ result: "exceeds_balance" }); // so a replacement tender is refused
     await adminQuery(`select * from public.finish_payment_refund($1,'failed',null,null,'card_declined','x',null)`, [r.refund_id]);
     const p = await position(s);
-    expect(p.confirmed_cents + p.pending_cents + p.card_cents - p.refunded_cents).toBeLessThanOrEqual(p.total_cents);
+    expect(Number(p.confirmed_cents) + Number(p.pending_cents) + Number(p.card_cents) - Number(p.refunded_cents)).toBeLessThanOrEqual(Number(p.total_cents));
     const r2 = await refund(s, { attempt: a }, 5000);
     await adminQuery(`select * from public.finish_payment_refund($1,'succeeded',$2,'succeeded',null,null,null)`, [r2.refund_id, `re_${tok()}`]);
     expect((await position(s)).outstanding_cents).toBe(5000);                                // succeeded: exactly its amount
