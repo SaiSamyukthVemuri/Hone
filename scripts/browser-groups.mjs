@@ -489,6 +489,8 @@ export const BROWSER_GROUPS = {
       // (it decodes video) and nothing outside the marketing surface can break
       // it.
       "marketing-homepage-film.spec.ts",
+      // HON-84. The public /demo form still succeeds for a visitor and saves one lead with one alert row.
+      "public-lead-forms.spec.ts",
     ],
   },
   responsive: {
