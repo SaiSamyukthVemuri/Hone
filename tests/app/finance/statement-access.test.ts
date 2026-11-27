@@ -117,7 +117,7 @@ describe("source guards", () => {
     // Code only: the component's header comment talks about `<form method="get">` in prose.
     const pendingForm = read("components/pending-get-form.tsx").split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
     expect(pendingForm.match(/<form\b/g)?.length).toBe(1);
-    expect(pendingForm).toMatch(/<form \{\.\.\.rest\} action=\{action\} method="get"/);
+    expect(pendingForm).toMatch(/<form key=\{appliedAddress\} \{\.\.\.rest\} action=\{action\} method="get"/);
     expect(pendingForm.match(/<button\b/g)?.length).toBe(1);
     expect(pendingForm).toMatch(/<button type="submit"/);
     expect(pendingForm).not.toMatch(/method="post"|"use server"|<input\b|<textarea|<select/i);
