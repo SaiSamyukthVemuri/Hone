@@ -3,10 +3,10 @@ import { TEXT_LINK_FEEDBACK } from "@/components/ui/control-base";
 
 // Minimal footer for the in-app surfaces. Privacy + Terms links are
 // required to be reachable from every authenticated page; this stays
-// quiet at the bottom of the layout.
+// quiet at the bottom of the layout. It is screen-only: a printed record or statement is the document, not the app around it.
 export function AppFooter() {
   return (
-    <footer className="mt-16 border-t border-neutral-200 px-6 py-6 text-xs text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+    <footer className="mt-16 border-t border-neutral-200 px-6 py-6 text-xs text-neutral-500 print:hidden dark:border-neutral-800 dark:text-neutral-400">
       <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-2">
         <span>© 2026 Hone</span>
         <span className="flex flex-wrap gap-x-3 gap-y-1">

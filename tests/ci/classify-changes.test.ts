@@ -927,7 +927,7 @@ describe("classifier - the public booking surface selects every spec that books 
   };
 
   it("a change to the public booking ACTION selects all 23 audited public-booking specs", () => {
-    expect(PUBLIC_BOOKING_SPECS).toHaveLength(23);
+    expect(PUBLIC_BOOKING_SPECS).toHaveLength(24);
     const selected = new Set(specsFor("app/book/[slug]/actions.ts"));
     const missing = PUBLIC_BOOKING_SPECS.filter((s: string) => !selected.has(s));
     expect(missing, "public-booking specs not selected for a change to the action").toEqual([]);

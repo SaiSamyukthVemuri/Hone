@@ -61,7 +61,7 @@ describe("practitioner send action: studio-scoped + rate-limited + reuses issuan
 
 describe("Copy login URL copies a NON-token studio portal address", () => {
   it("copies the /portal/login?studio=... URL, never a token", () => {
-    expect(CARD).toMatch(/navigator\.clipboard\.writeText\(portalLoginUrl\)/);
+    expect(CARD).toMatch(/copyText\(portalLoginUrl\)/);
     // the URL prop is the studio login page (built in page.tsx from the slug)
     expect(CARD).toMatch(/portalLoginUrl: string; \/\/ \/portal\/login\?studio=SLUG/);
     expect(CARD).not.toMatch(/verify\/|rawToken|token_hash/);
