@@ -1020,6 +1020,7 @@ export default async function ClientCheatSheetPage({
             )}
             <PendingLink
               href={`/clients/${client.id}/edit`}
+              pendingLabel="Opening the client editor…"
               className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
             >
               Edit
@@ -1264,6 +1265,7 @@ export default async function ClientCheatSheetPage({
               </h2>
               <PendingLink
                 href={`/clients/${client.id}/edit`}
+              pendingLabel="Opening the client editor…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
               >
                 Edit
