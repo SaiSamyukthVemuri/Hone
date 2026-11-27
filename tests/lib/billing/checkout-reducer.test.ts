@@ -173,7 +173,7 @@ describe("the id mechanism: one rule for every path (Insurance F2, Codex P2)", (
     const c = submissionFor(subs, cash50, m); subs = c.next;           // not a card charge
     const ghost = chargeFingerprint({ tender: "card", cents: 1234, currency: "cad" });
     const g = submissionFor(subs, ghost, m); subs = g.next;            // its prepare answer was lost: bound to nothing
-    let bound = bindAttempt(bindAttempt({}, "att-1", card50), "att-2", card30);
+    const bound = bindAttempt(bindAttempt({}, "att-1", card50), "att-2", card30);
     const r = releaseCardAttempt(subs, bound, "att-1");
     expect(r.subs).toEqual({ [card30]: b.id, [cash50]: c.id });
     expect(r.bound).toEqual({ "att-2": card30 });
