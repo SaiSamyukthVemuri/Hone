@@ -19,6 +19,7 @@ export function DashboardCheckoutEntry({
   paymentState,
   cardOnFile,
   visitLabel,
+  buttonClassName,
   children,
 }: {
   appointmentId: string;
@@ -28,6 +29,7 @@ export function DashboardCheckoutEntry({
   cardOnFile?: CardOnFileStatus | null;
   children: ReactNode;
   visitLabel?: string;
+  buttonClassName?: string;
 }) {
   const [method, setMethod] = useState<CheckoutMethod | null>(null);
   const [open, setOpen] = useState(false);
@@ -75,6 +77,7 @@ export function DashboardCheckoutEntry({
     ? checkoutDraftAmount(feeDraft.received ?? feeDraft.finalFee)
     : finalCents;
   const freeVisit = feeDraft?.referenceCents === 0;
+  const reviewCard = method === "stripe" && !freeVisit && finalCents !== 0;
   const confirmLabel = method === "waived" || finalCents === 0
     ? "Confirm fee waiver"
     : method === "still_owes" ? "Record amount owed"
@@ -87,8 +90,10 @@ export function DashboardCheckoutEntry({
         <MarkAppointmentCompleteControl
           appointmentId={appointmentId}
           startsAt={startsAt}
+          buttonClassName={buttonClassName}
           checkout={newPayment || existingOutcome ? {
             visitLabel,
+            confirmLabel: reviewCard ? "Finish visit and review card charge" : undefined,
             onOpen: openCheckout,
             onCompleted: () => {
               ++quoteRequest.current;
@@ -113,13 +118,13 @@ export function DashboardCheckoutEntry({
                   disabled={busy}
                   stripeUnavailable={stripeUnavailable}
                 />
-                <button
+                {!reviewCard && <button
                   type="button"
                   disabled
                   className="mt-4 min-h-[44px] cursor-not-allowed rounded-md border border-neutral-300 px-4 text-sm opacity-60 dark:border-neutral-700"
                 >
                   {confirmLabel}
-                </button>
+                </button>}
               </div>
             ) : undefined,
           } : undefined}

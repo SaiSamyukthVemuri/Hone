@@ -5,6 +5,7 @@ import {
   provenanceOf,
   rowsForResource,
   selectedColumnsByResource,
+  EXPORT_PROVENANCE,
   readFinalSelect,
 } from "@/lib/export/provenance";
 
@@ -148,5 +149,14 @@ describe("query provenance: the select is read off the request", () => {
       clients: ["id", "name"],
       sessions: ["id", "client_id"],
     });
+  });
+
+  it("counts a column read under a PostgREST cast as that column, and nothing else", () => {
+    const read = {
+      data: [],
+      error: null,
+      [EXPORT_PROVENANCE]: { resource: "r", select: "id, value_numeric::text, tags::text[], name" },
+    } as unknown as Parameters<typeof selectedColumnsByResource>[0][number];
+    expect(selectedColumnsByResource([read])).toEqual({ r: ["id", "value_numeric", "tags", "name"] });
   });
 });

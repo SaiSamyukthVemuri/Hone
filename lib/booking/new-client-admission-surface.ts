@@ -142,3 +142,30 @@ export function publicBookFormSurface(input: {
       return input.servicesCount === 0 ? "no_services_notice" : "booking_form";
   }
 }
+
+/**
+ * HON-124 item 8. Where the client is in the public booking journey, out of how
+ * many steps, derived from the SAME surface decision the form renders from.
+ *
+ * Three steps, all on the open new-client path: choosing new/existing, picking
+ * a time and giving details, and the confirmation. Step 3 is only ever reached
+ * from `done`, which the form sets only after the server action returned
+ * `ok: true`, so "3 of 3" can never be shown for a booking that was not saved.
+ *
+ * Every other surface (closed / unknown / waitlist notices, the existing-client
+ * portal hand-off, a studio with nothing to book) is NOT a step of this journey,
+ * so it gets no indicator rather than a misleading "2 of 3".
+ */
+export type PublicBookingProgress = { step: 1 | 2 | 3; total: 3; label: string };
+
+export function publicBookingProgress(
+  surface: PublicBookFormSurface,
+  booked: boolean,
+): PublicBookingProgress | null {
+  if (booked) return { step: 3, total: 3, label: "Booked" };
+  if (surface === "chooser") return { step: 1, total: 3, label: "About you" };
+  if (surface === "booking_form") {
+    return { step: 2, total: 3, label: "Choose a time and add your details" };
+  }
+  return null;
+}

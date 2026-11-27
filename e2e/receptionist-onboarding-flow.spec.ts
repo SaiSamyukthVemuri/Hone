@@ -100,6 +100,7 @@ for (const profile of [
     // 5. OWNER removes the receptionist (Team -> Deactivate). The receptionist's page is STILL OPEN.
     await ownerPage.goto("/settings/team");
     await ownerPage.locator("li", { hasText: deskEmail }).getByRole("button", { name: /deactivate/i }).click();
+    await ownerPage.getByTestId("confirm-dialog-confirm").click();
     await expect
       .poll(async () => (await sql<{ active: boolean }>(`select r.active from public.studio_receptionists r join auth.users u on u.id = r.user_id where lower(u.email)=$1`, [deskEmail]))[0]?.active, { timeout: 30_000 })
       .toBe(false);

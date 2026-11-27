@@ -128,6 +128,8 @@ export const BROWSER_GROUPS = {
       "dashboard-closed-row.spec.ts",
       // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
       "dashboard-last-treatment-closed.spec.ts",
+      // practitioner feedback (26 Nov): one action row, yellow pinned notes, blue From-last-visit box, last visit details open on first render.
+      "dashboard-visit-card-actions.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
       // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default
@@ -252,8 +254,13 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // HON-124 item 11: the booking-link copy control on an iPhone-sized viewport: Copied only after the write, a calm failure message with the
+      // link text selected, and keyboard-only operation. Here because settings/booking/** selects this group.
+      "settings-booking-copy-mobile.spec.ts",
       // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
       "team-invite-receptionist.spec.ts",
+      // HON-124 item 14: destructive staff actions (revoke an invitation, remove a team member, cancel an appointment) ask first through the confirm dialog.
+      "confirm-dialogs-mobile.spec.ts",
       // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
       // calendar lane on purpose: the targeted lane is already near its measured budget.
       "receptionist-onboarding-flow.spec.ts",
@@ -330,6 +337,12 @@ export const BROWSER_GROUPS = {
       // Same placement and same self-skip as the spec above; both run for real
       // in the non-required `storage photos` job, which has storage-api.
       "treatment-image-upload-formats.spec.ts",
+      // FETT photos (HON-43), 0232: the Before/After label end to end at phone
+      // width (upload, keyboard relabel/clear, the visit sections) and the
+      // receptionist refusal. Same group and the same reasons as the recovery
+      // spec above; it uploads, so it SELF-SKIPS in CI (no storage-api).
+      "fett-photo-labels.spec.ts",
+      "fett-photo-privacy.spec.ts",
       // ID photo set/replace/remove on the client profile/Photos surface:
       // same group as thumbnail recovery, with the same real-storage
       // requirement (self-skips in CI without storage-api). Does not add to
@@ -347,6 +360,8 @@ export const BROWSER_GROUPS = {
       "owner-only-catalog-edit.spec.ts",
       // HON-100: the owner's Statements month controls (arrow, picker, Back/Forward, reload) all name the same month. Owner-only read surface.
       "statements-month-navigation.spec.ts",
+      // HON-124 (print): the statement, the record-keeping sections and the clinical-notes export print as the document alone, unclipped and readable, on Letter and A4.
+      "print-layout.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
@@ -456,6 +471,8 @@ export const BROWSER_GROUPS = {
       // HON-62: the weekly-hours editor's native time inputs (keyboard
       // entry, touch tap, save/reload, untouched existing hours).
       "availability-hours-editor.spec.ts",
+      // HON-124 item 4: availability Remove shows activity and ignores a second press.
+      "pending-states-mobile.spec.ts",
       // HON-62 WebKit discriminator: bare time inputs, no app. It skips outside the
       // non-required WebKit project, so it is a no-op wherever this group runs.
       "webkit-time-input-key-probe.spec.ts",
@@ -475,12 +492,17 @@ export const BROWSER_GROUPS = {
     specs: [
       "marketing-homepage.spec.ts",
       "marketing-pages.spec.ts",
+      "public-pages-contact-faq-mobile.spec.ts",
       // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
       // motion preference, and the poster being preloaded eagerly. Filed here
       // rather than in `smoke` on purpose — it is heavier than a smoke case
       // (it decodes video) and nothing outside the marketing surface can break
       // it.
       "marketing-homepage-film.spec.ts",
+      // HON-84. The public /demo form still succeeds for a visitor and saves one lead with one alert row.
+      "public-lead-forms.spec.ts",
+      // HON-124 item 13. Back to top on the long public pages: keyboard-operable, focus restored, reduced motion honoured.
+      "back-to-top.spec.ts",
     ],
   },
   responsive: {
@@ -522,6 +544,14 @@ export const BROWSER_GROUPS = {
       // anybody out, which is exactly the pair of facts SIGNOUT-01 learned had
       // to be checked together.
       "signout-acknowledgement.spec.ts",
+      // HON-124 PR 1. Both phone menus (keyboard + touch, aria-current, Escape
+      // focus return), the skip link on the marketing and app shells, the app's
+      // sticky header against anchors and upward focus, and the public booking
+      // progress / double-press / taken-time feedback at 390x844. Books
+      // publicly, so it is also in PUBLIC_BOOKING_SPECS below.
+      "hon124-nav-booking-mobile.spec.ts",
+      // HON-124 item 7. Hover, pressed and keyboard-focus feedback on the shared nav rows and footer links.
+      "hon124-hover-states.spec.ts",
     ],
   },
   google: {
@@ -581,6 +611,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "book-next-available-fast.spec.ts",
   "core-memory-loop.spec.ts",
   "dashboard-treatment-memory-inline.spec.ts",
+  "hon124-nav-booking-mobile.spec.ts",
   "mobile-ux.spec.ts",
   "move-appointment-custom-time.spec.ts",
   "move-appointment-mobile-submit.spec.ts",
@@ -593,6 +624,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",
+  "public-pages-contact-faq-mobile.spec.ts",
   "public-reschedule-v2.spec.ts",
   "safe-willow-appointment-lifecycle.spec.ts",
   "safe-willow-contract.spec.ts",
@@ -619,7 +651,7 @@ const PATH_TO_GROUP = [
   //
   // The pattern is ANCHORED TO THE CARD rather than a bare /prep[-_]?memory/i,
   // following the OWNER-CAP precedent in this file. A loose pattern would also
-  // capture app/(app)/dashboard/prep-memory-actions.ts and
+  // capture app/(app)/dashboard/prep-memory-read.ts and
   // lib/sessions/appointment-prep-memory.ts, and the first of those currently
   // falls through to EXTENDED — so a loose rule would NARROW that file's
   // coverage from everything to one group. Additive only: the card already
@@ -631,6 +663,18 @@ const PATH_TO_GROUP = [
   // unattributable path, and narrowing it would reduce coverage, so it is
   // reported rather than changed here.
   { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i, /appointment[-_]?prep[-_]?memory[-_]?card/i] },
+  // MACHINES (CI-SELECT-01). lib/machines/**, components/machines/** and the Settings -> Machines page matched no rule, so a diff to the MultiPlex
+  // load reducer (lib/machines/multiplex-load.ts) fell through to the unattributed fail-safe and ran the whole extended suite: four shards, the
+  // storage-photos lane and the WebKit lane, to prove a form that one group's specs drive.
+  //
+  // WHY THIS IS SAFE, AND WHAT KEEPS IT SAFE. Every app route that imports these files, directly or through other modules, is a SESSIONS route
+  // or the Settings -> Machines page, whose browser coverage is machine-real-3g.spec.ts (it visits /settings/machines) in `sessions`.
+  // tests/ci/browser-selection.test.ts walks the real import graph and FAILS if a new route starts importing a mapped file without selecting
+  // `sessions` itself, so the mapping cannot silently narrow coverage as the code grows.
+  //
+  // TWO FILES ARE DELIBERATELY LEFT OUT and keep the extended fail-safe: legacy-machine.ts and profile-contract.ts are also imported by the
+  // client page (app/(app)/clients/[id]/page.tsx) and the data export (app/(app)/settings/data/**), which match no group.
+  { group: "sessions", patterns: [/^lib\/machines\/(?!legacy-machine\.ts$|profile-contract\.ts$)/, /^components\/machines\//, /^app\/\(app\)\/settings\/machines\//] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched

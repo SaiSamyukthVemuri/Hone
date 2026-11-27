@@ -7,6 +7,7 @@ import {
   sql,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { ensureLastVisitDetailsOpen, closeLastVisitDetails } from "./helpers/last-visit-details";
 
 // Chloe: "Today and the Daily Prep Brief are redundant."
 //
@@ -121,11 +122,11 @@ function runSuite(label: string, viewport: { width: number; height: number }, is
 
       await test.step("4+6. latest setup once; intake and charting stated once", async () => {
         const toggle = page.getByTestId("dashboard-memory-toggle");
-        await toggle.click();
+        await ensureLastVisitDetailsOpen(toggle);
         await expect(page.getByTestId("prep-setup-area")).toHaveCount(1);
         await expect(page.getByTestId("prep-setup-area")).toContainText("27.12 MHz");
         await expect(page.getByText(PLAN_LINE_1, { exact: false })).toHaveCount(1);
-        await toggle.click();
+        await closeLastVisitDetails(toggle);
         // No generic record-count line beside the specific chips.
         await expect(page.getByText(/^Records: \d+ reminder/)).toHaveCount(0);
         await expect(page.getByText("Records look complete.")).toHaveCount(0);

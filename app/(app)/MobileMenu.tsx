@@ -3,14 +3,15 @@
 import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
 import { SignOutMenuItem } from "./SignOutMenuItem";
 import { useSetSignOutInFlight, useSignOutInFlight } from "./signout-flight";
 import { SignOutFlightReporter } from "./SignOutFlightReporter";
-import { cx, PRESS_TRANSITION } from "@/components/ui/control-base";
+import { cx, NAV_ROW_FEEDBACK, PRESS_TRANSITION } from "@/components/ui/control-base";
 import { BUSINESS_MENU_ITEMS, BUSINESS_MENU_LABEL } from "@/lib/nav/business-menu";
 import { spinnerClasses } from "@/components/ui/spinner";
+import { isCurrentSection, NAV_LINK_CURRENT, type NavMatch } from "./PrimaryNavLink";
 
 // PR #229: compact mobile menu, now a small client component instead
 // of PR #228's <details>/<summary>. The authenticated layout
@@ -120,6 +121,14 @@ export function MobileMenu({
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
+      // HON-124 item 10. Focus goes back to the trigger BEFORE the panel
+      // unmounts, exactly as navigate() does, so a keyboard user is never left
+      // on a detached node with focus fallen to <body>. Only when focus is in
+      // the menu: an Escape meant for something else must not steal focus.
+      // The dismissal itself still goes through the one rule, close().
+      if (e.key === "Escape" && rootRef.current?.contains(document.activeElement)) {
+        triggerRef.current?.focus();
+      }
       if (e.key === "Escape") close();
     }
     window.addEventListener("keydown", onKeyDown);
@@ -251,7 +260,12 @@ export function MobileMenu({
 
   // One working-surface row: a held placeholder while a sign-out is in flight, otherwise a real link. `nested` indents the owner's
   // Business pages under their group heading.
-  const workItem = (item: { href: string; label: string }, nested: boolean) =>
+  // HON-124 item 10. The current destination, by the SAME rule the desktop row
+  // uses (PrimaryNavLink.isCurrentSection), so the two shells cannot disagree.
+  const pathname = usePathname();
+  const currentFor = (href: string, match: NavMatch = "section") =>
+    isCurrentSection(pathname, href, match);
+  const workItem = (item: { href: string; label: string; match?: NavMatch }, nested: boolean) =>
     isHeld() ? (
       <span
         key={item.href}
@@ -268,8 +282,10 @@ export function MobileMenu({
         key={item.href}
         href={item.href}
         onClick={(e) => navigate(e, item.href, item.label)}
+        aria-current={currentFor(item.href, item.match) ? "page" : undefined}
         className={cx(
-          "flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900",
+          "flex min-h-[44px] items-center rounded-md px-3 py-2",
+          currentFor(item.href, item.match) ? NAV_LINK_CURRENT : NAV_ROW_FEEDBACK,
           nested && "pl-6",
         )}
       >
@@ -329,6 +345,7 @@ export function MobileMenu({
         type="button"
         aria-label="Open navigation menu"
         aria-expanded={open}
+        aria-controls="mobile-navigation-panel"
         // Opens freely; closing goes through the one dismissal rule, which
         // defers while a logout is in flight. Never refuses to OPEN, or a
         // stuck flag would leave the menu unreachable.
@@ -363,6 +380,7 @@ export function MobileMenu({
       </span>
       {open && (
         <nav
+          id="mobile-navigation-panel"
           aria-label="Mobile navigation"
           // PR #234: same viewport-fixed sheet treatment as mobile
           // search, so both panels share width, position, and feel.
@@ -391,7 +409,7 @@ export function MobileMenu({
           {/* HON-40 SHELL CONTRACT, SECTION 2 of 3 · NAVIGATION (owner: HON-98): the working surfaces and the
               owner's Business group, down to the divider. */}
           {[
-            { href: "/dashboard", label: "Dashboard" },
+            { href: "/dashboard", label: "Dashboard", match: "exact" as const },
             { href: "/clients", label: "Clients" },
             { href: "/calendar", label: "Calendar" },
             ...(showWaitlist ? [{ href: WAITLIST_PATH, label: "Waitlist" }] : []),
@@ -455,7 +473,11 @@ export function MobileMenu({
                   key={item.href}
                   href={item.href}
                   onClick={(e) => navigate(e, item.href, item.label)}
-                  className="flex min-h-[44px] items-center rounded-md px-3 py-2 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                  aria-current={currentFor(item.href) ? "page" : undefined}
+                  className={cx(
+                    "flex min-h-[44px] items-center rounded-md px-3 py-2",
+                    currentFor(item.href) ? NAV_LINK_CURRENT : NAV_ROW_FEEDBACK,
+                  )}
                 >
                   {item.label}
                 </Link>

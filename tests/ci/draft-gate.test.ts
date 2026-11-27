@@ -67,7 +67,8 @@ describe("CI-DRAFT-01 triggers", () => {
 const EXTENDED_TERM = "needs.changes.outputs.browser_extended == 'true'";
 const LATER_EDITS: Record<string, (inner: string) => string> = {
   // storage-photos also runs on any database change (CI's db lane has no storage-api).
-  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM}) || needs.changes.outputs.database == 'true'`),
+  // The photo label spec (uploads, so it needs storage) is the other deliberate later edit: a diff touching only that spec starts this job.
+  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM}) || needs.changes.outputs.database == 'true'`) + " || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts')",
   "webkit-hon-62": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM})`),
 };
 
@@ -153,6 +154,8 @@ describe("CI-DRAFT-01 aggregator on a draft", () => {
     ["full matrix", { FULL_MATRIX: "true" }],
     ["browser_extended only (storage-photos / webkit)", { EXTENDED: "true" }],
     ["storage-photos spec only", { BROWSER_SPECS: "e2e/fett-client-portrait.spec.ts" }],
+    ["storage-photos label spec only", { BROWSER_SPECS: "e2e/fett-photo-labels.spec.ts" }],
+    ["storage-photos privacy spec only", { BROWSER_SPECS: "e2e/fett-photo-privacy.spec.ts" }],
     ["webkit spec only", { BROWSER_SPECS: "e2e/finish-appointment-mobile.spec.ts" }],
   ];
   for (const [name, env] of needs) {

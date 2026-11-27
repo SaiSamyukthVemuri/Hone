@@ -1501,7 +1501,7 @@ jobs:
           if [ "${IS_DRAFT:-}" = "true" ]; then
             SPEC_PHOTO="false"; SPEC_WEBKIT="false"
             case "${BROWSER_SPECS:-}" in
-              *e2e/fett-photos-thumbnail-recovery.spec.ts*|*e2e/treatment-image-upload-formats.spec.ts*|*e2e/fett-client-portrait.spec.ts*) SPEC_PHOTO="true" ;;
+              *e2e/fett-photos-thumbnail-recovery.spec.ts*|*e2e/treatment-image-upload-formats.spec.ts*|*e2e/fett-client-portrait.spec.ts*|*e2e/fett-photo-labels.spec.ts*|*e2e/fett-photo-privacy.spec.ts*) SPEC_PHOTO="true" ;;
             esac
             case "${BROWSER_SPECS:-}" in
               *e2e/availability-hours-editor.spec.ts*|*e2e/finish-appointment-mobile.spec.ts*|*e2e/fett-photos-touch-floor.spec.ts*) SPEC_WEBKIT="true" ;;
@@ -2437,7 +2437,7 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: [changes, records-preflight, validate]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') ) }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts') ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2654,7 +2654,7 @@ jobs:
 
       - name: Storage photo E2E (CLN-005 + ENG-002)
         if: ${{ !cancelled() && steps.storage_up.outcome == 'success' && steps.pw_sys.outcome == 'success' }}
-        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts e2e/fett-client-portrait.spec.ts --project=chromium
+        run: npx playwright test e2e/fett-photos-thumbnail-recovery.spec.ts e2e/treatment-image-upload-formats.spec.ts e2e/fett-client-portrait.spec.ts e2e/fett-photo-labels.spec.ts e2e/fett-photo-privacy.spec.ts --project=chromium
         env:
           HONE_E2E_FAKE_RESEND: "1"
 

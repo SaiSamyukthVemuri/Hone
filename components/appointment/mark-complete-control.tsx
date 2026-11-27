@@ -54,9 +54,12 @@ export type MarkAppointmentCompleteControlProps = {
   notStartedHint?: string;
   // Full-width, one-column layout for the charting surface at 390px.
   block?: boolean;
+  /** Replaces the button's look. The Dashboard action row sizes Checkout / Mark completed like every other action. */
+  buttonClassName?: string;
   /** Dashboard checkout continues to payment only after confirmed completion. */
   checkout?: {
     visitLabel?: string;
+    confirmLabel?: string;
     onCompleted: () => void;
     onOpen: () => void;
     choices?: (busy: boolean) => ReactNode;
@@ -69,6 +72,7 @@ export function MarkAppointmentCompleteControl({
   notStartedHint = "Available once the appointment has started",
   block = false,
   checkout,
+  buttonClassName,
 }: MarkAppointmentCompleteControlProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -150,9 +154,12 @@ export function MarkAppointmentCompleteControl({
             ? "Mark this appointment completed. You will be asked to confirm."
             : "Appointment can be marked completed once it has started."
         }
-        className={`inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900 ${
-          block ? "w-full" : ""
-        }`}
+        className={
+          buttonClassName ??
+          `inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900 ${
+            block ? "w-full" : ""
+          }`
+        }
       >
         {checkout ? "Checkout" : "Mark completed"}
       </button>
@@ -168,9 +175,9 @@ export function MarkAppointmentCompleteControl({
         open={confirming}
         title={checkout ? ["Checkout", checkout.visitLabel].filter(Boolean).join(" · ") : "Mark appointment completed?"}
         description={checkout?.choices
-          ? "Finish the visit to enable payment confirmation."
+          ? "Finish the visit to review payment. You’ll confirm the amount before the client is charged."
           : COMPLETE_CONFIRM_MESSAGE}
-        confirmLabel={checkout ? "Finish visit" : "Mark completed"}
+        confirmLabel={checkout ? checkout.confirmLabel ?? "Finish visit" : "Mark completed"}
         busyLabel="Marking completed…"
         pending={pending}
         error={confirming ? error : null}

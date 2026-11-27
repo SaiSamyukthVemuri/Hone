@@ -19,7 +19,8 @@ describe("dashboard roster", () => {
   });
   it("renders the checkout cell for the owner only, from a server-derived flag", () => {
     expect(src).toMatch(/const isOwner = practitioner\.role === "owner";/);
-    expect(src).toMatch(/\{isOwner && \(\s*<AppointmentCheckoutCell/);
+    // Dashboard: the cell is handed to VisitActionRow ONLY when isOwner; a non-owner gets null (no Checkout at all).
+    expect(src).toMatch(/checkout=\{isOwner \? \(\s*<AppointmentCheckoutCell[\s\S]*?\) : null\}/);
     expect(src).toMatch(/isOwner=\{isOwner\}/);
   });
 });

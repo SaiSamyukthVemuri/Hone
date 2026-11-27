@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { Service } from "@/lib/types/database";
 import {
   formatServiceLabel,
@@ -10,7 +10,11 @@ import { clientOnlineBookingDisabledMessage } from "@/lib/booking/client-self-se
 import { UNAVAILABLE_PUBLIC_BOOKING_MESSAGE } from "@/lib/booking/readiness";
 // The CLIENT-SAFE module: new-client-admission.ts is `server-only`, and this
 // is a "use client" component. Same function, same canonical decision.
-import { publicBookFormSurface } from "@/lib/booking/new-client-admission-surface";
+import {
+  publicBookFormSurface,
+  publicBookingProgress,
+  type PublicBookingProgress,
+} from "@/lib/booking/new-client-admission-surface";
 import { isConsultationService } from "@/lib/booking/consultation";
 import {
   pushAvailabilityHistory,
@@ -261,6 +265,17 @@ export function PublicBookForm({
   const [done, setDone] = useState<Confirmation | null>(null);
   const [loadingSlots, startLoading] = useTransition();
   const [submitting, startSubmitting] = useTransition();
+  // HON-124 item 4. `disabled={submitting}` alone cannot stop a double press:
+  // `submitting` only turns true on the NEXT render, so two clicks (or Enter
+  // twice) delivered before React commits both find the button enabled and both
+  // post. A ref is set synchronously inside the first submit and refuses the
+  // rest until that request settles. The server is the second line: the
+  // booking command takes the studio lock and the appointments exclusion
+  // constraint refuses an overlapping row, so a duplicate that got past this
+  // would be answered "That time is no longer available", never booked twice.
+  const submitLockRef = useRef(false);
+  // Set only by a "slot_taken" refusal, read once by the slot-fetch effect.
+  const keepErrorOnRefetchRef = useRef(false);
   // Next-available lookup state. Distinct from loadingSlots so the slot
   // panel can keep its existing "Loading slots…" message while the
   // dedicated "Next available" button shows its own pending text. When
@@ -319,7 +334,10 @@ export function PublicBookForm({
       return;
     }
     let cancelled = false;
-    setError(null);
+    // A refetch the SUBMIT asked for (the time was taken) keeps the refusal on
+    // screen: it is the message that says what to do next (HON-124 item 19).
+    if (keepErrorOnRefetchRef.current) keepErrorOnRefetchRef.current = false;
+    else setError(null);
     setSlotsFailed(false);
     setPicked(null);
     // Reset next-available state when the underlying query changes.
@@ -444,6 +462,8 @@ export function PublicBookForm({
       setError("Pick a time first.");
       return;
     }
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     setError(null);
     const fd = new FormData();
     fd.set("slug", slug);
@@ -472,8 +492,24 @@ export function PublicBookForm({
     // lib/booking/referral-source.ts.
     fd.set("referral_source", referralSource);
     startSubmitting(async () => {
-      const r = await publicBookAppointmentAction(fd);
+      // Released however the request settles (a throw still reaches error.tsx,
+      // SENTRY-BOOKING-ERR-01), so a refused booking can be corrected and sent.
+      let r: Awaited<ReturnType<typeof publicBookAppointmentAction>>;
+      try {
+        r = await publicBookAppointmentAction(fd);
+      } finally {
+        submitLockRef.current = false;
+      }
       if (!r.ok) {
+        // HON-124 item 19. Every entry the client typed stays in state. When
+        // the time was taken meanwhile, the stale choice is cleared and the
+        // day's times are re-read, so "choose another time" can actually be
+        // done from what is on screen.
+        if (r.code === "slot_taken") {
+          setPicked(null);
+          keepErrorOnRefetchRef.current = true;
+          setSlotsRetry((n) => n + 1);
+        }
         setError(r.error);
         return;
       }
@@ -495,8 +531,11 @@ export function PublicBookForm({
     });
   }
 
+  const progress = publicBookingProgress(surface, done != null);
+
   if (done) {
     return (
+      <WithProgress progress={progress}>
       <ConfirmationView
         confirmation={done}
         studioName={studioName}
@@ -504,6 +543,7 @@ export function PublicBookForm({
         studioSlug={slug}
         clientPortalEnabled={clientPortalEnabled}
       />
+      </WithProgress>
     );
   }
 
@@ -532,10 +572,12 @@ export function PublicBookForm({
   // disclose whether an email exists.
   if (surface === "chooser") {
     return (
+      <WithProgress progress={progress}>
       <ClientTypeChooser
         studioName={studioName}
         onChoose={setClientType}
       />
+      </WithProgress>
     );
   }
 
@@ -756,6 +798,7 @@ export function PublicBookForm({
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-8">
+      {progress && <BookingProgress progress={progress} />}
       {/* Small client-type bar so the visitor can see (and undo)
           their choice. Plain underlined Change link rather than a
           full segmented control so it does not compete with the
@@ -1131,11 +1174,45 @@ export function PublicBookForm({
         >
           {submitting ? "Booking…" : "Book appointment"}
         </button>
-        {error && (
-          <span className="text-[13px] text-red-600">{error}</span>
-        )}
+        {/* MOUNTED AT ALL TIMES; only the text changes, so the refusal is
+            announced (a live region inserted already holding its message is
+            not reliably read). HON-124 item 19. */}
+        <span role="alert" data-testid="booking-error" className="text-[13px] text-red-600">
+          {error ?? ""}
+        </span>
       </div>
     </form>
+  );
+}
+
+// HON-124 item 8. "Step n of 3" above the current step. Plain text, so it is
+// read as part of the page rather than announced on every change; the label is
+// the step's own name. Same eyebrow type the form's section captions use.
+function BookingProgress({ progress }: { progress: PublicBookingProgress }) {
+  return (
+    <p
+      data-testid="booking-progress"
+      className="text-[12px] font-medium uppercase"
+      style={{ letterSpacing: "0.2em", color: "#6B6B6B" }}
+    >
+      {`Step ${progress.step} of ${progress.total}: ${progress.label}`}
+    </p>
+  );
+}
+
+function WithProgress({
+  progress,
+  children,
+}: {
+  progress: PublicBookingProgress | null;
+  children: React.ReactNode;
+}) {
+  if (!progress) return <>{children}</>;
+  return (
+    <div className="flex flex-col gap-6">
+      <BookingProgress progress={progress} />
+      {children}
+    </div>
   );
 }
 
