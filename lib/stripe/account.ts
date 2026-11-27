@@ -120,7 +120,11 @@ export async function createOrLoadConnectedAccountForStudio(
 
   // We own the claim. Call Stripe.accounts.create with the RPC-supplied
   // idempotency key so retries collapse on Stripe's side.
-  let account: Stripe.Account;
+  // HON-90 (Codex P2): the connected account's id is persisted (the claim completed) as soon as Stripe has created it, BEFORE any follow-up read.
+  // For a US studio the v1 view is fetched only after the binding exists, so a failed read there can never leave a created account unbound (which
+  // would let a retry mint a SECOND account).
+  let accountId: string;
+  let account: Stripe.Account | null = null;
   try {
     if (country === "CA") {
       // Canada: the legacy v1 Express creation, unchanged and pinned byte-for-byte.
@@ -128,12 +132,13 @@ export async function createOrLoadConnectedAccountForStudio(
         connectedAccountCreateParams("CA", studioId),
         { idempotencyKey: claim.out_idempotency_key ?? undefined },
       );
+      accountId = account.id;
     } else {
       // US (HON-90 Option A): Accounts v2, then the v1 view of the same account, which is what the rest of Hone reads and records.
       const created = await stripe.v2.core.accounts.create(usAccountCreateParams(studioId), {
         idempotencyKey: claim.out_idempotency_key ?? undefined,
       });
-      account = await stripe.accounts.retrieve(created.id);
+      accountId = created.id;
     }
   } catch (err) {
     logInternalStripeError("stripe_accounts_create_failed", {
@@ -155,7 +160,7 @@ export async function createOrLoadConnectedAccountForStudio(
     {
       p_attempt_id: claim.attempt_id,
       p_claim_token: claim.out_processing_claim_token,
-      p_stripe_account_id: account.id,
+      p_stripe_account_id: accountId,
       p_stripe_livemode: livemode,
     },
   );
@@ -163,7 +168,7 @@ export async function createOrLoadConnectedAccountForStudio(
     logInternalStripeError("complete_provisioning_failed", {
       code: dbErrorCode(completeErr),
       studioId,
-      stripeAccountId: account.id,
+      stripeAccountId: accountId,
     });
     // Stripe account exists on Stripe's side; the local binding failed
     // to install. Surface a clear error; the next call will see the
@@ -179,7 +184,16 @@ export async function createOrLoadConnectedAccountForStudio(
   // a reply that stored nothing) is reported as unconfirmed rather than thrown: the eligibility verdict and the
   // 0214 charge guard already refuse an unconfirmed non-CA account.
   let accountCountryConfirmed = false;
+  if (account === null) {
+    // US: the binding is saved; now read the v1 view. A failure here is reported as unconfirmed (like a failed record), never thrown or rolled back.
+    try {
+      account = await stripe.accounts.retrieve(accountId);
+    } catch (readErr) {
+      logInternalStripeError("us_account_retrieve_after_create_failed", { studioId, stripeAccountId: accountId, errorClass: thrownErrorClass(readErr) });
+    }
+  }
   try {
+    if (account === null) throw new Error("account_view_unavailable");
     const recorded = await recordAccountJurisdiction(admin, {
       studioId,
       stripeAccountId: account.id,
@@ -190,13 +204,13 @@ export async function createOrLoadConnectedAccountForStudio(
   } catch (recordErr) {
     logInternalStripeError("record_account_jurisdiction_after_create_failed", {
       studioId,
-      stripeAccountId: account.id,
+      stripeAccountId: accountId,
       errorClass: thrownErrorClass(recordErr),
     });
   }
 
   return {
-    stripeAccountId: account.id,
+    stripeAccountId: accountId,
     livemode,
     alreadyProvisioned: false,
     accountCountryConfirmed,

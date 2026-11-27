@@ -23,6 +23,8 @@ const h = vi.hoisted(() => ({
   stamp: { data: { payment_country: "US" }, error: null } as { data: unknown; error: unknown },
   createCalls: [] as Array<Record<string, unknown>>,
   v2Calls: [] as Array<Record<string, unknown>>,
+  retrieveThrows: false,
+  order: [] as string[],
   v2Options: [] as Array<Record<string, unknown>>,
   createdAccount: { id: "acct_new", country: "US", default_currency: "usd" } as Record<string, unknown>,
   retrieved: {
@@ -55,7 +57,11 @@ vi.mock("@/lib/stripe/server", () => ({
         return h.createdAccount;
       },
       // The v1 view of a just-created account is the created Account; any other id is the status-refresh account.
-      retrieve: async (id: string) => (id === h.createdAccount.id ? h.createdAccount : h.retrieved),
+      retrieve: async (id: string) => {
+        h.order.push("retrieve");
+        if (h.retrieveThrows && id === h.createdAccount.id) throw new Error("read timed out");
+        return id === h.createdAccount.id ? h.createdAccount : h.retrieved;
+      },
     },
     v2: { core: { accounts: { create: async (params: Record<string, unknown>, options: Record<string, unknown>) => { h.v2Calls.push(params); h.v2Options.push(options); return { id: h.createdAccount.id }; } } } },
   }),
@@ -82,6 +88,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
     rpc: async (name: string, args: Record<string, unknown>) => {
       h.rpcCalls.push({ name, args });
+      h.order.push(name);
       if (name === "create_or_claim_stripe_account_provisioning") {
         return { data: [h.claim], error: null };
       }
@@ -121,6 +128,8 @@ beforeEach(() => {
   h.createCalls = [];
   h.v2Calls = [];
   h.v2Options = [];
+  h.retrieveThrows = false;
+  h.order = [];
   h.createdAccount = { id: "acct_new", country: "US", default_currency: "usd" };
   h.retrieved = {
     id: "acct_bound",
@@ -295,5 +304,36 @@ describe("P1-B: a refresh records the retrieved account's country", () => {
     const snapshot = await refresh();
     expect(snapshot.chargesEnabled).toBe(true);
     expect(rpcNames()).toContain("record_stripe_account_jurisdiction");
+  });
+});
+
+describe("HON-90 (Codex P2): a created US account is bound BEFORE the follow-up read", () => {
+  it("create succeeds, the v1 retrieve throws: the account id is already persisted, nothing is marked failed, and the retry creates NO second account", async () => {
+    h.retrieveThrows = true;
+    const first = await createOrLoadConnectedAccountForStudio(STUDIO);
+    expect(first).toMatchObject({ stripeAccountId: "acct_new", alreadyProvisioned: false, accountCountryConfirmed: false });
+    expect(h.v2Calls).toHaveLength(1);
+    // persisted (claim completed with the created id), and BEFORE the read was attempted
+    expect(rpcCall("complete_stripe_account_provisioning")?.args).toMatchObject({ p_stripe_account_id: "acct_new" });
+    expect(h.order.indexOf("complete_stripe_account_provisioning")).toBeGreaterThan(-1);
+    expect(h.order.indexOf("complete_stripe_account_provisioning")).toBeLessThan(h.order.indexOf("retrieve"));
+    expect(rpcNames()).not.toContain("mark_stripe_account_provisioning_failed");
+    // the retry: the binding exists, so the claim says already provisioned with that SAME account, and Stripe is not asked to create again
+    h.claim = { ...OWN_CLAIM, already_provisioned: true, out_stripe_account_id: "acct_new", should_execute_stripe_call: false };
+    const retry = await createOrLoadConnectedAccountForStudio(STUDIO);
+    expect(retry).toMatchObject({ stripeAccountId: "acct_new", alreadyProvisioned: true });
+    expect(h.v2Calls, "no second create call").toHaveLength(1);
+  });
+
+  it("CONTROL: a create that itself fails IS marked failed and binds nothing", async () => {
+    h.createdAccount = { id: "acct_new", country: "US", default_currency: "usd" };
+    const original = h.v2Calls;
+    h.rpc = { ...h.rpc };
+    // a v2 create refusal is simulated by a claim whose stamp is unreadable (no Stripe call is made at all)
+    h.stamp = { data: null, error: null };
+    await expect(createOrLoadConnectedAccountForStudio(STUDIO)).rejects.toThrow();
+    expect(rpcNames()).toContain("mark_stripe_account_provisioning_failed");
+    expect(rpcNames()).not.toContain("complete_stripe_account_provisioning");
+    expect(h.v2Calls).toBe(original);
   });
 });
