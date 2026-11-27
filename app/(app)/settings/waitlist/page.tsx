@@ -101,6 +101,7 @@ import { cookies } from "next/headers";
 import { LIFECYCLE_NOTICE_COOKIE, lifecycleNoticeCopy } from "@/lib/waitlist/lifecycle-notice";
 import { dbErrorCode } from "@/lib/logging/error-class";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
+import { PendingButton } from "@/components/pending-button";
 /**
  * The most rows ONE Data API statement returns (supabase/config.toml `max_rows = 1000`; hosted is not assumed to be any higher). The studio-wide
  * expiry summary asks for exactly this many and trusts them only when the EXACT count PostgREST reports (Content-Range, which the ceiling does
@@ -1549,15 +1550,11 @@ export default async function WaitlistSettingsPage({
                               return (
                                 <form key={action} action={formAction}>
                                   <input type="hidden" name="entry_id" value={row.id} />
-                                  <button
-                                    type="submit"
+                                  <PendingButton
                                     data-testid={`waitlist-action-${action}`}
-                                    className={
-                                      // On an expired offer, returning them is THE next step (Sam: a clear route to another offer).
-                                      action === "requeue" && row.status === "expired"
-                                        ? "min-h-[44px] w-full rounded-md border border-neutral-900 bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300 sm:w-auto"
-                                        : "min-h-[44px] w-full rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900 sm:w-auto"
-                                    }
+                                    fullWidth
+                                    // On an expired offer, returning them is THE next step (Sam: a clear route to another offer).
+                                    variant={action === "requeue" && row.status === "expired" ? "primary" : "secondary"}
                                   >
                                     {/* THE ROW DECIDES THE VERB, AND IT MAY ONLY
                                         PROMISE WHAT THE COMMAND DELIVERS.
@@ -1568,7 +1565,7 @@ export default async function WaitlistSettingsPage({
                                         entry in Released and only requeue
                                         reaches Waiting. */}
                                     {actionLabel(action, row.status)}
-                                  </button>
+                                  </PendingButton>
                                   {/* The consequence, where the verb alone does
                                       not carry it. Beside the control, not in a
                                       tooltip: a tooltip is unreachable by touch. */}
@@ -1628,12 +1625,9 @@ export default async function WaitlistSettingsPage({
                                 Take {row.name} off the waitlist? This cannot be
                                 undone from here.{declineAnswersOn && " Removing also erases any answers they gave."}
                               </p>
-                              <button
-                                type="submit"
-                                className="min-h-[44px] rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/30"
-                              >
+                              <PendingButton variant="danger" busyLabel="Removing…">
                                 Confirm removal
-                              </button>
+                              </PendingButton>
                             </form>
                           </details>
                           )}
