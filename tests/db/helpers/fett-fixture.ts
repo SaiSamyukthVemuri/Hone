@@ -1,0 +1,507 @@
+import { randomBytes, randomUUID } from "node:crypto";
+import {
+  adminQuery,
+  purgeAppointmentAudit,
+  type SeededStudio,
+} from "./harness";
+
+// ===========================================================================
+// FETT REHEARSAL FIXTURE — synthetic multi-practitioner LA studio (#824)
+// ===========================================================================
+//
+// A Fett-SHAPED synthetic studio for the Friday 2026-10-16 rehearsal: owner
+// plus five treating practitioners, America/Los_Angeles, electrolysis
+// services. Built on the local-only DB harness (tests/db/helpers/harness.ts —
+// localhost-pinned; never production, never a real tenant).
+//
+// This is a PARALLEL helper. It does not import from, extend, or modify
+// tests/db/helpers/synth-fleet.ts, whose SynthStudio.label is the closed union
+// "A" | "B" | "C" — a Fett studio cannot join that fleet without editing
+// shared code, and #825 is frozen at its checkpoint. Teardown deliberately
+// mirrors dropSynthStudio's appointment_audit discipline rather than reusing
+// it (see dropFettStudio).
+//
+// WHAT IS ACTUALLY SEEDED (accurate claims only, all verified against the
+// 0210 chain):
+//   * studios row with timezone EXPLICITLY 'America/Los_Angeles'. The column
+//     default is 'America/Toronto' (0010_booking_v1.sql:20), so a fixture that
+//     omits it silently rehearses the wrong timezone — the one thing an LA
+//     studio demo must not get wrong.
+//   * owner + five treating practitioners, all role 'practitioner' except the
+//     owner. Recognizably synthetic: names prefixed "SYNTH-FETT", emails
+//     "<slug>@synth.local". Run-unique randomUUID ids, so the fixture is
+//     parallel-safe and recreatable; it is NOT stable across runs.
+//   * two services — an electrolysis consultation and an electrolysis
+//     treatment — with explicit durations inside services_duration_check
+//     (5..480, 0010_booking_v1.sql:158).
+//   * studio-wide weekly availability, open the given local hours on the
+//     requested days (default Mon–Fri 09:00–17:00). Capacity-ON studios with
+//     no availability rows read as CLOSED, so the rehearsal needs real rows.
+//   * the PRACTITIONER-CAPACITY STATE, defaulting to LIVE. This is load-bearing
+//     and easy to miss. 0134/0136 model concurrency with TWO studio flags whose
+//     three valid states are:
+//         LEGACY                        capacity=false booking=false
+//         CAPACITY_READY_BOOKING_PAUSED capacity=true  booking=false
+//         LIVE                          capacity=true  booking=true
+//     (capacity=false + booking=true is rejected by the CHECK at 0136:52.)
+//     BOTH DEFAULT FALSE, so a studio seeded without them is LEGACY — ONE
+//     studio-wide resource. Five practitioners in a LEGACY studio therefore
+//     CANNOT hold parallel appointments, which is precisely what a Fett demo
+//     must show. The fixture defaults to "live" because Fett's premise is 5+
+//     practitioners; pass capacity: "legacy" to rehearse today's default
+//     studio instead.
+//
+// WHAT THIS FIXTURE CANNOT SEED ON THE 0210 CHAIN — named, not papered over.
+// Each is a real gap in the Friday demo surface, owned by another lane:
+//
+//   1. RESTRICTED RECEPTIONIST — absent on this chain, and absent as a
+//      SEPARATE TABLE rather than as a practitioners role. Corrected after the
+//      RBAC lane (ops01) pointed out that an earlier version of this fixture
+//      probed the wrong thing:
+//
+//        * a receptionist is a row in `public.studio_receptionists`
+//          (0216:47), created through `add_studio_receptionist` (0216:407);
+//        * `practitioners.role` stays `check (role in ('owner','practitioner'))`
+//          across 0216, 0218 AND 0220 — BY DESIGN. That unchanged CHECK is
+//          exactly what makes a receptionist "denied by construction" as a
+//          treating practitioner. It is NOT a sign that receptionists are
+//          unsupported;
+//        * 0218's three-valued `check (role in ('owner','practitioner',
+//          'receptionist'))` is on `pending_invitations` (0218:55) — the
+//          INVITATION role, not the practitioner role.
+//
+//      So the capability is detected from the TABLE and the COMMAND, never
+//      from `practitioners.role`. Probing the role would answer "false"
+//      forever and hide the real design. The limb stays OPTIONAL so the
+//      rehearsal never gates on #838/#850/#852.
+//   2. USD / payment jurisdiction — currency on this chain defaults to
+//      'cad' (0073_payment_charge_attempts.sql:113,
+//      0187_appointment_settlement.sql:126, 0064_manual_fee_protection.sql:141)
+//      and services.price_cents carries NO currency column at all. This
+//      fixture sets no price and makes NO USD claim. Owned by the
+//      Audit/USD lane (#833 0214 and its stack), unmerged.
+//   3. Machine / device catalogue and machine-first selection — #829's
+//      contract is unverified and Fett's actual inventory is unknown. Nothing
+//      here seeds devices.
+//
+// Do NOT describe the Fett rehearsal as covering receptionist access, USD
+// flows, or machine-first selection on the strength of this fixture.
+// ===========================================================================
+
+const FETT_EMAIL_DOMAIN = "@synth.local";
+const FETT_TIMEZONE = "America/Los_Angeles";
+
+/** Mon–Fri. day_of_week is 0=Sunday .. 6=Saturday. */
+const WEEKDAYS = [1, 2, 3, 4, 5] as const;
+
+export type FettPractitioner = {
+  userId: string;
+  practitionerId: string;
+  /** 'owner' for the studio owner, 'practitioner' for the five treating staff. */
+  role: "owner" | "practitioner";
+  email: string;
+  displayName: string;
+};
+
+/** A front-desk membership, seeded ONLY when the chain carries the
+ *  receptionist surface. `null` on the 0210 chain — see note 1 in the header.
+ *
+ *  It has NO `practitionerId`, because a receptionist is not a practitioner.
+ *  That is the whole point of the separate table. */
+export type FettReceptionist = {
+  userId: string;
+  /** The `studio_receptionists` row id returned by the command. */
+  receptionistId: string;
+  email: string;
+  displayName: string;
+  /** Only one path exists, and it is the real authority command. There is
+   *  deliberately no hand-built-row fallback: inserting a practitioners row
+   *  with role 'receptionist' would contradict the design AND fail the CHECK. */
+  via: "add_studio_receptionist";
+};
+
+/** What the CHAIN UNDER TEST supports — probed, never assumed.
+ *
+ *  Both signals come from the receptionist's own surface. `practitioners.role`
+ *  is deliberately NOT consulted: it stays two-valued on every chain, which is
+ *  the design, not a capability answer. */
+export type FettCapabilities = {
+  /** `public.studio_receptionists` exists (0216:47). */
+  receptionistTable: boolean;
+  /** `public.add_studio_receptionist(uuid,uuid,uuid,text,text)` exists (0216:407). */
+  receptionistCommand: boolean;
+  /** The chain can represent a front-desk membership: BOTH of the above. */
+  receptionist: boolean;
+};
+
+/** The three valid practitioner-capacity states (0134/0136). */
+export type FettCapacityState = "legacy" | "ready" | "live";
+
+export type FettStudio = SeededStudio & {
+  name: string;
+  ownerEmail: string;
+  timezone: string;
+  /** Owner first, then the five treating practitioners. */
+  practitioners: FettPractitioner[];
+  /** The five treating practitioners, owner excluded. */
+  treating: FettPractitioner[];
+  services: { consultationId: string; treatmentId: string };
+  receptionist: FettReceptionist | null;
+  capabilities: FettCapabilities;
+  /** Which of the three 0134/0136 states the studio was left in. */
+  capacityState: FettCapacityState;
+};
+
+/** Probe the live schema for the receptionist surface. Read-only; safe to call
+ *  before seeding.
+ *
+ *  Asks about `studio_receptionists` and `add_studio_receptionist`. It does NOT
+ *  ask whether `practitioners.role` admits 'receptionist' — that is false on
+ *  every chain by design (see note 1), so a probe built on it would report "no
+ *  receptionist support" even on a chain that fully supports them. */
+export async function detectFettCapabilities(): Promise<FettCapabilities> {
+  const tbl = await adminQuery(
+    `select to_regclass('public.studio_receptionists') is not null as present`,
+  );
+  const receptionistTable = tbl.rows[0].present === true;
+  const cmd = await adminQuery(
+    `select count(*)::text as n
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = 'add_studio_receptionist'`,
+  );
+  const receptionistCommand = cmd.rows[0].n !== "0";
+  return {
+    receptionistTable,
+    receptionistCommand,
+    receptionist: receptionistTable && receptionistCommand,
+  };
+}
+
+async function seedAuthUser(email: string): Promise<string> {
+  const userId = randomUUID();
+  await adminQuery(`insert into auth.users (id, email) values ($1, $2)`, [
+    userId,
+    email,
+  ]);
+  return userId;
+}
+
+function fettEmail(slug: string): string {
+  return `synth-fett-${slug}-${randomUUID().slice(0, 8)}${FETT_EMAIL_DOMAIN}`;
+}
+
+async function seedFettPractitioner(
+  studioId: string,
+  role: "owner" | "practitioner",
+  slug: string,
+  displayName: string,
+): Promise<FettPractitioner> {
+  const email = fettEmail(slug);
+  const userId = await seedAuthUser(email);
+  const practitionerId = randomUUID();
+  await adminQuery(
+    `insert into public.practitioners
+       (id, studio_id, user_id, display_name, email, role, active)
+     values ($1, $2, $3, $4, $5, $6, true)`,
+    [practitionerId, studioId, userId, displayName, email, role],
+  );
+  return { userId, practitionerId, role, email, displayName };
+}
+
+export type SeedFettOptions = {
+  /** Treating practitioners, owner excluded. Fett's enquiry says 5+. */
+  treatingCount?: number;
+  /** Local opening time for the seeded weekly availability. */
+  open?: string;
+  /** Local closing time. */
+  close?: string;
+  /** day_of_week values to open (0=Sun..6=Sat). Default Mon–Fri. */
+  days?: readonly number[];
+  /** Attempt the receptionist limb when the chain supports it. Default true;
+   *  it is a NO-OP returning receptionist: null on an unsupporting chain. */
+  withReceptionist?: boolean;
+  /** Practitioner-capacity state. Default "live" — see the header. "legacy"
+   *  leaves both flags false, i.e. one studio-wide resource. */
+  capacity?: FettCapacityState;
+};
+
+/**
+ * Seed the Fett rehearsal studio. Returns the seeded ids plus the probed
+ * capabilities of the chain it ran against.
+ *
+ * `receptionist` is `null` whenever the chain cannot represent one — that is
+ * the expected result on the 0210 production chain and is NOT a failure.
+ * Assert on `capabilities` to branch a test, never on a hard-coded migration
+ * number.
+ */
+export async function seedFettStudio(
+  opts: SeedFettOptions = {},
+): Promise<FettStudio> {
+  const {
+    treatingCount = 5,
+    open = "09:00",
+    close = "17:00",
+    days = WEEKDAYS,
+    withReceptionist = true,
+    capacity = "live",
+  } = opts;
+
+  const studioId = randomUUID();
+  const name = `SYNTH-FETT Derm LA ${randomUUID().slice(0, 6)}`;
+  const ownerEmail = fettEmail("owner");
+
+  // studios.timezone default is 'America/Toronto' — set LA explicitly.
+  await adminQuery(
+    `insert into public.studios (id, name, owner_email, timezone)
+     values ($1, $2, $3, $4)`,
+    [studioId, name, ownerEmail, FETT_TIMEZONE],
+  );
+
+  const ownerUserId = await seedAuthUser(ownerEmail);
+  const ownerPractitionerId = randomUUID();
+  await adminQuery(
+    `insert into public.practitioners
+       (id, studio_id, user_id, display_name, email, role, active)
+     values ($1, $2, $3, $4, $5, 'owner', true)`,
+    [ownerPractitionerId, studioId, ownerUserId, "SYNTH-FETT owner", ownerEmail],
+  );
+  const owner: FettPractitioner = {
+    userId: ownerUserId,
+    practitionerId: ownerPractitionerId,
+    role: "owner",
+    email: ownerEmail,
+    displayName: "SYNTH-FETT owner",
+  };
+
+  const treating: FettPractitioner[] = [];
+  for (let i = 1; i <= treatingCount; i += 1) {
+    treating.push(
+      await seedFettPractitioner(
+        studioId,
+        "practitioner",
+        `electrologist-${i}`,
+        `SYNTH-FETT electrologist ${i}`,
+      ),
+    );
+  }
+
+  // Electrolysis services. Durations sit inside services_duration_check
+  // (5..480). No price: currency is not modelled for USD on this chain.
+  const consultationId = randomUUID();
+  const treatmentId = randomUUID();
+  await adminQuery(
+    `insert into public.services
+       (id, studio_id, name, default_duration_minutes, active)
+     values ($1, $2, 'SYNTH-FETT electrolysis consultation', 30, true),
+            ($3, $2, 'SYNTH-FETT electrolysis treatment', 60, true)`,
+    [consultationId, studioId, treatmentId],
+  );
+
+  await seedFettAvailability(studioId, { open, close, days });
+
+  // Both flags default FALSE (LEGACY = one studio-wide resource), so this is
+  // what makes five practitioners genuinely schedulable in parallel.
+  await setFettCapacityState(studioId, capacity);
+
+  const capabilities = await detectFettCapabilities();
+  const receptionist = withReceptionist
+    ? await seedFettReceptionist(
+        { studioId, practitionerId: ownerPractitionerId },
+        capabilities,
+      )
+    : null;
+
+  // One synthetic client so boundary/intake tests have a target row.
+  const clientId = randomUUID();
+  await adminQuery(
+    `insert into public.clients (id, studio_id, name) values ($1, $2, $3)`,
+    [clientId, studioId, "SYNTH-FETT client"],
+  );
+
+  return {
+    studioId,
+    userId: ownerUserId,
+    practitionerId: ownerPractitionerId,
+    clientId,
+    name,
+    ownerEmail,
+    timezone: FETT_TIMEZONE,
+    practitioners: [owner, ...treating],
+    treating,
+    services: { consultationId, treatmentId },
+    receptionist,
+    capabilities,
+    capacityState: capacity,
+  };
+}
+
+/**
+ * Put the studio into one of the three valid practitioner-capacity states.
+ *
+ * Ordering matters: `capacity=false + booking=true` is rejected by the CHECK
+ * at `0136:52`, so the two columns are always written in ONE statement rather
+ * than sequentially — a two-step update would transiently violate it.
+ */
+export async function setFettCapacityState(
+  studioId: string,
+  state: FettCapacityState,
+): Promise<void> {
+  const capacity = state !== "legacy";
+  const booking = state === "live";
+  await adminQuery(
+    `update public.studios
+        set practitioner_capacity_enabled = $2,
+            practitioner_capacity_booking_enabled = $3
+      where id = $1`,
+    [studioId, capacity, booking],
+  );
+}
+
+/** Studio-wide (practitioner_id NULL) weekly availability for the given days. */
+export async function seedFettAvailability(
+  studioId: string,
+  opts: { open?: string; close?: string; days?: readonly number[] } = {},
+): Promise<void> {
+  const { open = "09:00", close = "17:00", days = WEEKDAYS } = opts;
+  for (const dow of days) {
+    await adminQuery(
+      `insert into public.studio_availability_default
+         (id, studio_id, practitioner_id, day_of_week, is_open, open_time, close_time)
+       values (gen_random_uuid(), $1, null, $2, true, $3, $4)
+       on conflict on constraint studio_availability_default_scope_key
+       do update set is_open = true,
+                     open_time = excluded.open_time,
+                     close_time = excluded.close_time`,
+      [studioId, dow, open, close],
+    );
+  }
+}
+
+/**
+ * The OPTIONAL front-desk limb. Returns `null` when the chain does not carry
+ * the receptionist surface — the expected result on the 0210 production chain,
+ * and NOT a failure.
+ *
+ * Goes through `add_studio_receptionist`, the real authority command, with its
+ * actual signature `(p_studio_id, p_owner_practitioner_id, p_user_id,
+ * p_display_name, p_email)` — five arguments, and it needs an EXISTING auth
+ * user plus the acting OWNER's practitioner id, so the auth user is seeded
+ * first. There is deliberately no hand-built-row fallback.
+ */
+export async function seedFettReceptionist(
+  fett: Pick<FettStudio, "studioId" | "practitionerId">,
+  capabilities?: FettCapabilities,
+): Promise<FettReceptionist | null> {
+  const caps = capabilities ?? (await detectFettCapabilities());
+  if (!caps.receptionist) return null;
+
+  const email = fettEmail("receptionist");
+  const displayName = "SYNTH-FETT receptionist";
+  const userId = await seedAuthUser(email);
+  const r = await adminQuery(
+    `select public.add_studio_receptionist($1, $2, $3, $4, $5) as id`,
+    [fett.studioId, fett.practitionerId, userId, displayName, email],
+  );
+  const receptionistId = r.rows[0]?.id;
+  if (!receptionistId) {
+    // The command exists but declined. Leave no orphan auth user behind.
+    await adminQuery(`delete from auth.users where id = $1`, [userId]);
+    return null;
+  }
+  return {
+    userId,
+    receptionistId,
+    email,
+    displayName,
+    via: "add_studio_receptionist",
+  };
+}
+
+/**
+ * A demo slot the rehearsal can rely on: **next Wednesday 10:00 in the
+ * studio's own timezone**.
+ *
+ * Deliberately computed in SQL rather than JS, so it is the DATABASE's idea of
+ * the studio's local time. `date_trunc('week', ...)` lands on Monday, so +9
+ * days is the following Wednesday — always inside the fixture's default Mon–Fri
+ * window, and far enough out to clear any booking-notice floor.
+ */
+export const FETT_DEMO_SLOT_SQL =
+  "((date_trunc('week', (now() at time zone 'America/Los_Angeles'))" +
+  " + interval '9 days 10 hours') at time zone 'America/Los_Angeles')";
+
+/** What `create_internal_appointment_v2` returns. */
+export type FettInternalBooking = {
+  result: string;
+  appointment_id: string | null;
+  /** node-postgres returns timestamptz as a Date, not a string — compare
+   *  instants (getTime()), never object identity. */
+  starts_at: Date | null;
+  ends_at: Date | null;
+};
+
+/**
+ * Book through the REAL practitioner-facing command, not a raw INSERT.
+ *
+ * `public.create_internal_appointment_v2` is the current internal booking
+ * command on the 0210 chain (0142 → 0146 → 0147 → 0152; only the `_v2` name
+ * exists at runtime) and it DOES take a target practitioner —
+ * `p_target_practitioner_id`. So practitioner-aware, genuinely concurrent
+ * scheduling is available today on the STAFF-facing path; what lacks
+ * practitioner selection is the PUBLIC surface (`create_public_appointment`,
+ * see the header of tests/db/public-practitioner-booking-gap.db.test.ts).
+ *
+ * Using this instead of an INSERT means a booking proof exercises the real
+ * availability validator, duration authority and buffer rules, not just the
+ * exclusion constraint.
+ *
+ * The cancellation token hash must match `^[a-f0-9]{64}$`
+ * (0090_appointment_token_hash.sql:89), so it is generated here; a readable
+ * placeholder is rejected by the CHECK.
+ */
+export async function bookFettInternal(
+  fett: FettStudio,
+  targetPractitionerId: string,
+  opts: { startsAtSql?: string; serviceId?: string; clientId?: string } = {},
+): Promise<FettInternalBooking> {
+  const startsAtSql = opts.startsAtSql ?? FETT_DEMO_SLOT_SQL;
+  const serviceId = opts.serviceId ?? fett.services.treatmentId;
+  const clientId = opts.clientId ?? fett.clientId;
+  const r = await adminQuery(
+    `select * from public.create_internal_appointment_v2(
+       $1, $2, $3, $4, $5, ${startsAtSql}, $6, null, null, false)`,
+    [
+      fett.studioId,
+      // The owner acts; the TARGET is whichever practitioner is being booked.
+      fett.practitionerId,
+      targetPractitionerId,
+      clientId,
+      serviceId,
+      randomBytes(32).toString("hex"),
+    ],
+  );
+  return r.rows[0] as FettInternalBooking;
+}
+
+/**
+ * Teardown by id. Never truncates.
+ *
+ * appointment_audit.studio_id is ON DELETE RESTRICT (0174), and 0174 leaves no
+ * runtime path that can remove the trail — so a studio that has ever had an
+ * appointment audited cannot be deleted until the owner-only harness fixture
+ * purges it. Same discipline as dropSynthStudio, duplicated deliberately so
+ * this helper stays independent of the frozen synth fleet.
+ */
+export async function dropFettStudio(studio: FettStudio): Promise<void> {
+  await purgeAppointmentAudit(studio.studioId);
+  await adminQuery(`delete from public.studios where id = $1`, [
+    studio.studioId,
+  ]);
+  const users = [
+    ...studio.practitioners.map((p) => p.userId),
+    ...(studio.receptionist ? [studio.receptionist.userId] : []),
+  ].filter((id) => id.length > 0);
+  for (const userId of users) {
+    await adminQuery(`delete from auth.users where id = $1`, [userId]);
+  }
+}

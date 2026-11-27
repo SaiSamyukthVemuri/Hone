@@ -1,0 +1,436 @@
+import { afterAll, describe, expect, it } from "vitest";
+import {
+  adminQuery,
+  closePool,
+  seedHistoricalAppointmentAudit,
+} from "./helpers/harness";
+import {
+  bookFettInternal,
+  detectFettCapabilities,
+  dropFettStudio,
+  seedFettReceptionist,
+  seedFettStudio,
+  setFettCapacityState,
+} from "./helpers/fett-fixture";
+
+// Proves the Fett rehearsal fixture (#824) instead of asserting it:
+//  (1) the LA timezone is REAL, not the 'America/Toronto' column default;
+//  (2) owner + five treating practitioners, with the owner excluded from
+//      `treating` (the count the rehearsal script depends on);
+//  (3) the receptionist limb is genuinely OPTIONAL — it returns null on this
+//      chain WITHOUT throwing, so the rehearsal cannot be gated by #838/#850;
+//  (4) the capability probe is NOT VACUOUS — a false answer is derived from a
+//      real constraint, not from a query that matched nothing;
+//  (5) teardown leaves zero residue even AFTER an appointment_audit row makes
+//      studios deletion RESTRICT-blocked, with a control proving the purge is
+//      load-bearing rather than decorative.
+// db-integration lane, real migrated schema.
+
+afterAll(async () => {
+  await closePool();
+});
+
+async function count(sql: string, params: unknown[]): Promise<number> {
+  const r = await adminQuery(sql, params);
+  return Number(r.rows[0].n);
+}
+
+describe("Fett rehearsal fixture — shape", () => {
+  it("seeds an LA studio with owner + five treating practitioners", async () => {
+    const fett = await seedFettStudio();
+    try {
+      // (1) The load-bearing timezone assertion. The studios.timezone DEFAULT
+      // is 'America/Toronto' (0010_booking_v1.sql:20), so this would pass
+      // vacuously if the fixture simply omitted the column — assert the value
+      // AND that it is not the default.
+      const tz = await adminQuery(
+        `select timezone from public.studios where id = $1`,
+        [fett.studioId],
+      );
+      expect(tz.rows[0].timezone).toBe("America/Los_Angeles");
+      expect(tz.rows[0].timezone).not.toBe("America/Toronto");
+
+      // (2) Six practitioner rows: one owner, five treating.
+      expect(
+        await count(
+          `select count(*) n from public.practitioners where studio_id = $1`,
+          [fett.studioId],
+        ),
+      ).toBe(6);
+      expect(
+        await count(
+          `select count(*) n from public.practitioners
+            where studio_id = $1 and role = 'owner'`,
+          [fett.studioId],
+        ),
+      ).toBe(1);
+      expect(
+        await count(
+          `select count(*) n from public.practitioners
+            where studio_id = $1 and role = 'practitioner'`,
+          [fett.studioId],
+        ),
+      ).toBe(5);
+      // The owner must NOT appear in `treating` — a rehearsal booking "any
+      // available practitioner" would otherwise double-count the owner.
+      expect(fett.treating).toHaveLength(5);
+      expect(fett.treating.map((p) => p.practitionerId)).not.toContain(
+        fett.practitionerId,
+      );
+      expect(fett.practitioners).toHaveLength(6);
+
+      // Recognizably synthetic — nothing shares an identifier space with a
+      // real tenant.
+      expect(fett.name.startsWith("SYNTH-FETT")).toBe(true);
+      for (const p of fett.practitioners) {
+        expect(p.email.endsWith("@synth.local")).toBe(true);
+      }
+
+      // Two electrolysis services, durations inside services_duration_check.
+      const svc = await adminQuery(
+        `select count(*)::text n,
+                min(default_duration_minutes)::text min,
+                max(default_duration_minutes)::text max
+           from public.services where studio_id = $1 and active`,
+        [fett.studioId],
+      );
+      expect(svc.rows[0].n).toBe("2");
+      expect(Number(svc.rows[0].min)).toBeGreaterThanOrEqual(5);
+      expect(Number(svc.rows[0].max)).toBeLessThanOrEqual(480);
+
+      // Mon-Fri studio-wide availability (practitioner_id NULL).
+      expect(
+        await count(
+          `select count(*) n from public.studio_availability_default
+            where studio_id = $1 and practitioner_id is null and is_open`,
+          [fett.studioId],
+        ),
+      ).toBe(5);
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+
+  it("honours treatingCount so the fixture is not pinned to five", async () => {
+    const fett = await seedFettStudio({ treatingCount: 2, days: [1] });
+    try {
+      expect(fett.treating).toHaveLength(2);
+      expect(
+        await count(
+          `select count(*) n from public.practitioners where studio_id = $1`,
+          [fett.studioId],
+        ),
+      ).toBe(3);
+      expect(
+        await count(
+          `select count(*) n from public.studio_availability_default
+            where studio_id = $1 and is_open`,
+          [fett.studioId],
+        ),
+      ).toBe(1);
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+});
+
+describe("Fett rehearsal fixture — the front-desk limb is optional", () => {
+  it("practitioners.role stays two-valued, and that is NOT a capability signal", async () => {
+    // Encoded as a test because an earlier version of this fixture probed
+    // exactly this constraint and drew the wrong conclusion from it. The RBAC
+    // lane corrected it: a receptionist is a row in `studio_receptionists`
+    // (0216:47), and `practitioners.role` stays
+    // `check (role in ('owner','practitioner'))` across 0216, 0218 AND 0220
+    // BY DESIGN — that unchanged CHECK is what makes a receptionist "denied by
+    // construction" as a treating practitioner. It is not evidence that
+    // receptionists are unsupported.
+    const role = await adminQuery(
+      `select pg_get_constraintdef(c.oid) as def
+         from pg_constraint c
+         join pg_class t on t.oid = c.conrelid
+         join pg_namespace n on n.oid = t.relnamespace
+        where n.nspname = 'public'
+          and t.relname = 'practitioners'
+          and c.contype = 'c'
+          and pg_get_constraintdef(c.oid) ilike '%role%'`,
+    );
+    // Non-vacuous: the constraint must really exist and really enumerate the
+    // two live roles, or "excludes receptionist" would be meaningless.
+    expect(role.rows.length).toBeGreaterThanOrEqual(1);
+    const defs = role.rows.map((r: { def: string }) => r.def.toLowerCase()).join(" | ");
+    expect(defs).toContain("owner");
+    expect(defs).toContain("practitioner");
+    expect(defs).not.toContain("receptionist");
+
+    // And the probe must NOT be reading it. Whatever the role CHECK says, the
+    // capability answer comes from the receptionist's own surface.
+    const caps = await detectFettCapabilities();
+    expect(Object.keys(caps).sort()).toEqual([
+      "receptionist",
+      "receptionistCommand",
+      "receptionistTable",
+    ]);
+  });
+
+  it("the probe agrees with the real schema, so it is correct on ANY chain", async () => {
+    // Chain-adaptive on the RIGHT signal. On the 0210 production chain both
+    // halves are absent; on a chain carrying 0216 both are present. The test
+    // asserts AGREEMENT rather than a hard-coded answer, so it does not go red
+    // merely because the receptionist work landed.
+    const tbl = await adminQuery(
+      `select to_regclass('public.studio_receptionists') is not null as present`,
+    );
+    const cmd = await adminQuery(
+      `select count(*)::text as n
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = 'add_studio_receptionist'`,
+    );
+    const caps = await detectFettCapabilities();
+    expect(caps.receptionistTable).toBe(tbl.rows[0].present === true);
+    expect(caps.receptionistCommand).toBe(cmd.rows[0].n !== "0");
+    expect(caps.receptionist).toBe(
+      caps.receptionistTable && caps.receptionistCommand,
+    );
+
+    // The pg_proc shape must be able to find a function that DOES exist here,
+    // or "command absent" could be a broken query rather than a real absence.
+    const known = await adminQuery(
+      `select count(*)::text as n
+         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.proname = 'create_public_appointment'`,
+    );
+    expect(known.rows[0].n).not.toBe("0");
+  });
+
+  it("seeds a front-desk membership when the surface exists, null when it does not", async () => {
+    // The rehearsal must never die because #838/#850/#852 are unmerged.
+    const fett = await seedFettStudio();
+    try {
+      if (!fett.capabilities.receptionist) {
+        expect(fett.receptionist).toBeNull();
+        // A no-op, not a throw — and it writes nothing.
+        await expect(
+          seedFettReceptionist({
+            studioId: fett.studioId,
+            practitionerId: fett.practitionerId,
+          }),
+        ).resolves.toBeNull();
+        expect(
+          await count(
+            `select count(*) n from public.practitioners where studio_id = $1`,
+            [fett.studioId],
+          ),
+        ).toBe(6);
+      } else {
+        // On a chain carrying 0216 the limb composes through the real command.
+        expect(fett.receptionist).not.toBeNull();
+        expect(fett.receptionist!.via).toBe("add_studio_receptionist");
+        expect(
+          await count(
+            `select count(*) n from public.studio_receptionists
+              where studio_id = $1 and id = $2`,
+            [fett.studioId, fett.receptionist!.receptionistId],
+          ),
+        ).toBe(1);
+        // Denied by construction: it must NOT have become a practitioner.
+        expect(
+          await count(
+            `select count(*) n from public.practitioners where studio_id = $1`,
+            [fett.studioId],
+          ),
+        ).toBe(6);
+      }
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+});
+
+describe("Fett rehearsal fixture — practitioner capacity is the demo-critical bit", () => {
+  // Both 0134/0136 flags default FALSE, so a studio seeded without them is
+  // LEGACY: ONE studio-wide resource. Five practitioners in that studio cannot
+  // hold parallel appointments — exactly what a Fett demo must show.
+  //
+  // These book through the REAL practitioner-facing command
+  // (create_internal_appointment_v2), not a raw INSERT, so they exercise the
+  // availability validator, duration authority and buffer rules too — and they
+  // demonstrate the same path the rehearsal will drive.
+
+  it("defaults to LIVE, and two practitioners are booked at the SAME instant", async () => {
+    const fett = await seedFettStudio({ treatingCount: 2 });
+    try {
+      expect(fett.capacityState).toBe("live");
+      const flags = await adminQuery(
+        `select practitioner_capacity_enabled c, practitioner_capacity_booking_enabled b
+           from public.studios where id = $1`,
+        [fett.studioId],
+      );
+      expect(flags.rows[0].c).toBe(true);
+      expect(flags.rows[0].b).toBe(true);
+
+      const a = await bookFettInternal(fett, fett.treating[0].practitionerId);
+      const b = await bookFettInternal(fett, fett.treating[1].practitionerId);
+      expect(a.result).toBe("created");
+      expect(b.result).toBe("created");
+      // The SAME instant, for two DIFFERENT practitioners. This is the demo.
+      // pg returns timestamptz as a Date, so compare the INSTANT: toBe would
+      // fail on object identity for two equal timestamps.
+      expect(a.starts_at).toBeInstanceOf(Date);
+      expect(b.starts_at!.getTime()).toBe(a.starts_at!.getTime());
+      expect(a.appointment_id).not.toBe(b.appointment_id);
+
+      const n = await adminQuery(
+        `select count(*)::text n, count(distinct practitioner_id)::text p
+           from public.appointments where studio_id = $1`,
+        [fett.studioId],
+      );
+      expect(n.rows[0].n).toBe("2");
+      expect(n.rows[0].p).toBe("2");
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+
+  it("LEGACY is one studio-wide resource: the second booking is REFUSED", async () => {
+    // THE CONTROL. Without it the LIVE case could be passing on a schema that
+    // never enforced a studio-wide exclusion, and the fixture's default would
+    // prove nothing. Measured refusal: the exclusion constraint
+    // `no_overlapping_appointments_studio_wide`.
+    const fett = await seedFettStudio({ treatingCount: 2, capacity: "legacy" });
+    try {
+      expect(fett.capacityState).toBe("legacy");
+      const first = await bookFettInternal(fett, fett.treating[0].practitionerId);
+      expect(first.result).toBe("created");
+      await expect(
+        bookFettInternal(fett, fett.treating[1].practitionerId),
+      ).rejects.toThrow(/no_overlapping_appointments_studio_wide/);
+      expect(
+        await count(
+          `select count(*) n from public.appointments where studio_id = $1`,
+          [fett.studioId],
+        ),
+      ).toBe(1);
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+
+  it("rejects the invalid state capacity=false + booking=true (0136:52 CHECK)", async () => {
+    const fett = await seedFettStudio({ treatingCount: 1, days: [1] });
+    try {
+      await expect(
+        adminQuery(
+          `update public.studios
+              set practitioner_capacity_enabled = false,
+                  practitioner_capacity_booking_enabled = true
+            where id = $1`,
+          [fett.studioId],
+        ),
+      ).rejects.toThrow();
+      // And the helper never produces that state for any of its three inputs.
+      for (const s of ["legacy", "ready", "live"] as const) {
+        await setFettCapacityState(fett.studioId, s);
+      }
+    } finally {
+      await dropFettStudio(fett);
+    }
+  });
+});
+
+describe("Fett rehearsal fixture — teardown", () => {
+  it("leaves zero residue even when appointment_audit blocks studio deletion", async () => {
+    // (5) appointment_audit.studio_id is ON DELETE RESTRICT (0174) with no
+    // runtime path to remove the trail, so a naive teardown fails exactly
+    // once a rehearsal has booked anything. Force that state, then prove the
+    // teardown still clears it.
+    const fett = await seedFettStudio({ treatingCount: 1, days: [1] });
+    const userIds = fett.practitioners.map((p) => p.userId);
+
+    const client = await adminQuery(
+      `select id from public.clients where studio_id = $1 limit 1`,
+      [fett.studioId],
+    );
+    const apptId = (
+      await adminQuery(
+        `insert into public.appointments
+           (studio_id, practitioner_id, client_id, service_id,
+            starts_at, ends_at, duration_minutes, status)
+         values ($1, $2, $3, $4,
+                 now() + interval '10 days', now() + interval '10 days 1 hour',
+                 60, 'confirmed')
+         returning id`,
+        [
+          fett.studioId,
+          fett.practitionerId,
+          client.rows[0].id,
+          fett.services.treatmentId,
+        ],
+      )
+    ).rows[0].id;
+    expect(apptId).toBeTruthy();
+
+    // A raw appointments INSERT writes NO audit row — the trail is written by
+    // the command functions (0170:906, 0133:126, 0146:323, ...), not by a
+    // trigger on the table. Measured: without this step the RESTRICT state
+    // below never arises and the test proves nothing. Seed it through the
+    // harness fixture that exists for exactly this.
+    await seedHistoricalAppointmentAudit({
+      appointmentId: apptId,
+      actorType: "practitioner",
+      actorId: fett.practitionerId,
+      action: "created",
+      createdAtSql: "now()",
+      studioId: fett.studioId,
+    });
+
+    // Ground truth: an audit trail now exists.
+    expect(
+      await count(
+        `select count(*) n from public.appointment_audit where studio_id = $1`,
+        [fett.studioId],
+      ),
+    ).toBeGreaterThan(0);
+
+    // THE CONTROL that makes this test load-bearing. If a bare studios delete
+    // succeeded here, dropFettStudio's purge would be decorative and deleting
+    // it from the helper would not fail anything. Prove the RESTRICT bites.
+    await expect(
+      adminQuery(`delete from public.studios where id = $1`, [fett.studioId]),
+    ).rejects.toThrow();
+    expect(
+      await count(`select count(*) n from public.studios where id = $1`, [
+        fett.studioId,
+      ]),
+    ).toBe(1);
+
+    await dropFettStudio(fett);
+
+    expect(
+      await count(`select count(*) n from public.studios where id = $1`, [
+        fett.studioId,
+      ]),
+    ).toBe(0);
+    expect(
+      await count(
+        `select count(*) n from public.practitioners where studio_id = $1`,
+        [fett.studioId],
+      ),
+    ).toBe(0);
+    expect(
+      await count(`select count(*) n from public.clients where studio_id = $1`, [
+        fett.studioId,
+      ]),
+    ).toBe(0);
+    expect(
+      await count(
+        `select count(*) n from public.appointment_audit where studio_id = $1`,
+        [fett.studioId],
+      ),
+    ).toBe(0);
+    for (const userId of userIds) {
+      expect(
+        await count(`select count(*) n from auth.users where id = $1`, [userId]),
+      ).toBe(0);
+    }
+  });
+});
