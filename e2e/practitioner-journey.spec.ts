@@ -265,9 +265,11 @@ test.describe("C. removal and revocation", () => {
     await inviteViaTeamPage(ownerPage, SECOND_INVITEE, `Journey Late ${run}`);
     await ownerPage.goto("/settings/team");
     await ownerPage.locator("li", { hasText: SECOND_INVITEE.toLowerCase() }).getByRole("button", { name: "Revoke" }).click();
+    await ownerPage.getByTestId("confirm-dialog-confirm").click();
     await expect.poll(async () => (await sql<{ status: string }>("select status from public.pending_invitations where studio_id=$1 and lower(email)=lower($2)", [seed.studioId, SECOND_INVITEE]))[0]?.status, { timeout: T }).toBe("revoked");
     await ownerPage.goto("/settings/team");
     await ownerPage.locator("li", { hasText: INVITEE_EMAIL.toLowerCase() }).getByRole("button", { name: "Remove" }).click();
+    await ownerPage.getByTestId("confirm-dialog-confirm").click();
     await expect.poll(async () => (await practitionerByEmail(seed.studioId, INVITEE_EMAIL))?.active, { timeout: T }).toBe(false);
   });
 

@@ -21,13 +21,16 @@
 // pointing at AppMain's `<main id="main-content">`. The tokens it uses are
 // global `@theme` colours, not marketing-scoped, so it renders the same there.
 //
+// IT NEVER PRINTS (print:hidden): sr-only text is still in the printed document, so without it a statement or
+// record print carries a stray "Skip to main content" link (caught by e2e/print-layout.spec.ts).
+//
 // A PLAIN <a>, NOT next/link: the target is already on the page, so a router
 // navigation is the wrong primitive and would not move focus.
 export function SkipLink() {
   return (
     <a
       href="#main-content"
-      className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:rounded-[8px] focus:bg-ink focus:px-4 focus:py-2 focus:text-[0.9375rem] focus:font-semibold focus:text-paper focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
+      className="sr-only print:hidden focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:rounded-[8px] focus:bg-ink focus:px-4 focus:py-2 focus:text-[0.9375rem] focus:font-semibold focus:text-paper focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]"
     >
       Skip to main content
     </a>
