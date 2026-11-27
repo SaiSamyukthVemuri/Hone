@@ -218,7 +218,7 @@ beforeEach(() => {
       stripe_payment_method_id: "pm_test",
       card_authorization_signature_id: "sig-1",
     },
-    studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false },
+    studio_payment_settings: { stripe_account_status: "enabled", stripe_charges_enabled: true, stripe_account_id: "acct_test", stripe_livemode: false },
     // Explicit verified synthetic configuration; no runtime country default.
     studio_payment_jurisdictions: { payment_country: "CA", payment_currency: "cad" },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
@@ -549,5 +549,31 @@ describe("a thrown decline that carries a live PaymentIntent binds the intent id
     expect(r).toMatchObject({ ok: false, outcome: "needs_manual_review", stripePaymentIntentId: PI.id });
     expect(h.updates).toContainEqual({ stripe_payment_intent_id: PI.id, stripe_status: "requires_payment_method" });
     expect(wroteFailed()).toBe(false);
+  });
+});
+
+// HON-90. Hone decides whether a studio may be charged, whatever the provider would allow. A sandbox US account that was NOT onboarded
+// accepted a real charge when the executor was run on an attempt prepared earlier; live Stripe refuses it itself, Hone must too.
+describe("HON-90: the charge executor refuses a studio whose account is not ready, before any Stripe request", () => {
+  const NOT_READY: Array<[string, Record<string, unknown>]> = [
+    ["restricted", { stripe_account_status: "restricted", stripe_charges_enabled: false }],
+    ["pending", { stripe_account_status: "pending", stripe_charges_enabled: false }],
+    ["status enabled but charges_enabled false", { stripe_account_status: "enabled", stripe_charges_enabled: false }],
+    ["charges_enabled true but status not enabled", { stripe_account_status: "restricted", stripe_charges_enabled: true }],
+    ["no snapshot fields at all", {}],
+  ];
+  for (const [name, patch] of NOT_READY) {
+    it(`${name}: no PaymentIntent create, and the attempt is not charged`, async () => {
+      h.rows.studio_payment_settings = { stripe_account_id: "acct_test", stripe_livemode: false, ...patch };
+      h.createReply = { id: "pi_x", status: "succeeded" } as never; // Stripe WOULD accept it
+      const r = await run();
+      expect(h.createKeys, "Stripe was never asked to charge").toEqual([]);
+      expect(r).toMatchObject({ ok: false });
+    });
+  }
+  it("CONTROL (not vacuous): the same studio with an enabled account with charges enabled does reach Stripe", async () => {
+    h.createReply = { id: "pi_x", status: "succeeded", amount: 22500, currency: "cad", latest_charge: "ch_x" } as never;
+    await run();
+    expect(h.createKeys.length).toBe(1);
   });
 });

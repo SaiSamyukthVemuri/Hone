@@ -251,6 +251,8 @@ beforeEach(() => {
         HEALTHY_ATTEMPT.card_authorization_signature_id,
     },
     studio_payment_settings: {
+      stripe_account_status: "enabled",
+      stripe_charges_enabled: true,
       stripe_account_id: HEALTHY_ATTEMPT.stripe_account_id,
       stripe_livemode: false,
     },

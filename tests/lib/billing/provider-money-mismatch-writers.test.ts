@@ -320,7 +320,7 @@ function seedLineage(currency: "cad" | "usd") {
       stripe_payment_method_id: "pm_test",
       card_authorization_signature_id: "sig-1",
     },
-    studio_payment_settings: { stripe_account_id: "acct_test", stripe_livemode: false, stripe_account_country: currency === "usd" ? "US" : "CA", stripe_account_country_conflict: null },
+    studio_payment_settings: { stripe_account_status: "enabled", stripe_charges_enabled: true, stripe_account_id: "acct_test", stripe_livemode: false, stripe_account_country: currency === "usd" ? "US" : "CA", stripe_account_country_conflict: null },
     studio_payment_jurisdictions: { payment_country: currency === "usd" ? "US" : "CA", payment_currency: currency },
     client_stripe_customers: { stripe_customer_id: "cus_test" },
     practitioners: { role: "owner" },

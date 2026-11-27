@@ -385,13 +385,19 @@ async function loadCardAndVerifyLineage(args: {
     // stripe_livemode !== livemode belt below stays as defense-in-depth).
     const { data: settings } = await admin
       .from("studio_payment_settings")
-      .select("stripe_account_id, stripe_livemode")
+      .select("stripe_account_id, stripe_livemode, stripe_account_status, stripe_charges_enabled")
       .eq("studio_id", args.studioId)
       .eq("stripe_livemode", livemode)
       .maybeSingle();
     if (!settings) {
       reasons.push("Studio payment settings are missing.");
     } else {
+      // HON-90. HONE decides whether a studio may be charged, whatever the provider would allow (a sandbox account that is not onboarded
+      // still accepted a charge; live Stripe would refuse it itself). The prepare-time check (eligibility) can be stale by charge time, so
+      // the stored snapshot must STILL show an enabled account with charges enabled, right before any Stripe call.
+      if (settings.stripe_account_status !== "enabled" || settings.stripe_charges_enabled !== true) {
+        reasons.push("The studio's Stripe account is not ready to take charges.");
+      }
       if (settings.stripe_account_id !== card.stripe_account_id) {
         reasons.push(
           "Studio is now connected to a different Stripe account.",
