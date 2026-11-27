@@ -212,7 +212,8 @@ describe("payment_refunds", () => {
     expect(a.amount_cents).toBe(22500);
     expect(await refundable(a.id, null)).toBe(22500);
 
-    await refund(s, { attemptId: a.id }, 4000);
+    // One refund is in flight per card payment at a time (0393 one-pending index): this one settles before the next is asked for.
+    await refund(s, { attemptId: a.id }, 4000, { status: "succeeded" });
     expect(await refundable(a.id, null)).toBe(18500);
     // More than is left: refused by the database.
     await expect(refund(s, { attemptId: a.id }, 18501)).rejects.toThrow(/more than the 18500 cents still refundable/);

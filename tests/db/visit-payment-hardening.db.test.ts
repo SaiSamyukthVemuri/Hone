@@ -123,9 +123,11 @@ describe("F3 a replayed webhook cannot fail on a new-flow refund", () => {
     const s = await visit();
     await ensure(s);
     const a = await cardRow(s, 10000);
+    // One refund is in flight per card payment (0393): each settles before the next is requested.
     const r1 = await refund(s, { attempt: a }, 6000);
+    await adminQuery(`select * from public.finish_payment_refund($1,'succeeded',$2,'succeeded',null,null,null)`, [r1.refund_id, `re_test_${tok()}`]);
     const r2 = await refund(s, { attempt: a }, 4000);
-    for (const r of [r1, r2]) await adminQuery(`select * from public.finish_payment_refund($1,'succeeded',$2,'succeeded',null,null,null)`, [r.refund_id, `re_test_${tok()}`]);
+    await adminQuery(`select * from public.finish_payment_refund($1,'succeeded',$2,'succeeded',null,null,null)`, [r2.refund_id, `re_test_${tok()}`]);
     // What reconcile_bound_payment_event writes to the attempt when charge.refunded arrives (and again on a replay).
     for (let i = 0; i < 2; i++) {
       await adminQuery(

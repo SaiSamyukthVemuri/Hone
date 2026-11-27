@@ -89,7 +89,7 @@ describe("owner-written free text on money records stays private", () => {
 
   it("the free-text columns stay out of the CSV export until the field review says otherwise", () => {
     const reg = read("lib/export/resource-registry.ts");
-    for (const t of ["visit_bills", "visit_external_payments", "payment_refunds"]) {
+    for (const t of ["visit_bills", "visit_external_payments", "payment_refunds", "payment_refund_reviews"]) {
       const at = reg.indexOf(`${t}: {`);
       expect(at, t).toBeGreaterThan(-1);
       expect(reg.slice(at, at + 900), t).toMatch(/NOT included in this CSV export yet/);

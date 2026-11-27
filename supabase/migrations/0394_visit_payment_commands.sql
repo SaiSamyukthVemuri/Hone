@@ -83,12 +83,13 @@ create unique index payment_charge_attempts_active_session_payment_uniq
 -- ---------------------------------------------------------------------------
 create function public.visit_payment_position(p_studio uuid, p_appointment uuid)
 returns table (bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
-               card_cents integer, refunded_cents integer, outstanding_cents integer)
+               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean)
 language sql stable security definer set search_path = pg_catalog, pg_temp
 as $$
   select b.id, b.currency, b.total_cents,
          x.confirmed, x.pending, c.card, r.refunded,
-         greatest(0, b.total_cents - x.confirmed - x.pending - c.card + r.refunded)
+         greatest(0, b.total_cents - x.confirmed - x.pending - c.card + r.refunded),
+         exists (select 1 from public.payment_refund_reviews v where v.studio_id = p_studio and v.appointment_id = p_appointment and v.resolved_at is null)
     from public.visit_bills b
     cross join lateral (
       select coalesce(sum(e.amount_cents) filter (where e.state = 'confirmed'), 0)::integer as confirmed,
@@ -100,12 +101,16 @@ as $$
         from public.payment_charge_attempts a
        where a.studio_id = p_studio and a.appointment_id = p_appointment and a.charge_reason = 'session_payment'
          and a.visit_bill_id is not null and a.status in ('ready', 'pending_stripe', 'succeeded')) c
+    -- Money returned: payment_refund_money (0393), the one definition, for every settled payment of the visit.
     cross join lateral (
-      select coalesce(sum(f.amount_cents), 0)::integer as refunded
-        from public.payment_refunds f
-       where f.studio_id = p_studio and f.appointment_id = p_appointment and f.status = 'succeeded'
-         and (f.external_payment_id is not null
-              or exists (select 1 from public.payment_charge_attempts a2 where a2.id = f.attempt_id and a2.visit_bill_id is not null))) r
+      select coalesce(sum(m.succeeded_cents), 0)::integer as refunded
+        from (select a2.id as aid, null::uuid as eid from public.payment_charge_attempts a2
+               where a2.studio_id = p_studio and a2.appointment_id = p_appointment and a2.charge_reason = 'session_payment'
+                 and a2.visit_bill_id is not null and a2.status = 'succeeded'
+              union all
+              select null::uuid, e2.id from public.visit_external_payments e2
+               where e2.studio_id = p_studio and e2.appointment_id = p_appointment and e2.state = 'confirmed') pay
+        cross join lateral public.payment_refund_money(pay.aid, pay.eid) m) r
    where b.studio_id = p_studio and b.appointment_id = p_appointment and b.superseded_at is null;
 $$;
 revoke all privileges on function public.visit_payment_position(uuid, uuid) from public, anon, authenticated, service_role;
@@ -472,6 +477,9 @@ begin
   if not found or v_appt is distinct from p_appointment_id then
     return query select 'payment_not_refundable'::text, null::uuid, null::text, null::uuid; return;
   end if;
+  if p_attempt_id is not null and exists (select 1 from public.payment_refund_reviews v where v.attempt_id = p_attempt_id and v.resolved_at is null) then
+    return query select 'review_open'::text, null::uuid, null::text, null::uuid; return;
+  end if;
   v_refundable := public.payment_refundable_cents(p_attempt_id, p_external_payment_id);
   if v_refundable is null or p_amount_cents > v_refundable then
     return query select 'exceeds_refundable'::text, null::uuid, null::text, null::uuid; return;
@@ -538,10 +546,185 @@ begin
 end;
 $$;
 
+-- The Stripe refund id, written once when Stripe has accepted the request (before the outcome is known), so a retry retrieves it instead of creating again.
+create function public.record_refund_sent(p_refund_id uuid, p_stripe_refund_id text)
+returns table (result text, refund_id uuid)
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_appt uuid;
+  r public.payment_refunds%rowtype;
+begin
+  if p_refund_id is null or p_stripe_refund_id is null or p_stripe_refund_id !~ '^re_[A-Za-z0-9]{1,64}$' then
+    return query select 'invalid_input'::text, null::uuid; return;
+  end if;
+  select x.appointment_id into v_appt from public.payment_refunds x where x.id = p_refund_id and x.attempt_id is not null and not x.legacy;
+  if not found then return query select 'not_found'::text, null::uuid; return; end if;
+  perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(v_appt));
+  select * into r from public.payment_refunds x where x.id = p_refund_id for update;
+  if r.stripe_refund_id is not null then
+    return query select case when r.stripe_refund_id = p_stripe_refund_id then 'already_recorded' else 'conflict' end, r.id; return;
+  end if;
+  if r.status <> 'pending_stripe' then return query select 'already_settled'::text, r.id; return; end if;
+  update public.payment_refunds set stripe_refund_id = p_stripe_refund_id where id = r.id;
+  return query select 'recorded'::text, r.id;
+end;
+$$;
+
+-- A refund Stripe reports on a BILLED card payment that Hone did not make. The service role calls it from the webhook with raw closed values; the
+-- known/unknown decision is made HERE, under the visit lock, never in the caller. Writes NOTHING for a legacy visit ('not_billed'), for the non-row reasons
+-- ('billed'), for an attempt that is already fully refunded ('covered') or for a refund that failed/was canceled ('ignored').
+-- KNOWN (not flagged) only if (a) the ledger or the attempt already holds this Stripe refund id, or (c) the strict locator names a PENDING Hone row of this
+-- attempt with the same amount and currency. An equal amount alone never makes a refund known.
+create function public.flag_payment_refund_review(
+  p_attempt_id uuid, p_stripe_refund_id text, p_stripe_refund_status text, p_amount_cents integer, p_currency text,
+  p_event_id text, p_event_created bigint, p_reason_code text, p_hone_refund_id text
+) returns table (result text, review_id uuid)
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
+as $$
+declare
+  a public.payment_charge_attempts%rowtype;
+  v_appt uuid;
+  v_review public.payment_refund_reviews%rowtype;
+  v_hone uuid;
+  v_id uuid;
+begin
+  if p_attempt_id is null or p_reason_code is null
+     or p_reason_code not in ('partial_dashboard_refund', 'unknown_4xx_on_create', 'stuck_pending_24h', 'list_incomplete', 'refund_evidence_refused') then
+    return query select 'invalid_input'::text, null::uuid; return;
+  end if;
+  select x.appointment_id into v_appt from public.payment_charge_attempts x where x.id = p_attempt_id and x.visit_bill_id is not null;
+  if not found then
+    -- no such attempt, or a legacy visit: the existing application path and its alert are unchanged
+    return query select case when exists (select 1 from public.payment_charge_attempts x where x.id = p_attempt_id) then 'not_billed' else 'unknown_payment' end::text, null::uuid;
+    return;
+  end if;
+  if v_appt is null then return query select 'unknown_payment'::text, null::uuid; return; end if;
+  perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(v_appt));
+  select * into a from public.payment_charge_attempts x where x.id = p_attempt_id for update;
+  if p_reason_code in ('list_incomplete', 'refund_evidence_refused') then
+    return query select 'billed'::text, null::uuid; return;           -- the caller raises the operator alert; nothing is stored, nothing is frozen
+  end if;
+  if p_stripe_refund_id is null or p_stripe_refund_id !~ '^re_[A-Za-z0-9]{1,64}$'
+     or p_stripe_refund_status is null or p_stripe_refund_status not in ('pending', 'requires_action', 'succeeded', 'failed', 'canceled')
+     or p_amount_cents is null or p_amount_cents not between 1 and 200000 or p_currency is null or p_currency not in ('cad', 'usd')
+     or p_event_id is null or p_event_id !~ '^evt_[A-Za-z0-9]{1,64}$' or p_event_created is null or p_event_created < 0 then
+    return query select 'invalid_input'::text, null::uuid; return;
+  end if;
+  if a.status <> 'succeeded' or a.currency is distinct from p_currency or p_amount_cents > a.amount_cents then
+    return query select 'unknown_payment'::text, null::uuid; return;
+  end if;
+  select * into v_review from public.payment_refund_reviews v where v.stripe_refund_id = p_stripe_refund_id;
+  if found then
+    if v_review.attempt_id is distinct from a.id then return query select 'unknown_payment'::text, null::uuid; return; end if;
+    if v_review.resolved_at is null and p_event_created >= v_review.stripe_event_created then
+      update public.payment_refund_reviews
+         set stripe_refund_status = p_stripe_refund_status, stripe_event_id = p_event_id, stripe_event_created = p_event_created,
+             resolved_at = case when p_stripe_refund_status in ('failed', 'canceled') then now() end,
+             closed_code = case p_stripe_refund_status when 'failed' then 'auto_failed' when 'canceled' then 'auto_canceled' end
+       where id = v_review.id;
+      if p_stripe_refund_status in ('failed', 'canceled') then
+        return query select 'auto_closed'::text, v_review.id; return;
+      end if;
+    end if;
+    return query select 'already_flagged'::text, v_review.id; return;
+  end if;
+  if p_stripe_refund_status in ('failed', 'canceled') then
+    return query select 'ignored'::text, null::uuid; return;
+  end if;
+  if a.refund_status = 'succeeded' then
+    return query select 'covered'::text, null::uuid; return;           -- the whole payment is already back; nothing to acknowledge
+  end if;
+  if exists (select 1 from public.payment_refunds r where r.stripe_refund_id = p_stripe_refund_id) or a.stripe_refund_id = p_stripe_refund_id then
+    return query select 'known'::text, null::uuid; return;
+  end if;
+  if p_hone_refund_id is not null and p_hone_refund_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    v_hone := p_hone_refund_id::uuid;
+    if exists (select 1 from public.payment_refunds r where r.id = v_hone and r.attempt_id = a.id and r.studio_id = a.studio_id and not r.legacy
+                  and r.status = 'pending_stripe' and r.amount_cents = p_amount_cents and r.currency = p_currency) then
+      return query select 'known'::text, null::uuid; return;
+    end if;
+  end if;
+  insert into public.payment_refund_reviews (studio_id, attempt_id, appointment_id, stripe_refund_id, stripe_refund_status, amount_cents, currency,
+                                             stripe_event_id, stripe_event_created, reason_code)
+  values (a.studio_id, a.id, a.appointment_id, p_stripe_refund_id, p_stripe_refund_status, p_amount_cents, p_currency, p_event_id, p_event_created, p_reason_code)
+  returning id into v_id;
+  -- OPERATOR-ONLY alert (studio NULL: no practitioner policy can read it). Fixed event, fixed message, closed keys; no studio, client or visit.
+  insert into public.ops_alerts (severity, event, message, studio_id, route, safe_details)
+  values ('critical', 'payment_refund_review_opened', 'A refund was made outside Hone on a split-payment card payment and needs review.', null, '/api/stripe/webhook',
+          jsonb_build_object('review_id', v_id, 'attempt_id', a.id, 'stripe_refund_id', p_stripe_refund_id, 'amount_cents', p_amount_cents,
+                             'currency', p_currency, 'reason_code', p_reason_code));
+  return query select 'flagged'::text, v_id;
+end;
+$$;
+
+-- The owner acknowledges a SETTLED dashboard refund. No amount is passed: the signed amount Stripe reported is already on the review.
+-- Single use, closed codes only. A refund still pending with Hone is never failed to make room.
+create function public.resolve_payment_refund_review(p_review_id uuid)
+returns table (result text)
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v public.payment_refund_reviews%rowtype;
+  a public.payment_charge_attempts%rowtype;
+  m record;
+  actor uuid;
+begin
+  select * into v from public.payment_refund_reviews x where x.id = p_review_id;
+  if not found or not public.is_studio_owner(v.studio_id) then
+    return query select 'not_found'::text; return;                    -- a missing review and a stranger look the same
+  end if;
+  actor := public.session_actor_practitioner(v.studio_id);
+  perform pg_advisory_xact_lock(public.appointment_settlement_lock_key(v.appointment_id));
+  select * into v from public.payment_refund_reviews x where x.id = p_review_id for update;
+  if v.resolved_at is not null then return query select 'already_resolved'::text; return; end if;
+  select * into a from public.payment_charge_attempts x where x.id = v.attempt_id for update;
+  if a.refund_status = 'succeeded' or exists (select 1 from public.payment_refunds r where r.stripe_refund_id = v.stripe_refund_id) then
+    update public.payment_refund_reviews set resolved_at = now(), closed_code = 'auto_recorded' where id = v.id;
+    return query select 'already_covered'::text; return;
+  end if;
+  if v.stripe_refund_status <> 'succeeded' then return query select 'not_settled'::text; return; end if;
+  if a.refund_status = 'pending_stripe' or exists (select 1 from public.payment_refunds r where r.attempt_id = a.id and not r.legacy and r.status = 'pending_stripe') then
+    return query select 'refund_pending'::text; return;
+  end if;
+  select * into m from public.payment_refund_money(a.id, null);
+  if m.succeeded_cents + m.reserved_cents + v.amount_cents > m.payment_cents then
+    return query select 'over_capacity'::text; return;                -- left open for support
+  end if;
+  insert into public.payment_refunds (studio_id, appointment_id, attempt_id, amount_cents, currency, kind, reason, status,
+                                      stripe_refund_id, stripe_refund_status, stripe_refund_event_created, stripe_refund_event_id,
+                                      source, requested_by_practitioner_id)
+  values (v.studio_id, v.appointment_id, v.attempt_id, v.amount_cents, v.currency, 'payment_reversal', 'Refunded in the Stripe dashboard', 'succeeded',
+          v.stripe_refund_id, 'succeeded', v.stripe_event_created, v.stripe_event_id, 'stripe_dashboard', actor);
+  update public.payment_refund_reviews set resolved_at = now(), resolved_by_practitioner_id = actor, closed_code = 'acknowledged' where id = v.id;
+  return query select 'resolved'::text;
+end;
+$$;
+
+-- The batch read for the money readers: the position of up to 200 visits of ONE studio, owner only, with review_open.
+create function public.get_visit_payment_positions(p_studio_id uuid, p_appointment_ids uuid[])
+returns table (appointment_id uuid, bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
+               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean)
+language plpgsql stable security definer set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if not public.is_studio_owner(p_studio_id) then
+    return;
+  end if;
+  if p_appointment_ids is null or cardinality(p_appointment_ids) > 200 then
+    raise exception 'get_visit_payment_positions: at most 200 visits per call' using errcode = '22023';
+  end if;
+  return query select u.id, p.bill_id, p.currency, p.total_cents, p.confirmed_cents, p.pending_cents, p.card_cents, p.refunded_cents,
+                      p.outstanding_cents, p.review_open
+                 from unnest(p_appointment_ids) as u(id)
+                 cross join lateral public.visit_payment_position(p_studio_id, u.id) p;
+end;
+$$;
+
 -- The one read the screens use. The studio's OWNER only, as the tables themselves (0393).
 create function public.get_visit_payment_position(p_studio_id uuid, p_appointment_id uuid)
 returns table (bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
-               card_cents integer, refunded_cents integer, outstanding_cents integer)
+               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean)
 language plpgsql stable security definer set search_path = pg_catalog, pg_temp
 as $$
 begin
@@ -611,6 +794,18 @@ grant execute on function public.request_payment_refund(uuid, uuid, uuid, uuid, 
 grant execute on function public.get_visit_payment_position(uuid, uuid) to authenticated;
 grant execute on function public.cancel_split_card_attempt(uuid, uuid, text) to authenticated;
 grant execute on function public.finish_payment_refund(uuid, text, text, text, text, text, integer) to service_role;
+revoke all privileges on function public.record_refund_sent(uuid, text) from public, anon, authenticated, service_role;
+revoke all privileges on function public.flag_payment_refund_review(uuid, text, text, integer, text, text, bigint, text, text) from public, anon, authenticated, service_role;
+revoke all privileges on function public.resolve_payment_refund_review(uuid) from public, anon, authenticated, service_role;
+revoke all privileges on function public.get_visit_payment_positions(uuid, uuid[]) from public, anon, authenticated, service_role;
+grant execute on function public.record_refund_sent(uuid, text) to service_role;
+grant execute on function public.flag_payment_refund_review(uuid, text, text, integer, text, text, bigint, text, text) to service_role;
+grant execute on function public.resolve_payment_refund_review(uuid) to authenticated;
+grant execute on function public.get_visit_payment_positions(uuid, uuid[]) to authenticated;
+comment on function public.record_refund_sent(uuid, text) is '0394. Service role: stores the Stripe refund id once, before the outcome is known.';
+comment on function public.flag_payment_refund_review(uuid, text, text, integer, text, text, bigint, text, text) is '0394. Service role: opens a review for a refund Stripe reports that Hone did not make. Closed fields only; the known/unknown decision is made under the visit lock.';
+comment on function public.resolve_payment_refund_review(uuid) is '0394. Owner only: acknowledges a settled dashboard refund (no amount argument) and records it in the ledger once.';
+comment on function public.get_visit_payment_positions(uuid, uuid[]) is '0394. Owner only: the position of up to 200 visits, with review_open.';
 
 comment on function public.visit_payment_position(uuid, uuid) is '0394. The one definition of how much of a billed visit is still collectable. Internal.';
 comment on function public.visit_payment_refusal(uuid, uuid, integer) is '0394. Why a tender of this amount is refused (reserved_for_pending_transfer, exceeds_balance, no_bill) or null. Internal.';
@@ -635,6 +830,10 @@ begin
     'public.request_payment_refund(uuid,uuid,uuid,uuid,integer,text,text,uuid)',
     'public.get_visit_payment_position(uuid,uuid)',
     'public.finish_payment_refund(uuid,text,text,text,text,text,integer)',
+    'public.record_refund_sent(uuid,text)',
+    'public.flag_payment_refund_review(uuid,text,text,integer,text,text,bigint,text,text)',
+    'public.resolve_payment_refund_review(uuid)',
+    'public.get_visit_payment_positions(uuid,uuid[])',
     'public.visit_payment_position(uuid,uuid)',
     'public.visit_payment_refusal(uuid,uuid,integer)',
     'public.visit_bill_supersede(uuid,uuid,integer,text,uuid)',
@@ -645,6 +844,9 @@ begin
   end loop;
   if has_function_privilege('authenticated', 'public.finish_payment_refund(uuid,text,text,text,text,text,integer)', 'execute')
      or has_function_privilege('authenticated', 'public.visit_payment_position(uuid,uuid)', 'execute')
+     or has_function_privilege('authenticated', 'public.flag_payment_refund_review(uuid,text,text,integer,text,text,bigint,text,text)', 'execute')
+     or has_function_privilege('authenticated', 'public.record_refund_sent(uuid,text)', 'execute')
+     or has_function_privilege('service_role', 'public.resolve_payment_refund_review(uuid)', 'execute')
      or has_function_privilege('service_role', 'public.ensure_visit_bill(uuid,uuid,integer,text,boolean)', 'execute') then
     raise exception '0394: a command is executable by a role it was not granted to' using errcode = '55000';
   end if;

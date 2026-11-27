@@ -1428,6 +1428,14 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Cash, e-transfer and other transfer payments recorded against a visit (migration 0393), including transfers still pending confirmation and voided ones. Customer-owned financial truth with a free-text note. NOT included in this CSV export yet: field review first (the note field, and pending and voided rows).",
   },
+  payment_refund_reviews: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "A refund Stripe reports on a card payment that Hone did not make (migration 0393): Stripe refund and event identifiers, amount, a closed reason and closed outcome code. No free text. NOT included in this CSV export yet: field review first, with payment_refunds and the same provider-identifier review.",
+  },
   payment_refunds: {
     kind: "pending",
     ticket: "TRUTH-01B",

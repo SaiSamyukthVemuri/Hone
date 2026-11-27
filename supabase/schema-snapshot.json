@@ -3,7 +3,7 @@
   "migrations": {
     "count": 293,
     "last": "0394_visit_payment_commands.sql",
-    "sha256": "ae5a1d8ec15c1a81b3a7bb6f19738d20d46c30ad348b7d41e658038d3024ccf3"
+    "sha256": "406c61126f7bbb838ec6dff5cea892962b7b005708cf1e6d0f46573da0632ed7"
   },
   "public": {
     "tables": [
@@ -76,6 +76,7 @@
       "payment_charge_attempts",
       "payment_consents",
       "payment_recovery_tokens",
+      "payment_refund_reviews",
       "payment_refunds",
       "pending_booking_payment_sessions",
       "pending_invitations",
@@ -352,6 +353,7 @@
       "find_recurring_break_conflict",
       "find_scoped_calendar_conflict",
       "finish_payment_refund",
+      "flag_payment_refund_review",
       "freeze_platform_lead_alert_message",
       "get_appointment_payment_display",
       "get_disputes_for_studio",
@@ -361,6 +363,7 @@
       "get_releasable_studio_sms_claim",
       "get_studio_payment_settings_display",
       "get_visit_payment_position",
+      "get_visit_payment_positions",
       "guard_appointment_audit_append_only",
       "guard_availability_practitioner_scope",
       "guard_capacity_flag_activation",
@@ -445,6 +448,9 @@
       "payment_charge_attempts_money_immutable",
       "payment_charge_attempts_touch_updated_at",
       "payment_charge_attempts_visit_bill_guard",
+      "payment_refund_money",
+      "payment_refund_reviews_cover",
+      "payment_refund_reviews_guard",
       "payment_refundable_cents",
       "payment_refunds_guard",
       "payment_refunds_mirror_attempt",
@@ -517,6 +523,7 @@
       "record_platform_demo_request",
       "record_platform_early_access_signup",
       "record_platform_lead_alerts_unconfigured",
+      "record_refund_sent",
       "record_setup_group_in_scope",
       "record_setup_submission_with_identity",
       "record_sms_delivery_status",
@@ -571,6 +578,7 @@
       "resolve_delivery_incident",
       "resolve_double_charge_incident",
       "resolve_new_client_waitlist_invitation",
+      "resolve_payment_refund_review",
       "resolve_public_any_available_practitioner",
       "resolve_studio_by_sms_messaging_service",
       "resolve_waitlist_invitation_followup",

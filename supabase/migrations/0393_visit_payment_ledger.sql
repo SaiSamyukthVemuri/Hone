@@ -52,7 +52,7 @@ begin
     raise exception '0393: a jurisdiction-from-history command is not the body this migration was written against; re-derive it' using errcode = 'check_violation';
   end if;
   if exists (select 1 from information_schema.tables where table_schema = 'public'
-              and table_name in ('visit_bills', 'visit_external_payments', 'payment_refunds')) then
+              and table_name in ('visit_bills', 'visit_external_payments', 'payment_refunds', 'payment_refund_reviews')) then
     raise exception '0393: one of the new tables already exists' using errcode = 'check_violation';
   end if;
 end;
@@ -234,6 +234,48 @@ create index payment_refunds_attempt_idx on public.payment_refunds (attempt_id) 
 create index payment_refunds_external_idx on public.payment_refunds (external_payment_id) where external_payment_id is not null;
 create index payment_refunds_appointment_idx on public.payment_refunds (studio_id, appointment_id) where appointment_id is not null;
 create index payment_refunds_pending_idx on public.payment_refunds (studio_id, requested_at) where status = 'pending_stripe';
+-- A card payment never has two refunds in flight at once (Stripe settles one before the next is asked for).
+create unique index payment_refunds_one_pending_per_attempt on public.payment_refunds (attempt_id) where status = 'pending_stripe' and not legacy and attempt_id is not null;
+
+-- ---------------------------------------------------------------------------
+-- payment_refund_reviews (v1 of partial dashboard refunds): a refund Stripe reports that Hone did not make and cannot yet
+-- place in the ledger. CLOSED FIELDS ONLY: no free text, no metadata values, no raw JSON, no notes. While one is open the
+-- payment's refundable amount is frozen at 0 and the visit is not read as settled. Written only by the 0394 commands.
+-- ---------------------------------------------------------------------------
+create table public.payment_refund_reviews (
+  id                           uuid primary key default gen_random_uuid(),
+  studio_id                    uuid not null references public.studios (id) on delete cascade,
+  attempt_id                   uuid not null references public.payment_charge_attempts (id) on delete restrict,
+  appointment_id               uuid,
+  stripe_refund_id             text not null,
+  stripe_refund_status         text not null,
+  amount_cents                 integer not null,
+  currency                     text not null,
+  stripe_event_id              text not null,
+  stripe_event_created         bigint not null,
+  reason_code                  text not null,
+  opened_at                    timestamptz not null default now(),
+  resolved_at                  timestamptz,
+  resolved_by_practitioner_id  uuid,
+  closed_code                  text,
+  constraint payment_refund_reviews_resolver_fk foreign key (resolved_by_practitioner_id, studio_id)
+    references public.practitioners (id, studio_id) on delete restrict,
+  constraint payment_refund_reviews_refund_id_check check (stripe_refund_id ~ '^re_[A-Za-z0-9]{1,64}$'),
+  constraint payment_refund_reviews_event_id_check check (stripe_event_id ~ '^evt_[A-Za-z0-9]{1,64}$'),
+  constraint payment_refund_reviews_status_check check (stripe_refund_status in ('pending', 'requires_action', 'succeeded', 'failed', 'canceled')),
+  constraint payment_refund_reviews_amount_check check (amount_cents between 1 and 200000),
+  constraint payment_refund_reviews_currency_check check (currency in ('cad', 'usd')),
+  constraint payment_refund_reviews_event_created_check check (stripe_event_created >= 0),
+  constraint payment_refund_reviews_reason_check check (reason_code in ('partial_dashboard_refund', 'unknown_4xx_on_create', 'stuck_pending_24h')),
+  constraint payment_refund_reviews_closed_check check (closed_code is null or closed_code in ('acknowledged', 'auto_failed', 'auto_canceled', 'auto_recorded')),
+  constraint payment_refund_reviews_resolution_check check (
+    (resolved_at is null and closed_code is null and resolved_by_practitioner_id is null)
+    or (resolved_at is not null and closed_code is not null and ((closed_code = 'acknowledged') = (resolved_by_practitioner_id is not null)))
+  )
+);
+create unique index payment_refund_reviews_stripe_refund_key on public.payment_refund_reviews (stripe_refund_id);
+create index payment_refund_reviews_open_idx on public.payment_refund_reviews (attempt_id) where resolved_at is null;
+create index payment_refund_reviews_studio_open_idx on public.payment_refund_reviews (studio_id, appointment_id) where resolved_at is null;
 
 -- ---------------------------------------------------------------------------
 -- BACKFILL: one legacy row per attempt that already carries a refund. Inserted BEFORE the guards exist (they describe
@@ -299,7 +341,7 @@ declare
   c_money_universe constant text[] := array[
     'appointment_payments', 'appointment_settlements', 'client_payment_methods',
     'client_pricing', 'client_stripe_customers', 'manual_fee_charge_attempts',
-    'payment_charge_attempts', 'payment_recovery_tokens', 'payment_refunds',
+    'payment_charge_attempts', 'payment_recovery_tokens', 'payment_refund_reviews', 'payment_refunds',
     'pending_booking_payment_sessions', 'services', 'sessions',
     'stripe_account_provisioning_attempts', 'stripe_charge_attempts',
     'stripe_customer_provisioning_attempts', 'stripe_disputes', 'stripe_events',
@@ -400,7 +442,9 @@ begin
      or exists (select 1 from public.visit_external_payments vp
                  where vp.studio_id = p_studio_id and vp.currency is distinct from v_currency)
      or exists (select 1 from public.payment_refunds pr
-                 where pr.studio_id = p_studio_id and pr.currency is distinct from v_currency) then
+                 where pr.studio_id = p_studio_id and pr.currency is distinct from v_currency)
+     or exists (select 1 from public.payment_refund_reviews rv
+                 where rv.studio_id = p_studio_id and rv.currency is distinct from v_currency) then
     return query select 'refused_currency_history'::text, null::text, null::text;
     return;
   end if;
@@ -541,7 +585,7 @@ declare
   c_money_universe constant text[] := array[
     'appointment_payments', 'appointment_settlements', 'client_payment_methods',
     'client_pricing', 'client_stripe_customers', 'manual_fee_charge_attempts',
-    'payment_charge_attempts', 'payment_recovery_tokens', 'payment_refunds',
+    'payment_charge_attempts', 'payment_recovery_tokens', 'payment_refund_reviews', 'payment_refunds',
     'pending_booking_payment_sessions', 'services', 'sessions',
     'stripe_account_provisioning_attempts', 'stripe_charge_attempts',
     'stripe_customer_provisioning_attempts', 'stripe_disputes', 'stripe_events',
@@ -647,7 +691,9 @@ begin
      or exists (select 1 from public.visit_external_payments vp
                  where vp.studio_id = p_studio_id and vp.currency is distinct from v_currency)
      or exists (select 1 from public.payment_refunds pr
-                 where pr.studio_id = p_studio_id and pr.currency is distinct from v_currency) then
+                 where pr.studio_id = p_studio_id and pr.currency is distinct from v_currency)
+     or exists (select 1 from public.payment_refund_reviews rv
+                 where rv.studio_id = p_studio_id and rv.currency is distinct from v_currency) then
     return query select 'refused_currency_history'::text, null::text, null::text;
     return;
   end if;
@@ -787,6 +833,7 @@ $$;
 alter table public.visit_bills enable row level security;
 alter table public.visit_external_payments enable row level security;
 alter table public.payment_refunds enable row level security;
+alter table public.payment_refund_reviews enable row level security;
 
 create policy "visit_bills_owner_select" on public.visit_bills for select to authenticated
   using (public.is_studio_owner(visit_bills.studio_id));
@@ -794,13 +841,17 @@ create policy "visit_external_payments_owner_select" on public.visit_external_pa
   using (public.is_studio_owner(visit_external_payments.studio_id));
 create policy "payment_refunds_owner_select" on public.payment_refunds for select to authenticated
   using (public.is_studio_owner(payment_refunds.studio_id));
+create policy "payment_refund_reviews_owner_select" on public.payment_refund_reviews for select to authenticated
+  using (public.is_studio_owner(payment_refund_reviews.studio_id));
 
 revoke all on public.visit_bills from public, anon, authenticated, service_role;
 revoke all on public.visit_external_payments from public, anon, authenticated, service_role;
 revoke all on public.payment_refunds from public, anon, authenticated, service_role;
+revoke all on public.payment_refund_reviews from public, anon, authenticated, service_role;
 grant select on public.visit_bills to authenticated;
 grant select on public.visit_external_payments to authenticated;
 grant select on public.payment_refunds to authenticated;
+grant select on public.payment_refund_reviews to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- GUARDS: server timestamps, append-only, never deleted
@@ -880,22 +931,45 @@ $$;
 create trigger visit_external_payments_guard_trg before insert or update or delete on public.visit_external_payments
   for each row execute function public.visit_external_payments_guard();
 
--- What is still refundable on ONE payment: its amount less its live refunds (pending or succeeded; a failed refund
--- consumes nothing). null when the payment cannot be refunded (not a succeeded attempt, not a confirmed external payment).
+-- THE ONE DEFINITION of money returned on ONE payment. internal helper, no grants.
+--   succeeded = least(payment amount, greatest(itemised succeeded, the ATTEMPT's own aggregate succeeded)): the attempt's refund columns are Stripe's
+--               CUMULATIVE statement of the whole payment (0078 full only, 0240 full amount only) and the itemised rows are parts of that same money, so the
+--               greater of the two, never the sum.
+--   reserved  = pending itemised refunds, plus the attempt's own pending whole-payment refund, capped at what is left.
+-- An external payment has only itemised, succeeded rows. null amount = the payment cannot be refunded.
+create function public.payment_refund_money(p_attempt uuid, p_external uuid)
+returns table (payment_cents integer, succeeded_cents integer, reserved_cents integer)
+language sql stable security definer set search_path = pg_catalog, pg_temp
+as $$
+  select m.amount, m.succ, least(m.amount - m.succ, m.pend)
+    from (
+      select a.amount_cents as amount,
+             least(a.amount_cents, greatest(
+               coalesce((select sum(r.amount_cents) from public.payment_refunds r where r.attempt_id = a.id and not r.legacy and r.status = 'succeeded'), 0)::integer,
+               case when a.refund_status = 'succeeded' then coalesce(a.refund_amount_cents, a.amount_cents) else 0 end)) as succ,
+             (coalesce((select sum(r.amount_cents) from public.payment_refunds r where r.attempt_id = a.id and not r.legacy and r.status = 'pending_stripe'), 0)
+              + case when a.refund_status = 'pending_stripe' then coalesce(a.refund_amount_cents, a.amount_cents) else 0 end)::integer as pend
+        from public.payment_charge_attempts a
+       where p_attempt is not null and p_external is null and a.id = p_attempt and a.status = 'succeeded'
+      union all
+      select e.amount_cents,
+             least(e.amount_cents, coalesce((select sum(r.amount_cents) from public.payment_refunds r where r.external_payment_id = e.id and r.status = 'succeeded'), 0))::integer,
+             0
+        from public.visit_external_payments e
+       where p_external is not null and p_attempt is null and e.id = p_external and e.state = 'confirmed'
+    ) m;
+$$;
+
+-- What is still refundable on ONE payment: its amount less what has come back and what is in flight. 0 while a review is open on it (the owner must
+-- acknowledge it first). null when the payment cannot be refunded (not a succeeded attempt, not a confirmed external payment).
 create function public.payment_refundable_cents(p_attempt uuid, p_external uuid) returns integer
 language sql stable security definer set search_path = pg_catalog, pg_temp
 as $$
   select case
-           when (p_attempt is null) = (p_external is null) then null
-           when p_attempt is not null then
-             (select a.amount_cents from public.payment_charge_attempts a where a.id = p_attempt and a.status = 'succeeded')
-           else
-             (select e.amount_cents from public.visit_external_payments e where e.id = p_external and e.state = 'confirmed')
+           when exists (select 1 from public.payment_refund_reviews v where v.attempt_id = p_attempt and v.resolved_at is null) then 0
+           else greatest(0, m.payment_cents - m.succeeded_cents - m.reserved_cents)
          end
-         - coalesce((select sum(r.amount_cents)::integer from public.payment_refunds r
-                      where r.status in ('pending_stripe', 'succeeded')
-                        and ((p_attempt is not null and r.attempt_id = p_attempt)
-                             or (p_external is not null and r.external_payment_id = p_external))), 0);
+    from public.payment_refund_money(p_attempt, p_external) m;
 $$;
 
 -- The over-refund wall. It runs for every new or re-activated refund and takes the PAYMENT ROW lock first, so two
@@ -973,7 +1047,9 @@ begin
        and not (new.legacy and r.legacy)
        and ((new.attempt_id is not null and r.attempt_id = new.attempt_id)
             or (new.external_payment_id is not null and r.external_payment_id = new.external_payment_id));
-    if v_other + new.amount_cents > v_amount then
+    -- A refund OBSERVED in the Stripe dashboard (source stripe_dashboard) already happened: it is recorded by resolve_payment_refund_review (0394), which
+    -- checks the capacity itself and refuses over it. The wall must not refuse a fact; every other row meets it.
+    if new.source <> 'stripe_dashboard' and v_other + new.amount_cents > v_amount then
       raise exception 'payment_refunds: % cents is more than the % cents still refundable', new.amount_cents, v_amount - v_other
         using errcode = '23514';
     end if;
@@ -983,6 +1059,68 @@ end;
 $$;
 create trigger payment_refunds_guard_trg before insert or update or delete on public.payment_refunds
   for each row execute function public.payment_refunds_guard();
+
+-- A review is opened by flag_payment_refund_review and closed ONCE by resolve_payment_refund_review or the attempt/refund events (0394). The only fields
+-- that ever change are the Stripe status/event of an OPEN review (a newer event, never an older) and the one-time close. Never deleted.
+create function public.payment_refund_reviews_guard() returns trigger
+language plpgsql volatile set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_studio uuid;
+  v_ccy text;
+  v_amount integer;
+  v_appt uuid;
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'payment_refund_reviews: financial history is never deleted' using errcode = '23514';
+  end if;
+  if tg_op = 'INSERT' then
+    select a.studio_id, a.currency, a.amount_cents, a.appointment_id into v_studio, v_ccy, v_amount, v_appt
+      from public.payment_charge_attempts a where a.id = new.attempt_id and a.status = 'succeeded';
+    if not found or v_studio is distinct from new.studio_id or v_ccy is distinct from new.currency
+       or new.amount_cents > v_amount or v_appt is distinct from new.appointment_id then
+      raise exception 'payment_refund_reviews: the review does not match its payment (studio, visit, currency or amount)' using errcode = '23514';
+    end if;
+    new.opened_at := now();
+    if new.resolved_at is not null or new.closed_code is not null or new.resolved_by_practitioner_id is not null then
+      raise exception 'payment_refund_reviews: a review is opened unresolved' using errcode = '23514';
+    end if;
+    return new;
+  end if;
+  if new.id is distinct from old.id or new.studio_id is distinct from old.studio_id or new.attempt_id is distinct from old.attempt_id
+     or new.appointment_id is distinct from old.appointment_id or new.stripe_refund_id is distinct from old.stripe_refund_id
+     or new.amount_cents is distinct from old.amount_cents or new.currency is distinct from old.currency
+     or new.reason_code is distinct from old.reason_code or new.opened_at is distinct from old.opened_at then
+    raise exception 'payment_refund_reviews: a review is never edited' using errcode = '23514';
+  end if;
+  if old.resolved_at is not null then
+    raise exception 'payment_refund_reviews: a closed review is final' using errcode = '23514';
+  end if;
+  if new.stripe_event_created < old.stripe_event_created then
+    raise exception 'payment_refund_reviews: a stale Stripe event cannot overwrite a newer one' using errcode = '23514';
+  end if;
+  return new;
+end;
+$$;
+create trigger payment_refund_reviews_guard_trg before insert or update or delete on public.payment_refund_reviews
+  for each row execute function public.payment_refund_reviews_guard();
+
+-- A cumulative FULL refund landing on the attempt (0240 writes refund_status = 'succeeded') returns every cent of the payment, so any review still open on
+-- it is covered: closed auto_recorded, no ledger row (the attempt's own aggregate already counts the money; payment_refund_money takes the greater, never the sum).
+-- SECURITY DEFINER because no role holds a write grant on the reviews table; the review guard allows exactly this one transition.
+create function public.payment_refund_reviews_cover() returns trigger
+language plpgsql volatile security definer set search_path = pg_catalog, pg_temp
+as $$
+begin
+  if new.refund_status = 'succeeded' and old.refund_status is distinct from 'succeeded' then
+    update public.payment_refund_reviews v set resolved_at = now(), closed_code = 'auto_recorded'
+     where v.attempt_id = new.id and v.resolved_at is null;
+  end if;
+  return new;
+end;
+$$;
+create trigger payment_refund_reviews_cover_trg after update of refund_status on public.payment_charge_attempts
+  for each row execute function public.payment_refund_reviews_cover();
 
 -- The mirror: while the older refund code still writes an attempt's refund columns, keep that attempt's legacy row true.
 create function public.payment_refunds_mirror_attempt() returns trigger
@@ -1034,11 +1172,16 @@ revoke all privileges on function public.visit_external_payments_guard() from pu
 revoke all privileges on function public.payment_refunds_guard() from public, anon, authenticated, service_role;
 revoke all privileges on function public.payment_refunds_mirror_attempt() from public, anon, authenticated, service_role;
 revoke all privileges on function public.payment_refundable_cents(uuid, uuid) from public, anon, authenticated, service_role;
+revoke all privileges on function public.payment_refund_money(uuid, uuid) from public, anon, authenticated, service_role;
+revoke all privileges on function public.payment_refund_reviews_guard() from public, anon, authenticated, service_role;
+revoke all privileges on function public.payment_refund_reviews_cover() from public, anon, authenticated, service_role;
 
 comment on table public.visit_bills is
   '0393. The one bill of a visit, versioned by superseding. A visit with no bill row is a legacy visit and is read as before. Written only by the 0394 commands.';
 comment on table public.visit_external_payments is
   '0393. Cash, e-transfer or other transfer payments on a visit. Cash is confirmed on entry; a transfer is pending_confirmation (not counted as paid) until confirmed once or voided. A confirmed payment is final: money returned is a refund. Written only by the 0394 commands.';
+comment on table public.payment_refund_reviews is
+  '0393. A refund Stripe reports on a card payment that Hone did not make (closed fields only, no free text). Open = the payment refund capacity is frozen and the visit is not read as settled. Written only by the 0394 commands.';
 comment on table public.payment_refunds is
   '0393. One row per refund event against ONE payment (a Stripe attempt or an external payment). The remaining refundable amount of a payment is its amount less its pending and succeeded refunds (payment_refundable_cents). Legacy rows mirror the older single refund columns of payment_charge_attempts.';
 

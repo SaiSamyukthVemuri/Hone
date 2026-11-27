@@ -10,6 +10,9 @@ begin
      or exists (select 1 from public.payment_refunds where not legacy) then
     raise exception '0394 down: visit bills, payments or refunds exist; refusing' using errcode = '55000';
   end if;
+  if exists (select 1 from public.payment_refund_reviews) then
+    raise exception '0394 down: a refund review exists; refusing' using errcode = '55000';
+  end if;
   if exists (select 1 from public.payment_charge_attempts where visit_bill_id is not null or submission_id is not null) then
     raise exception '0394 down: card attempts carry a bill or a submission id; refusing' using errcode = '55000';
   end if;
@@ -32,6 +35,10 @@ drop function public.void_visit_external_payment(uuid, uuid, text);
 drop function public.confirm_visit_external_payment(uuid, uuid);
 drop function public.record_visit_external_payment(uuid, uuid, text, integer, uuid, text);
 drop function public.ensure_visit_bill(uuid, uuid, integer, text, boolean);
+drop function public.get_visit_payment_positions(uuid, uuid[]);
+drop function public.resolve_payment_refund_review(uuid);
+drop function public.flag_payment_refund_review(uuid, text, text, integer, text, text, bigint, text, text);
+drop function public.record_refund_sent(uuid, text);
 drop function public.get_visit_payment_position(uuid, uuid);
 drop function public.visit_payment_refusal(uuid, uuid, integer);
 drop function public.visit_payment_position(uuid, uuid);
