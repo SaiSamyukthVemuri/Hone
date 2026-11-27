@@ -8,6 +8,9 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 
+// Real fixture links and sessions must stay out of downloadable browser artifacts.
+test.use({ trace: "off", screenshot: "off", video: "off" });
+
 async function portalLink(seed: E2eSeed, clientId: string, expired = false) {
   // Start at the email boundary: only the hash exists in the local database.
   // From the original URL onward the app performs its real GET / POST exchange.
@@ -24,8 +27,20 @@ async function portalLink(seed: E2eSeed, clientId: string, expired = false) {
   return `/portal/verify/${raw}`;
 }
 
+// Model clicking an email without handing its bearer URL to Playwright's reporter.
+async function followClientEmail(page: Page, target: string) {
+  const inbox = "/__e2e/open-client-email";
+  const href = target.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+  await page.route(inbox, (route) => route.fulfill({
+    contentType: "text/html",
+    body: `<a href="${href}">Open email link</a>`,
+  }), { times: 1 });
+  await page.goto(inbox, { waitUntil: "domcontentloaded" });
+  await page.getByRole("link", { name: "Open email link" }).click();
+}
+
 async function enterPortal(page: Page, link: string) {
-  await page.goto(link);
+  await followClientEmail(page, link);
   await page.getByRole("button", { name: /continue to portal/i }).click();
   await expect(page).toHaveURL(/\/portal$/);
 }
@@ -41,7 +56,7 @@ async function checkActiveSession(page: Page, previousToken?: string) {
 async function reschedule(page: Page, studioId: string, originalId: string) {
   const token = await getCancellationToken(studioId, originalId);
   expect(Boolean(token), "Fixture appointment has a management link").toBe(true);
-  await page.goto(`/reschedule/${token}`);
+  await followClientEmail(page, `/reschedule/${token}`);
   const input = page.getByLabel("Pick a new date");
   const day = new Date(`${await input.inputValue()}T12:00:00Z`);
   day.setUTCDate(day.getUTCDate() + 9);
@@ -124,7 +139,7 @@ test("original link shows the rescheduled visit once across an owner publish and
     await ownerPage.getByRole("button", { name: "Publish portal" }).click();
     await expect(ownerPage.getByText("Portal published.", { exact: true })).toBeVisible();
 
-    await page.goto(originalLink);
+    await followClientEmail(page, originalLink);
     await expect(page).toHaveURL(/\/portal$/);
     await expect(page.getByTestId("studio-portal")).toBeVisible();
     await expect(page.getByRole("heading", { name: welcome })).toBeVisible();
@@ -142,7 +157,7 @@ test("original link shows the rescheduled visit once across an owner publish and
     expect(new Date(confirmed[0].starts_at).getTime()).not.toBe(
       new Date(visits.find((appointment) => appointment.id === appointmentId)!.starts_at).getTime(),
     );
-    await page.goto(originalLink);
+    await followClientEmail(page, originalLink);
     await expect(page).toHaveURL(/\/portal$/);
     await assertAppointment(page, confirmed[0]);
     await expect(page.locator(`[data-portal-appointment-id="${appointmentId}"]`)).toHaveCount(0);
@@ -178,7 +193,7 @@ test("original link shows the rescheduled visit once across an owner publish and
 
     // Same registered mailbox, different tenant and session: an old A link
     // opened in B must not expose either portal or silently switch tenants.
-    await other.goto(originalLink);
+    await followClientEmail(other, originalLink);
     await expect(other.getByRole("button", { name: "Email me a new link" })).toBeVisible();
     await expect(other.getByTestId("studio-portal")).toHaveCount(0);
     await other.goto("/portal");
@@ -186,7 +201,7 @@ test("original link shows the rescheduled visit once across an owner publish and
 
     await ownerPage.getByRole("button", { name: "Switch to classic" }).click();
     await expect(ownerPage.getByText("Classic portal restored. Your draft is saved.", { exact: true })).toBeVisible();
-    await page.goto(originalLink);
+    await followClientEmail(page, originalLink);
     await expect(page).toHaveURL(/\/portal$/);
     await expect(page.getByTestId("studio-portal")).toHaveCount(0);
     await checkActiveSession(page, originalSession);
@@ -205,15 +220,16 @@ test("original link shows the rescheduled visit once across an owner publish and
   }
 });
 
-test("an expired link sends one fresh link to the registered address and never signs in the browser", async ({ page }) => {
+test("a signed-out client uses the replacement email link to enter only their portal", async ({ page, baseURL }) => {
   const seed = await seedE2eStudio();
   const { clientId } = await seedE2eDashboardClient(seed, { label: "Returning" });
   // Only this synthetic recipient opts into success on the in-process fake provider.
-  const email = `success+${clientId}@harness.local`;
+  const email = process.env.HONE_E2E_PORTAL_RECOVERY_MAILBOX;
+  if (!email || !baseURL) throw new Error("The isolated recovery mailbox and app origin are required.");
   await sql("update public.clients set email = $1 where id = $2", [email, clientId]);
   const expired = await portalLink(seed, clientId, true);
   const mark = markResendLedger();
-  await page.goto(expired);
+  await followClientEmail(page, expired);
   await expect(page.locator('input[type="email"]')).toHaveCount(0);
   expect(readResendLedger(mark).filter((mail) => mail.to === email)).toHaveLength(0);
   await page.getByRole("button", { name: "Email me a new link" }).click();
@@ -228,4 +244,20 @@ test("an expired link sends one fresh link to the registered address and never s
   expect((await page.context().cookies()).some((cookie) => cookie.name === "hone_portal_session")).toBe(false);
   await page.goto("/portal");
   await expect(page).toHaveURL(/\/portal\/login/);
+
+  const accepted = readResendLedger(mark).find((entry) => entry.to === email && entry.mode === "success");
+  const hrefs = accepted?.hrefs ?? [];
+  expect(hrefs.length, "one portal link in the captured synthetic message").toBe(1);
+  const delivered = new URL(hrefs[0]);
+  expect(delivered.origin === baseURL, "link targets this isolated app").toBe(true);
+  expect(/^\/portal\/verify\/[A-Za-z0-9_-]{43}$/.test(delivered.pathname)).toBe(true);
+  await followClientEmail(page, delivered.href);
+  await page.getByRole("button", { name: /continue to portal/i }).click();
+  await expect(page).toHaveURL(/\/portal$/);
+  const cookie = await checkActiveSession(page);
+  const sessions = await sql<{ client_id: string; studio_id: string }>(
+    "select client_id, studio_id from public.client_portal_sessions where session_token_hash = $1",
+    [createHash("sha256").update(cookie).digest("hex")],
+  );
+  expect(sessions).toEqual([{ client_id: clientId, studio_id: seed.studioId }]);
 });
