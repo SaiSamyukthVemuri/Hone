@@ -13,7 +13,7 @@ export type StaffRole = "owner" | "practitioner" | "receptionist";
 export type StaffSignInState =
   | { state: "signed_in"; at: string }
   | { state: "never_signed_in" } // an account exists, and it has never signed in
-  | { state: "invite_pending" } // no account is linked to this membership yet
+  | { state: "account_removed" } // the membership row exists but its auth account was deleted (user_id set null)
   | { state: "unknown" }; // the read failed or timed out: never shown as "never" or as a time
 
 export type StaffSignIn = {
@@ -39,10 +39,40 @@ export type StaffSignInReport = {
   truncated: boolean;
   /** true when the membership read itself failed: no list is shown, and the page says so. */
   unavailable: boolean;
+  /**
+   * Invitations still waiting to be accepted, counted by role ONLY. A membership row exists only after acceptance, so a new studio has none
+   * until then. NO email, name or other invitation column is read. null = that read failed (shown as unknown, never as zero).
+   */
+  pendingInvites: PendingInviteCounts | null;
 };
 
+export type PendingInviteCounts = { owner: number; practitioner: number; receptionist: number; total: number };
+
+/** Count pending invitations by role. Reads the role column of unaccepted, unrevoked rows and nothing else. */
+async function loadPendingInviteCounts(admin: SupabaseClient, studioId: string): Promise<PendingInviteCounts | null> {
+  try {
+    const { data, error } = await admin
+      .from("pending_invitations")
+      .select("role")
+      .eq("studio_id", studioId)
+      .eq("status", "pending")
+      .limit(STAFF_SIGN_IN_CAP + 1);
+    if (error) return null;
+    const counts: PendingInviteCounts = { owner: 0, practitioner: 0, receptionist: 0, total: 0 };
+    for (const r of (data ?? []) as Array<{ role: string | null }>) {
+      counts.total += 1;
+      if (r.role === "owner") counts.owner += 1;
+      else if (r.role === "receptionist") counts.receptionist += 1;
+      else counts.practitioner += 1;
+    }
+    return counts;
+  } catch {
+    return null;
+  }
+}
+
 export function signInState(userId: string | null, lookup: { ok: true; lastSignInAt: string | null } | { ok: false }): StaffSignInState {
-  if (userId === null) return { state: "invite_pending" };
+  if (userId === null) return { state: "account_removed" };
   if (!lookup.ok) return { state: "unknown" };
   if (lookup.lastSignInAt === null) return { state: "never_signed_in" };
   return Number.isFinite(Date.parse(lookup.lastSignInAt)) ? { state: "signed_in", at: lookup.lastSignInAt } : { state: "unknown" };
@@ -88,7 +118,7 @@ export async function loadStaffSignIns(admin: SupabaseClient, studioId: string):
         .order("created_at", { ascending: true })
         .limit(STAFF_SIGN_IN_CAP + 1),
     ]);
-    if (pracs.error || recs.error) return { staff: [], truncated: false, unavailable: true };
+    if (pracs.error || recs.error) return { staff: [], truncated: false, unavailable: true, pendingInvites: null };
     members = [
       ...((pracs.data ?? []) as Array<{ id: string; display_name: string; role: string; active: boolean; user_id: string | null }>).map((p) => ({
         key: `p:${p.id}`,
@@ -106,8 +136,10 @@ export async function loadStaffSignIns(admin: SupabaseClient, studioId: string):
       })),
     ];
   } catch {
-    return { staff: [], truncated: false, unavailable: true };
+    return { staff: [], truncated: false, unavailable: true, pendingInvites: null };
   }
+
+  const pendingInvites = await loadPendingInviteCounts(admin, studioId);
 
   const truncated = members.length > STAFF_SIGN_IN_CAP;
   members = members.slice(0, STAFF_SIGN_IN_CAP);
@@ -131,5 +163,6 @@ export async function loadStaffSignIns(admin: SupabaseClient, studioId: string):
     })),
     truncated,
     unavailable: false,
+    pendingInvites,
   };
 }

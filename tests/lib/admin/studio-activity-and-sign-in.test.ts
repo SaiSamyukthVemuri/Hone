@@ -78,7 +78,7 @@ describe("loadStudioActivity", () => {
 
 describe("signInState", () => {
   it("never shows a failed lookup as never or as a time", () => {
-    expect(signInState(null, { ok: false })).toEqual({ state: "invite_pending" });
+    expect(signInState(null, { ok: false })).toEqual({ state: "account_removed" });
     expect(signInState("u", { ok: false })).toEqual({ state: "unknown" });
     expect(signInState("u", { ok: true, lastSignInAt: null })).toEqual({ state: "never_signed_in" });
     expect(signInState("u", { ok: true, lastSignInAt: "not a date" })).toEqual({ state: "unknown" });
@@ -87,7 +87,7 @@ describe("signInState", () => {
 });
 
 function staffClient(opts: {
-  pracs?: unknown[]; recs?: unknown[]; pracErr?: boolean; users?: Record<string, { last_sign_in_at?: string | null } | "error">;
+  pracs?: unknown[]; recs?: unknown[]; invites?: unknown[]; inviteErr?: boolean; pracErr?: boolean; users?: Record<string, { last_sign_in_at?: string | null } | "error">;
 }) {
   const selects: Record<string, string> = {};
   const lookups: string[] = [];
@@ -100,7 +100,9 @@ function staffClient(opts: {
         q.eq = () => q;
         q.order = () => q;
         q.limit = async () =>
-          table === "practitioners"
+          table === "pending_invitations"
+            ? opts.inviteErr ? { data: null, error: { message: "x" } } : { data: opts.invites ?? [], error: null }
+            : table === "practitioners"
             ? opts.pracErr ? { data: null, error: { message: "x" } } : { data: opts.pracs ?? [], error: null }
             : { data: opts.recs ?? [], error: null };
         return q;
@@ -126,14 +128,14 @@ describe("loadStaffSignIns", () => {
     expect(selects.studio_receptionists).toBe("id, display_name, active, user_id");
     expect(r.staff).toEqual([
       { key: "p:p1", displayName: "Ada", role: "owner", active: true, signIn: { state: "signed_in", at: hoursAgo(3) } },
-      { key: "r:r1", displayName: "Bo", role: "receptionist", active: false, signIn: { state: "invite_pending" } },
+      { key: "r:r1", displayName: "Bo", role: "receptionist", active: false, signIn: { state: "account_removed" } },
     ]);
     expect(JSON.stringify(r)).not.toMatch(/@|u1/); // no email, no user id leaves the loader
   });
   it("a failed account lookup is Unknown; a failed membership read is unavailable, never an empty list", async () => {
     const a = await loadStaffSignIns(staffClient({ pracs: [{ id: "p", display_name: "A", role: "practitioner", active: true, user_id: "u" }], users: { u: "error" } }).client, "s");
     expect(a.staff[0].signIn).toEqual({ state: "unknown" });
-    expect(await loadStaffSignIns(staffClient({ pracErr: true }).client, "s")).toEqual({ staff: [], truncated: false, unavailable: true });
+    expect(await loadStaffSignIns(staffClient({ pracErr: true }).client, "s")).toEqual({ staff: [], truncated: false, unavailable: true, pendingInvites: null });
   });
   it("one lookup per distinct account, and more than the cap is reported as truncated", async () => {
     const same = [1, 2].map((i) => ({ id: `p${i}`, display_name: "A" + i, role: "practitioner", active: true, user_id: "shared" }));
@@ -144,6 +146,25 @@ describe("loadStaffSignIns", () => {
     const r = await loadStaffSignIns(staffClient({ pracs: many }).client, "s");
     expect(r.truncated).toBe(true);
     expect(r.staff).toHaveLength(STAFF_SIGN_IN_CAP);
+  });
+});
+
+describe("pending invitations: counted by role only", () => {
+  it("a new studio with no accepted staff still shows its pending invitations by role; the read selects the role column alone", async () => {
+    const c = staffClient({ invites: [{ role: "owner" }, { role: "receptionist" }, { role: "practitioner" }, { role: "practitioner" }] });
+    const r = await loadStaffSignIns(c.client, "s");
+    expect(r.staff).toEqual([]);
+    expect(r.pendingInvites).toEqual({ owner: 1, practitioner: 2, receptionist: 1, total: 4 });
+    expect(c.selects.pending_invitations).toBe("role");
+    expect(JSON.stringify(r)).not.toMatch(/@|email/);
+  });
+  it("a failed invitation read is null (unknown), never zero", async () => {
+    const r = await loadStaffSignIns(staffClient({ inviteErr: true }).client, "s");
+    expect(r.pendingInvites).toBeNull();
+  });
+  it("the loader reads only pending, unaccepted invitations", () => {
+    const src = readFileSync(path.resolve(__dirname, "../../..", "lib/admin/staff-sign-in.ts"), "utf8");
+    expect(src).toMatch(/\.from\("pending_invitations"\)[\s\S]{0,200}\.select\("role"\)[\s\S]{0,120}\.eq\("status", "pending"\)/);
   });
 });
 

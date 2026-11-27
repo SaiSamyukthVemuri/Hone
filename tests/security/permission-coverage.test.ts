@@ -134,9 +134,13 @@ describe("a receptionist cannot pass the staff helper (what 'staff' rests on)", 
     // The owner's Team settings also name the table, on purpose: the page LISTS the studio's own front-desk rows and the invite action checks for a
     // duplicate, both under the OWNER's session and the owner-only read policy (a receptionist reads only their own row). Neither feeds the staff helper,
     // so a receptionist still cannot pass it. This is a reviewed extension of the invariant, not a loosening of the helper checks above.
+    // lib/admin/staff-sign-in.ts is the operator-only reader (HON-82): the /admin studio page sits under the isAdmin layout gate and this loader reads
+    // display_name, active and user_id on the service-role client, to LIST staff and their last sign-in. It is never used to authorize anyone, so it does not
+    // feed the staff helper and a receptionist still cannot pass it.
     expect([...out].sort()).toEqual([
       "app/(app)/settings/team/actions.ts",
       "app/(app)/settings/team/page.tsx",
+      "lib/admin/staff-sign-in.ts",
       "lib/desk/entry.ts",
       "lib/desk/guard.ts",
       "lib/export/resource-registry.ts",

@@ -63,14 +63,31 @@ function SignInCell({ s }: { s: StaffSignInState }) {
       return <FormattedDateTime iso={s.at} />;
     case "never_signed_in":
       return <span className="text-neutral-500">Never signed in</span>;
-    case "invite_pending":
-      return <span className="text-neutral-500">Invite pending</span>;
+    case "account_removed":
+      return <span className="text-neutral-500">Account removed</span>;
     default:
       return <span className="text-neutral-500">Unknown</span>;
   }
 }
 
 const ROLE_LABEL = { owner: "Owner", practitioner: "Practitioner", receptionist: "Receptionist" } as const;
+
+function PendingInvites({ counts }: { counts: StaffSignInReport["pendingInvites"] }) {
+  if (counts === null) {
+    return <p className="mt-2 text-sm text-neutral-500">Pending invitations: unknown, they could not be read just now.</p>;
+  }
+  if (counts.total === 0) return null;
+  const parts = [
+    counts.owner ? `${counts.owner} owner` : null,
+    counts.practitioner ? `${counts.practitioner} practitioner` : null,
+    counts.receptionist ? `${counts.receptionist} receptionist` : null,
+  ].filter(Boolean);
+  return (
+    <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300" data-testid="pending-invitations">
+      {counts.total} {counts.total === 1 ? "invitation" : "invitations"} pending: {parts.join(", ")}. Not yet accepted, so no sign-in to show.
+    </p>
+  );
+}
 
 export function StaffSignInSection({ report }: { report: StaffSignInReport }) {
   return (
@@ -83,7 +100,9 @@ export function StaffSignInSection({ report }: { report: StaffSignInReport }) {
           Unknown: the staff list could not be read just now.
         </p>
       ) : report.staff.length === 0 ? (
-        <p className="text-sm text-neutral-500">No staff recorded.</p>
+        <p className="text-sm text-neutral-500" data-testid="staff-none-accepted">
+          No accepted staff yet.
+        </p>
       ) : (
         <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 text-sm dark:divide-neutral-800 dark:border-neutral-800" data-testid="staff-sign-in">
           {report.staff.map((m) => (
@@ -104,6 +123,7 @@ export function StaffSignInSection({ report }: { report: StaffSignInReport }) {
           ))}
         </ul>
       )}
+      {report.unavailable ? null : <PendingInvites counts={report.pendingInvites} />}
       {report.truncated ? (
         <p className="mt-2 text-xs text-neutral-500">Only the first 50 staff are listed.</p>
       ) : null}
