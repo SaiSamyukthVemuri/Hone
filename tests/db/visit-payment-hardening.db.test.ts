@@ -149,8 +149,8 @@ describe("F3 a replayed webhook cannot fail on a new-flow refund", () => {
   });
 });
 
-describe("F4 only a SUCCEEDED refund frees collectable capacity", () => {
-  it("a pending reversal frees nothing; a failed one leaves collected at or below the bill; a succeeded one frees exactly its amount", async () => {
+describe("F4 a payment_reversal never frees collectable capacity (Sam, 27 Nov 2026); only a SUCCEEDED price_reduction does", () => {
+  it("a pending reversal frees nothing; a failed one leaves collected at or below the bill; a succeeded one frees nothing either", async () => {
     const s = await visit();
     await ensure(s);
     const a = await cardRow(s, 22500);
@@ -164,8 +164,18 @@ describe("F4 only a SUCCEEDED refund frees collectable capacity", () => {
     expect(Number(p.confirmed_cents) + Number(p.pending_cents) + Number(p.card_cents) - Number(p.refunded_cents)).toBeLessThanOrEqual(Number(p.total_cents));
     const r2 = await refund(s, { attempt: a }, 5000);
     await adminQuery(`select * from public.finish_payment_refund($1,'succeeded',$2,'succeeded',null,null,null)`, [r2.refund_id, `re_${tok()}`]);
-    expect((await position(s)).outstanding_cents).toBe(5000);                                // succeeded: exactly its amount
-    await expect(pay(s, "paid_cash", 5000)).resolves.toMatchObject({ result: "recorded" });
+    expect((await position(s)).outstanding_cents).toBe(0);                                   // succeeded reversal: nothing is reopened
+    expect((await position(s)).refunded_cents).toBe(5000);                                   // but the money returned is still reported
+    await expect(pay(s, "paid_cash", 5000)).resolves.toMatchObject({ result: "exceeds_balance" });
+  });
+  it("a succeeded card price_reduction frees exactly what the bill dropped by: the visit stays paid", async () => {
+    const s = await visit();
+    await ensure(s);
+    const a = await cardRow(s, 22500);
+    const r = await refund(s, { attempt: a }, 5000, "price_reduction");
+    await adminQuery(`select * from public.finish_payment_refund($1,'succeeded',$2,'succeeded',null,null,null)`, [r.refund_id, `re_${tok()}`]);
+    const p = await position(s);
+    expect([p.total_cents, p.outstanding_cents, p.refunded_cents]).toEqual([17500, 0, 5000]);
   });
 });
 

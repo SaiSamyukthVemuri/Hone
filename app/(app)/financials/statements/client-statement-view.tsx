@@ -9,6 +9,7 @@ import {
   formatLocalDate,
   paidSummaryLine,
   partialRefundedCents,
+  refundPendingCents,
   visitCountPhrase,
   type DocumentVisit,
   type StatementDocument,
@@ -124,7 +125,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
   // Latest first, as the approved design draws it. A DISPLAY order only: the document, its totals, the CSV and the print page keep their own order.
   const visits = [...doc.visits].sort(latestFirst);
   // Collected / Refunded / Net come from the ONE helper checkout and the visit page use (lib/billing/visit-money.ts).
-  const money = statementMoneySummary(doc.totals, partialRefundedCents(doc), doc.awaiting.length);
+  const money = statementMoneySummary(doc.totals, partialRefundedCents(doc), doc.awaiting.length, refundPendingCents(doc));
   const total = splitCurrency(format(money.collectedCents));
   const scope = scopeHeading(doc, monthLabel);
   const refundedOrWaived = doc.totals.refundedCents > 0 || doc.totals.waivedCents > 0;
@@ -178,6 +179,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
               <div key={r.key} className="contents"><dt className={r.key === "net" ? "font-semibold" : undefined}>{r.label}</dt><dd className="text-right tabular-nums" data-testid={`statement-money-${r.key}`}>{splitCurrency(format(r.cents)).amount}</dd></div>
             ))}
           </dl>
+          {moneyRows(money, { statement: true }).notFinalNote ? <p role="status" data-testid="statement-money-not-final" className="mt-1 max-w-xs text-sm text-fg-muted">{moneyRows(money, { statement: true }).notFinalNote}</p> : null}
           <p className="text-sm text-fg-muted">{visitCountPhrase(doc.totals.visitCount)}{studioName ? ` · ${studioName}` : ""}</p>
         </div>
         {methods ? (

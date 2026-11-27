@@ -233,16 +233,61 @@ describe("0394 a pending transfer RESERVES its amount (both click orders and a r
 });
 
 describe("0394 refunds against a selected payment", () => {
-  it("an external refund is recorded at once; a payment_reversal raises the balance due; the cap is per payment", async () => {
+  it("an external refund is recorded at once; a payment_reversal does NOT reopen a balance (Sam, 27 Nov 2026); the cap is per payment", async () => {
     const s = await visit();
     await ensure(s);
     const cash = (await pay(s, "paid_cash", 10000)).payment_id as string;
     const r = await refund(s, { external: cash }, 4000);
     expect(r).toMatchObject({ result: "requested", status: "succeeded" });
-    expect((await position(s)).outstanding_cents).toBe(22500 - 10000 + 4000);
+    expect((await position(s)).outstanding_cents).toBe(22500 - 10000); // unchanged by the reversal
+    expect((await position(s)).refunded_cents).toBe(4000); // the money returned is still reported
     expect((await refund(s, { external: cash }, 6001)).result).toBe("exceeds_refundable");
     expect((await refund(s, { external: cash }, 6000)).result).toBe("requested");
     expect((await refund(s, { external: cash }, 1)).result).toBe("exceeds_refundable");
+  });
+
+  // Sam's product rule (27 Nov 2026): refunding a fully paid visit does not, by itself, reopen a balance for collection. One definition in the database.
+  it("$225 fully paid, then a $40 reversal: nothing is outstanding and a $40 charge is refused as exceeds_balance", async () => {
+    const s = await visit();
+    await ensure(s);
+    await card(s, 10000);
+    await pay(s, "paid_cash", 5000);
+    const transfer = (await pay(s, "paid_e_transfer", 7500)).payment_id as string;
+    await confirm(s, transfer);
+    expect((await position(s)).outstanding_cents).toBe(0);
+    const cash = (await adminQuery(`select id from public.visit_external_payments where studio_id=$1 and method='paid_cash'`, [s.studioId])).rows[0].id as string;
+    expect((await refund(s, { external: cash }, 4000)).result).toBe("requested");
+    const p = await position(s);
+    expect([p.outstanding_cents, p.refunded_cents]).toEqual([0, 4000]);
+    expect((await pay(s, "paid_cash", 4000)).result).toBe("exceeds_balance");
+    await expect(card(s, 4000, "ready")).rejects.toMatchObject({ code: "PY002" });
+  });
+  it("$225 bill with $185 received: $40 is outstanding and a $40 charge is accepted", async () => {
+    const s = await visit();
+    await ensure(s);
+    await card(s, 10000);
+    await pay(s, "paid_cash", 5000);
+    await confirm(s, (await pay(s, "paid_e_transfer", 3500)).payment_id as string);
+    expect((await position(s)).outstanding_cents).toBe(4000);
+    expect((await pay(s, "paid_cash", 4000)).result).toBe("recorded");
+    expect((await position(s)).outstanding_cents).toBe(0);
+  });
+  it("an unpaid bill with a reversal: outstanding is unchanged by the reversal", async () => {
+    const s = await visit();
+    await ensure(s);
+    const cash = (await pay(s, "paid_cash", 18500)).payment_id as string;
+    expect((await position(s)).outstanding_cents).toBe(4000);
+    expect((await refund(s, { external: cash }, 2000)).result).toBe("requested");
+    const p = await position(s);
+    expect([p.outstanding_cents, p.refunded_cents]).toEqual([4000, 2000]);
+  });
+  it("a $40 price reduction on a fully paid visit: the bill drops to $185 and outstanding follows today's rule (still 0)", async () => {
+    const s = await visit();
+    await ensure(s);
+    const cash = (await pay(s, "paid_cash", 22500)).payment_id as string;
+    expect((await refund(s, { external: cash }, 4000, "price_reduction")).result).toBe("requested");
+    const p = await position(s);
+    expect([p.total_cents, p.outstanding_cents, p.refunded_cents]).toEqual([18500, 0, 4000]);
   });
 
   it("a price_reduction lowers the bill by the amount and leaves the balance unchanged; the old bill is kept, superseded", async () => {

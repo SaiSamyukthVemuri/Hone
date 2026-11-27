@@ -80,6 +80,9 @@ create unique index payment_charge_attempts_active_session_payment_uniq
 -- 3. The position of a visit (one definition of "how much is still collectable")
 -- Only a SUCCEEDED refund counts: a refund still with Stripe does not free capacity (it may yet fail), so a replacement tender can never take money that
 -- is not provably back. This follows the never-over-collect rule.
+-- PRODUCT RULE (Sam, 27 Nov 2026): refunding a fully paid visit does not, by itself, reopen a balance for collection. Only a price_reduction (the bill drops
+-- with the refund, so the balance is unchanged) adds back to what is outstanding; a payment_reversal does NOT. This supersedes the 0393 header sentence that says
+-- a reversal raises the balance due. refunded_cents still reports ALL money returned (the Refunded figure); outstanding_cents is what a new tender may take.
 -- ---------------------------------------------------------------------------
 create function public.visit_payment_position(p_studio uuid, p_appointment uuid)
 returns table (bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
@@ -88,7 +91,7 @@ language sql stable security definer set search_path = pg_catalog, pg_temp
 as $$
   select b.id, b.currency, b.total_cents,
          x.confirmed, x.pending, c.card, r.refunded,
-         greatest(0, b.total_cents - x.confirmed - x.pending - c.card + r.refunded),
+         greatest(0, b.total_cents - x.confirmed - x.pending - c.card + d.reduced),
          exists (select 1 from public.payment_refund_reviews v where v.studio_id = p_studio and v.appointment_id = p_appointment and v.resolved_at is null)
     from public.visit_bills b
     cross join lateral (
@@ -111,6 +114,11 @@ as $$
               select null::uuid, e2.id from public.visit_external_payments e2
                where e2.studio_id = p_studio and e2.appointment_id = p_appointment and e2.state = 'confirmed') pay
         cross join lateral public.payment_refund_money(pay.aid, pay.eid) m) r
+    -- Price reductions that SUCCEEDED: the only refunds that add back to what is outstanding (the bill dropped by the same amount).
+    cross join lateral (
+      select coalesce(sum(pr.amount_cents), 0)::integer as reduced
+        from public.payment_refunds pr
+       where pr.studio_id = p_studio and pr.appointment_id = p_appointment and pr.kind = 'price_reduction' and pr.status = 'succeeded') d
    where b.studio_id = p_studio and b.appointment_id = p_appointment and b.superseded_at is null;
 $$;
 revoke all privileges on function public.visit_payment_position(uuid, uuid) from public, anon, authenticated, service_role;

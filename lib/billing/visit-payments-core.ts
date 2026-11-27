@@ -81,7 +81,10 @@ export function visitBalance(l: VisitLedger): VisitBalance | null {
   const cardCents = sum(l.cards.filter((c) => ["ready", "pending_stripe", "succeeded"].includes(c.status)).map((c) => c.amountCents));
   // Only a SUCCEEDED refund counts (0394): one still with Stripe may yet fail, so it frees no capacity.
   const refundedCents = sum(l.refunds.filter((r) => r.status === "succeeded").map((r) => r.amountCents));
-  const collectableCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - cardCents + refundedCents);
+  // PRODUCT RULE (Sam, 27 Nov 2026), the same as visit_payment_position (0394): refunding a paid visit does not by itself reopen a balance. Only a succeeded
+  // price_reduction (the bill already dropped by that amount) adds back; a payment_reversal does not. `refundedCents` stays ALL money returned.
+  const reducedCents = sum(l.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction").map((r) => r.amountCents));
+  const collectableCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - cardCents + reducedCents);
   return { totalCents: l.bill.totalCents, confirmedCents, pendingCents, cardCents, refundedCents, collectableCents, owedCents: collectableCents + pendingCents };
 }
 
@@ -365,7 +368,8 @@ export type BilledVisitRows = {
   totalCents: number;
   currency: string;
   externals: ReadonlyArray<{ amountCents: number; state: string }>;
-  refunds: ReadonlyArray<{ amountCents: number; status: string }>;
+  /** `kind` absent = a payment reversal (a refund read from the attempt's own columns, or a review): it never reopens a balance. */
+  refunds: ReadonlyArray<{ amountCents: number; status: string; kind?: string }>;
 };
 
 export type BilledOutstanding =
@@ -374,7 +378,8 @@ export type BilledOutstanding =
   | { kind: "owed"; outstandingCents: number; currency: string; quoteCents: number; cardKeptCents: number; collectedCents: number };
 
 /**
- * Owed on a billed visit = bill total − confirmed cash/transfers − card money received + money handed back. An unconfirmed transfer is NOT
+ * Owed on a billed visit = bill total − confirmed cash/transfers − card money received + succeeded PRICE REDUCTIONS (Sam, 27 Nov 2026: a payment reversal does not
+ * reopen a balance; the same rule as visit_payment_position, 0394). An unconfirmed transfer is NOT
  * received, so it stays owed (it is only reserved). A card payment still in flight, a refund still pending, or an unknown currency makes the
  * figure unprovable: "Amount unavailable", never a guess. Pure.
  */
@@ -393,7 +398,7 @@ export function billedOutstanding(
   }
   if (bill.refunds.some((r) => r.status === "pending_stripe")) return { kind: "amount_unavailable" };
   const collected = bill.externals.filter((e) => e.state === "confirmed").reduce((n, e) => n + e.amountCents, 0);
-  const handedBack = bill.refunds.filter((r) => r.status === "succeeded").reduce((n, r) => n + r.amountCents, 0);
+  const handedBack = bill.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction").reduce((n, r) => n + r.amountCents, 0);
   const owed = bill.totalCents - collected - cardKept + handedBack;
   if (owed <= 0) return { kind: "paid" };
   return { kind: "owed", outstandingCents: owed, currency: cur, quoteCents: bill.totalCents, cardKeptCents: cardKept, collectedCents: collected };

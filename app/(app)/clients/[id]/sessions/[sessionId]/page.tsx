@@ -21,6 +21,7 @@ import { SessionPerformerLine } from "@/components/session-performer-line";
 import { toPerformerOptions } from "@/lib/sessions/performer-options";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { loadVisitLedger, visitIsBilled } from "@/lib/billing/visit-payments";
+import { visitBalance } from "@/lib/billing/visit-payments-core";
 import { visitMoneySummary } from "@/lib/billing/visit-money";
 import { getSessionPaymentEligibility } from "@/lib/billing/session-payment-eligibility";
 import { AftercareExplainedToggle } from "@/app/(app)/records/record-forms";
@@ -272,6 +273,8 @@ export default async function SessionDetailPage({
   const billedLedger = visitBilled && linkedAppointmentId ? await loadVisitLedger(studio.id, linkedAppointmentId) : null;
   const billedMoney = billedLedger?.ok ? visitMoneySummary(billedLedger.ledger) : null;
   const billedCurrency = billedLedger?.ok ? (billedLedger.ledger.bill?.currency ?? null) : null;
+  // The same figure checkout shows as "Still to collect": $0.00 for a refunded, fully paid visit (a refund does not reopen a balance).
+  const billedStillToCollectCents = billedLedger?.ok ? (visitBalance(billedLedger.ledger)?.collectableCents ?? null) : null;
 
   if (linkedAppointmentId) {
     const supabaseForDefault = await createClient();
@@ -1184,6 +1187,7 @@ export default async function SessionDetailPage({
           visitBilled={visitBilled}
           billedMoney={billedMoney}
           billedCurrency={billedCurrency}
+          billedStillToCollectCents={billedStillToCollectCents}
           // Trusted, server-derived owner flag: gates the owner-only Technical
           // payment details disclosure + the Refund button (server refund
           // authorization is unchanged; it is owner-only there too).

@@ -307,4 +307,39 @@ describe("Collected / Refunded / Net on the statement and its print paper", () =
     expect(out).toMatch(/data-testid="statement-money-net">\$0\.00</);
     expect(out).toMatch(/>\$60\.00</);
   });
+  // Item 4 (Sam, 27 Nov 2026): while a refund awaits confirmation it is "Refund pending $X", never in Refunded or Net, and the not-final note is shown on the screen AND the print paper.
+  const pending = () => docFor([visit("p1", "2026-11-17", "11:00", {
+    feeCandidates: [{ source: "settlement_quote", cents: 22500 }],
+    lines: [
+      { kind: "collected_card_session", cents: 10000, source: "card" }, { kind: "collected_cash", cents: 12500, source: "settlement" },
+      { kind: "unresolved", cents: null, source: "settlement", pendingCents: 4000 },
+    ],
+  })]);
+  it("pending refund, screen: Refund pending $40.00, Refunded $0.00, Net $225.00, and the not-final note", () => {
+    const out = html(pending());
+    expect(out).toMatch(/data-testid="statement-money-refund_pending">\$40\.00</);
+    expect(out).toMatch(/data-testid="statement-money-refunded">\$0\.00</);
+    expect(out).toMatch(/data-testid="statement-money-net">\$225\.00</);
+    expect(out).toContain("Refund pending");
+    expect(out).toMatch(/data-testid="statement-money-not-final"[^>]*>Not counted in Refunded or Net until Stripe confirms it\./);
+  });
+  it("pending refund, print paper: the same line and the same note", () => {
+    const out = printed(pending());
+    expect(out).toContain("Collected $225.00");
+    expect(out).toContain("Refunded $0.00 · Net $225.00");
+    expect(out).toContain("Refund pending $40.00");
+    expect(out).toContain("Not counted in Refunded or Net until Stripe confirms it.");
+  });
+  it("once the refund is confirmed: Refunded $40.00, Net $185.00, no pending line and no not-final note, on both", () => {
+    const confirmed = docFor([visit("p1", "2026-11-17", "11:00", {
+      feeCandidates: [{ source: "settlement_quote", cents: 22500 }],
+      lines: [{ kind: "collected_card_session", cents: 10000, source: "card" }, { kind: "collected_cash", cents: 12500, source: "settlement" }, { kind: "refunded_partial", cents: 4000, source: "settlement" }],
+    })]);
+    for (const out of [html(confirmed), printed(confirmed)]) {
+      expect(out).not.toContain("Refund pending");
+      expect(out).not.toContain("Not counted in Refunded or Net");
+    }
+    expect(html(confirmed)).toMatch(/data-testid="statement-money-net">\$185\.00</);
+    expect(printed(confirmed)).toContain("Refunded $40.00 · Net $185.00");
+  });
 });

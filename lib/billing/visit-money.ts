@@ -56,13 +56,13 @@ export function visitMoneySummary(ledger: VisitLedger): VisitMoneySummary {
  * The same figures from a client statement's totals, so the arithmetic and wording are identical. `paidCents` mixes two models: a payment partly refunded in the split ledger
  * stays in it in full, a legacy fully refunded card payment is taken out. Collected is what was received either way (paid + refunded - the part-refunds still inside paid).
  */
-export function statementMoneySummary(totals: { paidCents: number; refundedCents: number }, partialRefundedCents: number, awaitingVisits: number): VisitMoneySummary {
+export function statementMoneySummary(totals: { paidCents: number; refundedCents: number }, partialRefundedCents: number, awaitingVisits: number, refundPendingCents = 0): VisitMoneySummary {
   const collectedCents = totals.paidCents + totals.refundedCents - partialRefundedCents;
   const refundedCents = totals.refundedCents;
   return {
     collectedCents, refundedCents, netCents: collectedCents - refundedCents,
-    refundPendingCents: 0, waitingCents: 0, cardPendingCents: 0, reviewOpen: false,
-    final: awaitingVisits === 0,
+    refundPendingCents, waitingCents: 0, cardPendingCents: 0, reviewOpen: false,
+    final: awaitingVisits === 0 && refundPendingCents === 0,
   };
 }
 

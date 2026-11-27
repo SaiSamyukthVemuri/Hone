@@ -120,8 +120,8 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
     readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null; state: string }>(ids, (chunk) =>
       supabase.from("visit_external_payments").select("appointment_id, method, amount_cents, currency, state").eq("studio_id", studioId).in("appointment_id", chunk),
     ),
-    readInChunks<{ appointment_id: string | null; attempt_id: string | null; amount_cents: number | null; currency: string | null; status: string; legacy: boolean }>(ids, (chunk) =>
-      supabase.from("payment_refunds").select("appointment_id, attempt_id, amount_cents, currency, status, legacy").eq("studio_id", studioId).in("appointment_id", chunk),
+    readInChunks<{ appointment_id: string | null; attempt_id: string | null; amount_cents: number | null; currency: string | null; status: string; legacy: boolean; kind: string }>(ids, (chunk) =>
+      supabase.from("payment_refunds").select("appointment_id, attempt_id, amount_cents, currency, status, legacy, kind").eq("studio_id", studioId).in("appointment_id", chunk),
     ),
     // OPEN reviews (a refund made in the Stripe dashboard that the owner has not confirmed): the visit is unresolved until then, never "paid".
     readInChunks<{ appointment_id: string | null; amount_cents: number | null; currency: string | null }>(ids, (chunk) =>
@@ -130,7 +130,9 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   ]);
   if (!bills.ok || !externals.ok || !refunds.ok || !reviews.ok) return { ok: false };
   const ledgerRows: AssembleSettlementRow[] = [];
-  for (const b of bills.rows) ledgerRows.push({ appointmentId: b.appointment_id, method: "bill_total", amountCents: null, currency: b.currency, quotedAmountCents: b.total_cents });
+  // Succeeded PRICE REDUCTIONS are already inside the bill total; a payment reversal is not (Sam, 27 Nov 2026: a reversal never reopens a balance, as visit_payment_position, 0394).
+  const reducedOf = (appointmentId: string) => refunds.rows.filter((r) => r.appointment_id === appointmentId && !r.legacy && r.kind === "price_reduction" && r.status === "succeeded").reduce((n, r) => n + (r.amount_cents ?? 0), 0);
+  for (const b of bills.rows) ledgerRows.push({ appointmentId: b.appointment_id, method: "bill_total", amountCents: null, currency: b.currency, quotedAmountCents: b.total_cents, reducedCents: reducedOf(b.appointment_id) });
   for (const e of externals.rows) {
     if (e.state === "voided") continue; // retracted before any money moved: nothing to show
     // Confirmed money is cash / e-transfer / other as the owner recorded it. A transfer still waiting for confirmation is owed, not received.
@@ -143,7 +145,7 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   for (const r of refunds.rows) {
     // A legacy row mirrors a full refund the attempt itself already carries (the card line shows it), and a failed refund moved nothing.
     if (r.legacy || r.status === "failed" || !r.appointment_id) continue;
-    ledgerRows.push({ appointmentId: r.appointment_id, method: r.status === "succeeded" ? "partial_refund" : "refund_in_flight", amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: null });
+    ledgerRows.push({ appointmentId: r.appointment_id, method: r.status === "succeeded" ? "partial_refund" : "refund_in_flight", amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: null, ...(r.status === "succeeded" ? {} : { pendingCents: r.amount_cents ?? 0 }) });
   }
 
   const [feeCards, sessionCards, settlements, legacy] = await Promise.all([
@@ -170,7 +172,7 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   if (!feeCards.ok || !sessionCards.ok || !settlements.ok || !legacy.ok) return { ok: false };
 
   for (const rv of reviews.rows) {
-    if (rv.appointment_id) ledgerRows.push({ appointmentId: rv.appointment_id, method: "refund_in_flight", amountCents: rv.amount_cents, currency: rv.currency, quotedAmountCents: null });
+    if (rv.appointment_id) ledgerRows.push({ appointmentId: rv.appointment_id, method: "refund_in_flight", amountCents: rv.amount_cents, currency: rv.currency, quotedAmountCents: null, pendingCents: rv.amount_cents ?? 0 });
   }
   const cardRows: StatementCardRow[] = [];
   for (const r of [...feeCards.rows, ...sessionCards.rows]) {
@@ -186,7 +188,7 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
         mine.filter((x) => x.status === "succeeded").reduce((n, x) => n + (x.amount_cents ?? 0), 0), mine.filter((x) => x.status === "pending_stripe").reduce((n, x) => n + (x.amount_cents ?? 0), 0),
       );
       if (gap.succeededGapCents > 0) ledgerRows.push({ appointmentId, method: "partial_refund", amountCents: gap.succeededGapCents, currency: r.currency, quotedAmountCents: null });
-      if (gap.pendingGapCents > 0) ledgerRows.push({ appointmentId, method: "refund_in_flight", amountCents: gap.pendingGapCents, currency: r.currency, quotedAmountCents: null });
+      if (gap.pendingGapCents > 0) ledgerRows.push({ appointmentId, method: "refund_in_flight", amountCents: gap.pendingGapCents, currency: r.currency, quotedAmountCents: null, pendingCents: gap.pendingGapCents });
     }
     cardRows.push({
       appointmentId,

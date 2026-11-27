@@ -85,24 +85,21 @@ test("the $225 / $40 / $185 case reads the same on checkout, the visit page and 
   await expect(panel.getByTestId("money-net")).toHaveText(money(11000));
   await expect(panel.getByTestId("money-waiting")).toHaveText(money(7500));
 
-  // Confirm the transfer.
-  await page.goto("/dashboard");
-  const m2 = await openCheckout(page);
-  const p2 = m2.getByTestId("split-visit-payments");
-  await p2.getByRole("button", { name: `Confirm ${money(7500)} transfer received`, exact: true }).click();
-  await expect.poll(async () => (await adminQuery(`select state from public.visit_external_payments where appointment_id = $1 and method = 'paid_e_transfer'`, [seed.appointmentId])).rows[0]?.state, { timeout: 30_000 }).toBe("confirmed");
+  // 1. CHECKOUT, in the window where the panel can still be open. A visit that is paid in full has no Checkout button on the roster (the modal belongs to that button and unmounts
+  //    with it), so the final $225 / $40 / $185 / $0.00 checkout figures are pinned by tests/components/visit-money-screens.test.ts and the database figures below, not a browser read.
+  await expect(panel.getByTestId("split-balance").getByText(/^(Collected|Refunded|Net)$/)).toHaveCount(3);
+  await expect(panel.getByTestId("money-refund_pending")).toHaveCount(0);
+  await shots(page, "1-checkout-transfer-pending", modal);
 
-  // 1. CHECKOUT
+  await panel.getByRole("button", { name: `Confirm ${money(7500)} transfer received`, exact: true }).click();
+  await expect.poll(async () => (await adminQuery(`select state from public.visit_external_payments where appointment_id = $1 and method = 'paid_e_transfer'`, [seed.appointmentId])).rows[0]?.state, { timeout: 30_000 }).toBe("confirmed");
+  // PRODUCT RULE (Sam, 27 Nov 2026): refunding a fully paid visit does not reopen a balance. The database says nothing is owed.
+  expect(Number((await adminQuery(`select outstanding_cents from public.visit_payment_position((select studio_id from public.visit_bills where appointment_id = $1 and superseded_at is null), $1)`, [seed.appointmentId])).rows[0].outstanding_cents)).toBe(0);
+
+  // The roster offers no Checkout and says Paid for a visit that is paid after the refund.
   await page.goto("/dashboard");
-  const m3 = await openCheckout(page);
-  const p3 = m3.getByTestId("split-visit-payments");
-  await expect(p3.getByTestId("money-collected")).toHaveText(money(22500));
-  await expect(p3.getByTestId("money-refunded")).toHaveText(money(4000));
-  await expect(p3.getByTestId("money-net")).toHaveText(money(18500));
-  await expect(p3.getByTestId("split-balance").getByText(/^(Collected|Refunded|Net)$/)).toHaveCount(3);
-  await expect(p3.getByTestId("money-refund_pending")).toHaveCount(0);
-  await expect(p3.getByTestId("money-not-final")).toHaveCount(0);
-  await shots(page, "1-checkout", m3);
+  await expect(page.getByTestId("checkout-button")).toHaveCount(0);
+  await expect(page.getByTestId("appointment-payment-paid")).toHaveCount(1);
 
   // 2. VISIT page (owner only), in place of the single card payment's "Paid".
   await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
@@ -110,7 +107,9 @@ test("the $225 / $40 / $185 case reads the same on checkout, the visit page and 
   await expect(region.getByTestId("visit-money-collected")).toHaveText(money(22500));
   await expect(region.getByTestId("visit-money-refunded")).toHaveText(money(4000));
   await expect(region.getByTestId("visit-money-net")).toHaveText(money(18500));
+  await expect(region.getByTestId("visit-money-still_to_collect")).toHaveText(money(0));
   await expect(region.getByText(/^Paid ·/)).toHaveCount(0);
+  await expect(region.getByText(/Not paid/i)).toHaveCount(0);
   await shots(page, "2-visit");
 
   // 3. STATEMENT, with the card attempt read as live money (see the note at the top).
@@ -120,5 +119,52 @@ test("the $225 / $40 / $185 case reads the same on checkout, the visit page and 
   await expect(page.getByTestId("statement-money-refunded")).toHaveText("$40.00");
   await expect(page.getByTestId("statement-money-net")).toHaveText("$185.00");
   await expect(page.locator("main")).not.toContainText("Total paid");
+  await expect(page.locator("main")).not.toContainText("Not paid"); // the refund did not reopen the visit
   await shots(page, "3-statement");
+});
+
+test("a genuinely unpaid bill still shows what is owed: $225 bill, $185 received -> Still to collect $40.00, Not paid, and the Checkout prompt", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+  const modal = await openCheckout(page);
+  await modal.getByRole("button", { name: "Split this payment", exact: true }).click();
+  const panel = modal.getByTestId("split-visit-payments");
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(22500));
+  const amount = (v: string) => panel.getByLabel(/^Amount \(CAD\)/).fill(v);
+  const pick = (label: string) => panel.getByText(label, { exact: true }).first().click();
+  await amount("100.00");
+  await panel.getByRole("button", { name: `Charge card ${money(10000)}`, exact: true }).click();
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500), { timeout: 30_000 });
+  await pick("Cash"); await amount("50.00");
+  await panel.getByRole("button", { name: `Record cash received ${money(5000)}`, exact: true }).click();
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(7500));
+  await pick("E-transfer"); await amount("35.00");
+  await panel.getByRole("button", { name: `Record transfer ${money(3500)}`, exact: true }).click();
+  await expect(panel.getByTestId("split-pending-transfer")).toBeVisible();
+  await panel.getByRole("button", { name: `Confirm ${money(3500)} transfer received`, exact: true }).click();
+  await expect.poll(async () => (await adminQuery(`select state from public.visit_external_payments where appointment_id = $1 and method = 'paid_e_transfer'`, [seed.appointmentId])).rows[0]?.state, { timeout: 30_000 }).toBe("confirmed");
+
+  expect(Number((await adminQuery(`select outstanding_cents from public.visit_payment_position((select studio_id from public.visit_bills where appointment_id = $1 and superseded_at is null), $1)`, [seed.appointmentId])).rows[0].outstanding_cents)).toBe(4000);
+
+  await page.goto("/dashboard");
+  await expect(page.getByTestId("checkout-button")).toHaveCount(1); // the Checkout prompt stays
+  const m2 = await openCheckout(page);
+  const p2 = m2.getByTestId("split-visit-payments");
+  await expect(p2.getByTestId("money-collected")).toHaveText(money(18500));
+  await expect(p2.getByTestId("money-refunded")).toHaveText(money(0));
+  await expect(p2.getByTestId("money-net")).toHaveText(money(18500));
+  await expect(p2.getByTestId("split-collectable")).toHaveText(money(4000));
+  await shots(page, "u1-checkout", m2);
+
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  const region = page.getByRole("region", { name: "Session payment" });
+  await expect(region.getByTestId("visit-money-net")).toHaveText(money(18500));
+  await expect(region.getByTestId("visit-money-still_to_collect")).toHaveText(money(4000));
+  await shots(page, "u2-visit");
+
+  await adminQuery(`update public.payment_charge_attempts set stripe_livemode = true where appointment_id = $1`, [seed.appointmentId]);
+  await page.goto(`/financials/statements/${seed.clientId}`);
+  await expect(page.getByTestId("statement-money-net")).toHaveText("$185.00");
+  await expect(page.locator("main")).toContainText("Not paid");
+  await shots(page, "u3-statement");
 });

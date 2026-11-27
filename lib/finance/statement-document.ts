@@ -350,13 +350,15 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
     // What the fee leaves unsettled is measured against RETAINED money and waivers ONLY. A refund is never treated as a service credit: nothing here says
     // the returned money bought anything, so refunded cents never reduce the amount owed. With a refund on record and a recorded fee still uncovered, the
     // amount owed is established only when the owner attested it against a recorded quote; otherwise the balance is not established.
-    // A split-payments visit (HON-123 / HON-122) has a BILL, the owner-recorded amount owed. Every SUCCEEDED split refund, of either kind (a payment returned, or a price
-    // reduced and the money returned with it), leaves less money RETAINED than was collected, exactly as the checkout's own balance (visit_payment_position) counts it:
-    // a $100 bill with $60 cash, then a $40 price reduction and refund, is a $60 bill with $20 retained, so $40 is due; a $100 bill paid in full and reduced to $60 with
-    // $40 returned has $60 retained against $60, so nothing is. The bill itself establishes the amount owed, so no separate attestation is needed for it. An older visit
-    // with no bill keeps the rule above unchanged.
+    // A split-payments visit (HON-123 / HON-122) has a BILL, the owner-recorded amount owed, so no separate attestation is needed for it. A refund does not by itself reopen a
+    // balance (Sam, 27 Nov 2026): $225 received on a $225 bill, then $40 handed back, is still paid. Only a succeeded PRICE REDUCTION is added back, because its bill already
+    // dropped: $60 cash on a bill reduced to $60, then $40 returned for a reduction, leaves the received $60 less the reduced $40 against $60, so $40 is due; a bill paid in full
+    // at $100 and reduced to $60 with $40 returned owes nothing. An older visit with no bill keeps the rule above unchanged.
     const billed = has("bill_note");
-    const retained = billed ? Math.max(0, paid - sumKinds(lines, ["refunded_partial"])) : paid;
+    // PRODUCT RULE (Sam, 27 Nov 2026), the same as visit_payment_position (0394): refunding a paid visit does not by itself reopen a balance. What was RECEIVED counts in full
+    // (a payment reversal, even a legacy full card refund, leaves it counted), and only a succeeded price reduction, whose bill already dropped, is added back.
+    const reduced = billed ? lines.reduce((n, l) => n + (l.kind === "bill_note" && typeof l.reducedCents === "number" ? l.reducedCents : 0), 0) : 0;
+    const retained = billed ? Math.max(0, paid + sumKinds(lines, ["refunded_card_session"]) - reduced) : paid;
     const shortfall = feeCents === null ? 0 : feeCents - retained - waived;
     if (feeCents !== null && shortfall > 0) {
       if ((attestedOwes || billed) && quoteRecorded) {
@@ -719,5 +721,12 @@ export function toCsvRows(doc: StatementDocument): Cell[][] {
 export function partialRefundedCents(doc: Pick<StatementDocument, "visits">): number {
   let n = 0;
   for (const v of doc.visits) n += sumKinds(v.lines, ["refunded_partial"]);
+  return n;
+}
+
+/** Cents of refunds still awaiting confirmation (a refund with Stripe, a gap the card's own columns report, an open review): never in Refunded or Net, shown as "Refund pending". */
+export function refundPendingCents(doc: Pick<StatementDocument, "visits">): number {
+  let n = 0;
+  for (const v of doc.visits) for (const l of v.lines) if (l.kind === "unresolved" && typeof l.pendingCents === "number") n += l.pendingCents;
   return n;
 }

@@ -40,6 +40,10 @@ export type StatementSettlementRow = {
   method: string;
   amountCents: number | null;
   currency: string | null;
+  /** `bill_total` rows only: succeeded price reductions inside the bill (see StatementMoneyLine.reducedCents). */
+  reducedCents?: number;
+  /** Only on an `unresolved` line from a refund still in flight (or an open review): the cents awaiting confirmation. Never in a total; shown as "Refund pending". */
+  pendingCents?: number;
 };
 
 /** `manual_fee_charge_attempts`: the legacy manual fee ledger. It carries NO refund record, so a succeeded real fee cannot be proven un-refunded. */
@@ -103,7 +107,13 @@ export type StatementBucket = {
   rows: number;
 };
 
-export type StatementMoneyLine = { kind: StatementKind; cents: number | null; source: "card" | "settlement" | "legacy_fee" };
+export type StatementMoneyLine = {
+  kind: StatementKind; cents: number | null; source: "card" | "settlement" | "legacy_fee";
+  /** Only on a `bill_note` line: cents of SUCCEEDED price reductions already inside the bill (the bill dropped by them). A payment reversal never appears here: it does not reopen a balance. */
+  reducedCents?: number;
+  /** Only on an `unresolved` line from a refund still in flight (or an open review): the cents awaiting confirmation. Never in a total; shown as "Refund pending". */
+  pendingCents?: number;
+};
 export type StatementVisit = {
   appointmentId: string;
   startsAt: string;
@@ -206,6 +216,7 @@ export function buildStatement(input: {
     appointmentId: string,
     source: StatementMoneyLine["source"],
     c: { kind: StatementKind; cents: number | null },
+    extra?: { reducedCents?: number; pendingCents?: number },
   ): void => {
     rowsIn += 1;
     const appt = apptById.get(appointmentId);
@@ -219,12 +230,12 @@ export function buildStatement(input: {
     if (appt) {
       let v = visitMap.get(appt.id);
       if (!v) visitMap.set(appt.id, (v = { appointmentId: appt.id, startsAt: appt.startsAt, practitionerId: pid, lines: [] }));
-      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source });
+      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source, ...(c.kind === "bill_note" && extra?.reducedCents ? { reducedCents: extra.reducedCents } : {}), ...(c.kind === "unresolved" && extra?.pendingCents ? { pendingCents: extra.pendingCents } : {}) });
     }
   };
 
   for (const r of input.cardRows) place(r.appointmentId, "card", classifyCardRow(r, input.studioCurrency));
-  for (const r of input.settlementRows) place(r.appointmentId, "settlement", classifySettlementRow(r, input.studioCurrency));
+  for (const r of input.settlementRows) place(r.appointmentId, "settlement", classifySettlementRow(r, input.studioCurrency), { reducedCents: r.reducedCents, pendingCents: r.pendingCents });
   for (const r of input.legacyFeeRows) place(r.appointmentId, "legacy_fee", classifyLegacyFeeRow(r, input.studioCurrency));
 
   const byPractitioner = [...per.entries()]

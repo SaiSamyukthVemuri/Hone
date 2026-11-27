@@ -85,6 +85,19 @@ describe("the statement itemises a visit paid in parts", () => {
     expect(st.all.kinds.unresolved.count).toBe(1);
     expect(studioVisitStatus(st.visits[0].lines, 22500).label).toBe("Unresolved");
   });
+  it("the pending amount reaches the visit's line (for 'Refund pending $X'), and a confirmed refund carries none", async () => {
+    const pending = await build({ ...LEDGER, payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "pending_stripe", legacy: false, kind: "payment_reversal" }] });
+    const line = pending.st.visits[0].lines.find((l) => l.kind === "unresolved");
+    expect(line?.pendingCents).toBe(4000);
+    const confirmed = await build(LEDGER);
+    expect(confirmed.st.visits[0].lines.some((l) => l.pendingCents !== undefined)).toBe(false);
+  });
+  it("only a succeeded price reduction is carried on the bill line; a reversal never is", async () => {
+    const rev = await build({ ...LEDGER, payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" }] });
+    expect(rev.st.visits[0].lines.find((l) => l.kind === "bill_note")?.reducedCents).toBeUndefined();
+    const red = await build({ ...LEDGER, payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "price_reduction" }] });
+    expect(red.st.visits[0].lines.find((l) => l.kind === "bill_note")?.reducedCents).toBe(4000);
+  });
   it("the visit pill says Part refunded once money has come back", async () => {
     const { st } = await build(LEDGER);
     expect(studioVisitStatus(st.visits[0].lines, 22500).label).toBe("Part refunded");
@@ -112,14 +125,14 @@ describe("the client document judges a visit against its bill", () => {
     expect(v.state).not.toBe("paid");
     expect(v.paidCents).toBe(10000);
   });
-  it("fully paid in parts, then $40 returned: the refund is shown and the $40 is due again, as the checkout balance counts it", async () => {
+  it("fully paid in parts, then $40 returned: the refund is shown and nothing is due again (Sam, 27 Nov 2026), as the checkout balance counts it", async () => {
     const v = await doc({
       payment_charge_attempts: [card(10000)], visit_bills: LEDGER.visit_bills, sessions: SESSIONS,
       visit_external_payments: [{ appointment_id: A, method: "paid_cash", amount_cents: 12500, currency: "cad", state: "confirmed" }],
       payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false }],
     });
-    expect(v.state).toBe("confirmed_unpaid");
-    expect(v.owedCents).toBe(4000);
+    expect(v.state).toBe("paid");
+    expect(v.owedCents).toBeNull();
     expect(v.paidCents).toBe(22500);
     expect(v.refundedCents).toBe(4000);
   });
@@ -146,16 +159,25 @@ describe("the client document judges a visit against its bill", () => {
   it("the unconfirmed transfer leaves its amount owed against the bill", async () => {
     const v = await doc(LEDGER);
     expect(v.state).toBe("confirmed_unpaid");
-    expect(v.owedCents).toBe(11500); // 225 - (100 card + 50 cash - 40 returned); the $75 transfer is owed, not received, and the $40 returned is owed again
+    expect(v.owedCents).toBe(7500); // 225 - (100 card + 50 cash): the $75 transfer is owed, not received; the $40 returned does not reopen anything (Sam, 27 Nov 2026)
   });
-  it("a payment returned leaves less retained: $100 cash with $40 reversed shows $40 due on a $100 bill", async () => {
+  it("a payment reversal does NOT reopen a balance: $100 cash with $40 reversed on a $100 bill is paid (Sam, 27 Nov 2026)", async () => {
     const v = await doc({
       visit_bills: [{ appointment_id: A, total_cents: 10000, currency: "cad" }], sessions: SESSIONS,
       visit_external_payments: [{ appointment_id: A, method: "paid_cash", amount_cents: 10000, currency: "cad", state: "confirmed" }],
       payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" }],
     });
-    expect(v.state).toBe("confirmed_unpaid");
-    expect(v.owedCents).toBe(4000);
+    expect(v.state).toBe("paid");
+    expect(v.owedCents).toBeNull();
+    expect(v.refundedCents).toBe(4000);
+  });
+  it("a genuinely unpaid bill still shows what is owed: $225 bill with $185 received is $40 due, with or without a reversal on top", async () => {
+    const base = { visit_bills: [{ appointment_id: A, total_cents: 22500, currency: "cad" }], sessions: SESSIONS,
+      visit_external_payments: [{ appointment_id: A, method: "paid_cash", amount_cents: 18500, currency: "cad", state: "confirmed" }] };
+    const plain = await doc(base);
+    expect([plain.state, plain.owedCents]).toEqual(["confirmed_unpaid", 4000]);
+    const withReversal = await doc({ ...base, payment_refunds: [{ appointment_id: A, amount_cents: 2000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" }] });
+    expect([withReversal.state, withReversal.owedCents]).toEqual(["confirmed_unpaid", 4000]); // the reversal changes nothing about what is owed
   });
   it("a price reduction with money returned counts the same way: $60 cash on a bill reduced from $100 to $60, then $40 returned, leaves $20 retained and $40 due (Codex P1)", async () => {
     const v = await doc({

@@ -209,7 +209,8 @@ test("a $40 partial refund with a lost response: ONE refund at Stripe, $60 still
   await page.reload();
   const modal = await openCheckout(page);
   const panel2 = modal.getByTestId("split-visit-payments");
-  await expect(panel2.getByTestId("split-collectable")).toHaveText(money(16500)); // $225 − ($100 − $40 returned)
+  // PRODUCT RULE (Sam, 27 Nov 2026): returning money does not reopen a balance, so the $40 refund leaves $225 − $100 card = $125 still to collect (not $165).
+  await expect(panel2.getByTestId("split-collectable")).toHaveText(money(12500));
   await panel2.getByRole("button", { name: "Refund or reduce a payment" }).click();
   await expect(panel2.getByRole("combobox")).toContainText(`up to ${money(6000)} refundable`);
   expect(refundsAtStripe()).toHaveLength(1);

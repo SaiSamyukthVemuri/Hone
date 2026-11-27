@@ -225,6 +225,7 @@ export function SessionPaymentPrepareCard({
   canRecordSettlement = true,
   visitBilled = false,
   billedMoney = null,
+  billedStillToCollectCents = null,
   billedCurrency = null,
   onSettlementRecorded,
   initialMethod,
@@ -263,6 +264,8 @@ export function SessionPaymentPrepareCard({
   visitBilled?: boolean;
   /** A billed visit's Collected / Refunded / Net (owner only), shown in place of the single card payment's "Paid". */
   billedMoney?: VisitMoneySummary | null;
+  /** A billed visit's "Still to collect" (same figure as checkout), shown under Net. */
+  billedStillToCollectCents?: number | null;
   billedCurrency?: PaymentCurrency | null;
   // Pass-through to AppointmentSettlementControls, and the ONLY refresh-shaped
   // prop this card accepts.
@@ -503,7 +506,7 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
-      {visitBilled && billedMoney && <VisitMoneyBlock summary={billedMoney} currency={billedCurrency} />}
+      {visitBilled && billedMoney && <VisitMoneyBlock summary={billedMoney} currency={billedCurrency} stillToCollectCents={billedStillToCollectCents} />}
       {/* A billed visit shows Collected / Refunded / Net above instead of one card payment's "Paid". */}
       {!(visitBilled && billedMoney) && (<>
       {activeAttempt && (

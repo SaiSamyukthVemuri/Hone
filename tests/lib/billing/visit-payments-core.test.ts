@@ -39,21 +39,33 @@ describe("visitBalance mirrors the database position", () => {
     }))!;
     expect(b.collectableCents).toBe(22500);
   });
-  it("a payment_reversal raises what is collectable; a price_reduction (bill already lowered) leaves it unchanged", () => {
+  it("a payment_reversal does NOT reopen a balance (Sam, 27 Nov 2026); a price_reduction (bill already lowered) leaves it unchanged", () => {
     const paid = { kind: "external" as const, id: "e", method: "paid_cash" as const, amountCents: 10000, state: "confirmed" as const, at: "1", note: null };
     const rev = visitBalance(ledger({ externals: [paid], refunds: [{ id: "r", amountCents: 4000, kind: "payment_reversal", status: "succeeded", attemptId: null, externalPaymentId: "e", reason: "x", at: "2", platformFeeReturnedCents: null }] }))!;
-    expect(rev.collectableCents).toBe(22500 - 10000 + 4000);
+    expect(rev.collectableCents).toBe(22500 - 10000); // unchanged by the reversal
+    expect(rev.refundedCents).toBe(4000); // the money returned is still reported
     const red = visitBalance({ bill: { ...bill, totalCents: 19500 }, cards: [], externals: [paid], refunds: [{ id: "r", amountCents: 3000, kind: "price_reduction", status: "succeeded", attemptId: null, externalPaymentId: "e", reason: "x", at: "2", platformFeeReturnedCents: null }] })!;
     expect(red.collectableCents).toBe(22500 - 10000);
+  });
+  it("the $225 case: fully paid, then a $40 reversal: nothing is collectable; $185 received on a $225 bill: $40 is", () => {
+    const card = { kind: "card" as const, id: "c", amountCents: 10000, status: "succeeded", at: "1", platformFeeCents: null };
+    const cash = { kind: "external" as const, id: "e1", method: "paid_cash" as const, amountCents: 5000, state: "confirmed" as const, at: "2", note: null };
+    const xfer = { kind: "external" as const, id: "e2", method: "paid_e_transfer" as const, amountCents: 7500, state: "confirmed" as const, at: "3", note: null };
+    const rev = { id: "r", amountCents: 4000, kind: "payment_reversal" as const, status: "succeeded" as const, attemptId: "c", externalPaymentId: null, reason: "x", at: "4", platformFeeReturnedCents: null };
+    expect(visitBalance(ledger({ cards: [card], externals: [cash, xfer], refunds: [rev] }))!.collectableCents).toBe(0);
+    const short = visitBalance(ledger({ cards: [{ ...card, amountCents: 6000 }], externals: [cash, xfer] }))!; // 60 + 50 + 75 = 185 received
+    expect(short.collectableCents).toBe(4000);
+    expect(visitBalance(ledger({ cards: [{ ...card, amountCents: 6000 }], externals: [cash, xfer], refunds: [rev] }))!.collectableCents).toBe(4000); // a reversal leaves an unpaid balance as it was
   });
   it("no bill, no balance (a legacy visit is read the old way)", () => expect(visitBalance({ bill: null, cards: [], externals: [], refunds: [] })).toBeNull());
 });
 
-describe("visitBalance: only a SUCCEEDED refund frees capacity (0394)", () => {
+describe("visitBalance: only a SUCCEEDED price reduction frees capacity (0394)", () => {
   const bill = { id: "b", totalCents: 22500, currency: "cad", referenceFeeCents: null, feeAdjustmentReason: null, at: "2026-11-27T10:00" } as never;
   const card = { kind: "card", id: "c1", amountCents: 22500, status: "succeeded", at: "2026-11-27T10:01", platformFeeCents: null } as const;
-  const refund = (status: "pending_stripe" | "succeeded" | "failed") => ({ id: "r", amountCents: 5000, kind: "payment_reversal", status, attemptId: "c1", externalPaymentId: null, reason: "x", at: "2026-11-27T10:02", platformFeeReturnedCents: null }) as const;
-  it("pending and failed refunds free nothing, a succeeded one frees its amount", () => {
+  const refund = (status: "pending_stripe" | "succeeded" | "failed", kind: "payment_reversal" | "price_reduction" = "price_reduction") => ({ id: "r", amountCents: 5000, kind, status, attemptId: "c1", externalPaymentId: null, reason: "x", at: "2026-11-27T10:02", platformFeeReturnedCents: null }) as const;
+  it("pending and failed price reductions free nothing, a succeeded one frees its amount, and a succeeded payment_reversal frees nothing", () => {
+    expect(visitBalance({ bill, cards: [card], externals: [], refunds: [refund("succeeded", "payment_reversal")] } as never)!.collectableCents).toBe(0);
     const at = (status: "pending_stripe" | "succeeded" | "failed") => visitBalance({ bill, cards: [card], externals: [], refunds: [refund(status)] } as never)!.collectableCents;
     expect(at("pending_stripe")).toBe(0);
     expect(at("failed")).toBe(0);

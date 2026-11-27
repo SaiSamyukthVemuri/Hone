@@ -36,6 +36,20 @@ describe("checkout panel", () => {
     expect(labels(out)).not.toContain("Received");
     expect(labels(out)).toContain("Still to collect");
   });
+  it("PRODUCT RULE: a refunded, fully paid visit has Still to collect $0.00 on checkout", () => {
+    const out = checkout(base);
+    expect(cell(out, "split-collectable")).toBe("$0.00 CAD");
+  });
+  it("a genuinely unpaid bill still shows what is owed: $225 bill, $185 received -> Still to collect $40.00", () => {
+    const unpaid: VisitLedger = { ...base, externals: [base.externals[0], { ...base.externals[1], amountCents: 3500 }], refunds: [] };
+    const out = checkout(unpaid);
+    expect([cell(out, "money-collected"), cell(out, "money-refunded"), cell(out, "money-net"), cell(out, "split-collectable")]).toEqual(["$185.00 CAD", "$0.00 CAD", "$185.00 CAD", "$40.00 CAD"]);
+  });
+  it("an unpaid bill WITH a reversal is told apart: the reversal leaves what is owed unchanged", () => {
+    const unpaidRefunded: VisitLedger = { ...base, externals: [base.externals[0], { ...base.externals[1], amountCents: 3500 }] };
+    const out = checkout(unpaidRefunded);
+    expect([cell(out, "money-collected"), cell(out, "money-refunded"), cell(out, "money-net"), cell(out, "split-collectable")]).toEqual(["$185.00 CAD", "$40.00 CAD", "$145.00 CAD", "$40.00 CAD"]);
+  });
   it("a pending refund shows 'Refund pending $40.00' and says Net is not final, and Refunded stays $0.00", () => {
     const out = checkout({ ...base, refunds: [{ ...base.refunds[0], status: "pending_stripe" }] });
     expect(cell(out, "money-refunded")).toBe("$0.00 CAD");
@@ -61,6 +75,12 @@ describe("visit page (session payment card)", () => {
     expect(labels(out)).toEqual(["Collected", "Refunded", "Net"]);
     expect([cell(out, "visit-money-collected"), cell(out, "visit-money-refunded"), cell(out, "visit-money-net")]).toEqual(["$225.00 CAD", "$40.00 CAD", "$185.00 CAD"]);
     expect(out).not.toMatch(/Paid/);
+  });
+  it("shows Still to collect under Net when given: $0.00 after a refund of a fully paid visit, $40.00 for the unpaid bill", () => {
+    const render = (c: number) => renderToStaticMarkup(createElement(VisitMoneyBlock, { summary: visitMoneySummary(base), currency: "cad", stillToCollectCents: c }));
+    expect(cell(render(0), "visit-money-still_to_collect")).toBe("$0.00 CAD");
+    expect(cell(render(4000), "visit-money-still_to_collect")).toBe("$40.00 CAD");
+    expect(visitPage(base)).not.toContain("Still to collect");
   });
   it("a pending refund is its own line and Net is flagged not final", () => {
     const out = visitPage({ ...base, refunds: [{ ...base.refunds[0], status: "pending_stripe" }] });
