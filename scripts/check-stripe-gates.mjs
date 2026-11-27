@@ -505,7 +505,7 @@ function evaluateUnknownStripeWrites(files) {
 // charges, checkout.sessions). This is the generic deny coverage: not a per-
 // resource allowlist (harmless reads like `stripe.invoices.retrieve` stay fine),
 // but "any unclassified mutation through the one enforced client name fails".
-const GETSTRIPE_CALL_SHAPE = /getStripe\s*\(\s*\)/g;
+const GETSTRIPE_CALL_SHAPE = /getStripe(?:For)?\s*\([^)]*\)/g;
 function evaluateGetStripeBinding(files) {
   const offenders = []; // [{ path, snippet }]
   for (const abs of files) {
