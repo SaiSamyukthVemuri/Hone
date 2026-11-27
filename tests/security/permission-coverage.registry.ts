@@ -203,8 +203,8 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     reopenOnboardingAction: "owner?(requireOnboardingOwner)",
     markCelebrationShownAction: "owner?(requireOnboardingOwner)",
   },
-  "app/(app)/dashboard/prep-memory-actions.ts": {
-    loadAppointmentPrepMemory: "staff",
+  "app/(app)/dashboard/prep-memory/route.ts": {
+    GET: "staff",
   },
   "app/(app)/financials/analytics/clients/export.csv/route.ts": {
     GET: "owner(self)",

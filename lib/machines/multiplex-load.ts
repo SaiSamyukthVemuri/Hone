@@ -22,8 +22,8 @@ export type MultiplexLoadState = {
 };
 
 export type MultiplexLoadEvent =
-  | { t: "select" } // the MultiPlex pill clicked while MultiPlex is not selected (first click, retry, or re-select)
-  | { t: "undo" } // the MultiPlex pill clicked while it is selected
+  | { t: "select" } // MultiPlex chosen under Thermolysis while MultiPlex is not selected (first click, retry, or re-select)
+  | { t: "undo" } // the MultiPlex choice pressed again while selected (no UI path sends it now; leaving is another modality)
   | { t: "legacy" } // a Thermolysis / Blend / Galvanic pill clicked
   | { t: "settled"; token: number; result: "ok" | "no_route" | "error" }
   | { t: "applied"; token: number }

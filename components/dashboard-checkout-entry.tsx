@@ -19,6 +19,7 @@ export function DashboardCheckoutEntry({
   paymentState,
   cardOnFile,
   visitLabel,
+  buttonClassName,
   children,
 }: {
   appointmentId: string;
@@ -28,6 +29,7 @@ export function DashboardCheckoutEntry({
   cardOnFile?: CardOnFileStatus | null;
   children: ReactNode;
   visitLabel?: string;
+  buttonClassName?: string;
 }) {
   const [method, setMethod] = useState<CheckoutMethod | null>(null);
   const [open, setOpen] = useState(false);
@@ -87,6 +89,7 @@ export function DashboardCheckoutEntry({
         <MarkAppointmentCompleteControl
           appointmentId={appointmentId}
           startsAt={startsAt}
+          buttonClassName={buttonClassName}
           checkout={newPayment || existingOutcome ? {
             visitLabel,
             onOpen: openCheckout,

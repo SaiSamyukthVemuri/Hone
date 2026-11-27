@@ -128,6 +128,8 @@ export const BROWSER_GROUPS = {
       "dashboard-closed-row.spec.ts",
       // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
       "dashboard-last-treatment-closed.spec.ts",
+      // practitioner feedback (26 Nov): one action row, yellow pinned notes, blue From-last-visit box, last visit details open on first render.
+      "dashboard-visit-card-actions.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
       // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default
@@ -281,6 +283,7 @@ export const BROWSER_GROUPS = {
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
       "desk-calendar.spec.ts",
+      "desk-finder-and-isolation.spec.ts",
       // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
       // (date passed vs treatment recorded), owner-only, and read-only unless the owner presses Change practitioner.
       "review-assignments-navigation.spec.ts",
@@ -618,7 +621,7 @@ const PATH_TO_GROUP = [
   //
   // The pattern is ANCHORED TO THE CARD rather than a bare /prep[-_]?memory/i,
   // following the OWNER-CAP precedent in this file. A loose pattern would also
-  // capture app/(app)/dashboard/prep-memory-actions.ts and
+  // capture app/(app)/dashboard/prep-memory-read.ts and
   // lib/sessions/appointment-prep-memory.ts, and the first of those currently
   // falls through to EXTENDED — so a loose rule would NARROW that file's
   // coverage from everything to one group. Additive only: the card already
@@ -630,6 +633,18 @@ const PATH_TO_GROUP = [
   // unattributable path, and narrowing it would reduce coverage, so it is
   // reported rather than changed here.
   { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i, /appointment[-_]?prep[-_]?memory[-_]?card/i] },
+  // MACHINES (CI-SELECT-01). lib/machines/**, components/machines/** and the Settings -> Machines page matched no rule, so a diff to the MultiPlex
+  // load reducer (lib/machines/multiplex-load.ts) fell through to the unattributed fail-safe and ran the whole extended suite: four shards, the
+  // storage-photos lane and the WebKit lane, to prove a form that one group's specs drive.
+  //
+  // WHY THIS IS SAFE, AND WHAT KEEPS IT SAFE. Every app route that imports these files, directly or through other modules, is a SESSIONS route
+  // or the Settings -> Machines page, whose browser coverage is machine-real-3g.spec.ts (it visits /settings/machines) in `sessions`.
+  // tests/ci/browser-selection.test.ts walks the real import graph and FAILS if a new route starts importing a mapped file without selecting
+  // `sessions` itself, so the mapping cannot silently narrow coverage as the code grows.
+  //
+  // TWO FILES ARE DELIBERATELY LEFT OUT and keep the extended fail-safe: legacy-machine.ts and profile-contract.ts are also imported by the
+  // client page (app/(app)/clients/[id]/page.tsx) and the data export (app/(app)/settings/data/**), which match no group.
+  { group: "sessions", patterns: [/^lib\/machines\/(?!legacy-machine\.ts$|profile-contract\.ts$)/, /^components\/machines\//, /^app\/\(app\)\/settings\/machines\//] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched

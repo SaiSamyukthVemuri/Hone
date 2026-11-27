@@ -145,8 +145,10 @@ describe("navigation contract", () => {
   });
 
   it("the Today CTA renders the resolved action only — never a literal token route", () => {
-    expect(PAGE).toMatch(/href=\{intakeAction\.href\}/);
-    expect(PAGE).toMatch(/\{intakeAction\.label\}/);
+    const ACTIONS = readFileSync(join(process.cwd(), "app/(app)/dashboard/visit-actions.tsx"), "utf8");
+    expect(PAGE).toMatch(/intake=\{intakeAction\}/);
+    expect(ACTIONS).toMatch(/href=\{intake\.href\}/);
+    expect(ACTIONS).toMatch(/\{intake\.label\}/);
     expect(PAGE).not.toMatch(/href=\{`\/intake\//);
   });
 });
@@ -286,9 +288,9 @@ describe("Today intake projection (source pins)", () => {
     expect(PAGE).not.toMatch(
       /<Link[^>]*calendar\/\$\{appt\.id\}[\s\S]{0,4000}?data-testid="today-review-intake"/,
     );
-    expect(PAGE).toMatch(
-      /\{intakeAction && \([\s\S]{0,400}?data-testid="today-review-intake"/,
-    );
+    expect(
+      readFileSync(join(process.cwd(), "app/(app)/dashboard/visit-actions.tsx"), "utf8"),
+    ).toMatch(/\{intake && \([\s\S]{0,400}?data-testid="today-review-intake"/);
   });
 
   it("the row resolves the action from already-loaded status", () => {

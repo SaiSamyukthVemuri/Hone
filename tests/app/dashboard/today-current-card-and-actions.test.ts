@@ -99,10 +99,8 @@ describe("A — Current", () => {
 // ---------------------------------------------------------------------------
 describe("B — Consultation notes", () => {
   it("the row links to the Treatment tab, where the consultation writer lives since #1300", () => {
-    expect(ROW).toMatch(
-      /href=\{`\/clients\/\$\{appt\.client_id\}\?tab=treatment`\}/,
-    );
-    expect(ROW).toMatch(/data-testid="today-consultation-notes"/);
+    expect(ROW).toMatch(/href: `\/clients\/\$\{appt\.client_id\}\?tab=treatment`/);
+    expect(read("app/(app)/dashboard/visit-actions.tsx")).toMatch(/data-testid="today-consultation-notes"/);
     // No invented route and no second composer.
     expect(ROW).not.toMatch(/\/consultation\/new|\/notes\/new/);
   });
@@ -133,8 +131,9 @@ describe("B — Consultation notes", () => {
     // spelling of the thing instead of the property it protects, so it went red
     // on a change that could not affect what it was guarding. The negative is
     // now stated outright rather than implied by the positive.
-    expect(ROW).toMatch(/<(Pending)?Link[\s\S]{0,400}today-consultation-notes/);
-    expect(ROW).not.toMatch(
+    const ACTIONS = read("app/(app)/dashboard/visit-actions.tsx");
+    expect(ACTIONS).toMatch(/<(Pending)?Link[\s\S]{0,400}today-consultation-notes/);
+    expect(ACTIONS).not.toMatch(
       /<(button|form)[\s\S]{0,400}today-consultation-notes/,
     );
   });

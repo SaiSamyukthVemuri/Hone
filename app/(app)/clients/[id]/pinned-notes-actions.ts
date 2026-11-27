@@ -5,8 +5,12 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import type { ClientPinnedNote } from "@/lib/types/database";
 
 const MAX_PINNED_NOTE_LENGTH = 200;
+
+/** What a save hands back so the caller can draw the note without waiting for a refreshed page tree. */
+export type SavedPinnedNote = Pick<ClientPinnedNote, "id" | "text" | "created_by_practitioner_id">;
 
 function trimmedString(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
@@ -14,7 +18,7 @@ function trimmedString(value: FormDataEntryValue | null): string {
 
 export async function addClientPinnedNoteAction(
   formData: FormData,
-): Promise<void> {
+): Promise<SavedPinnedNote> {
   const clientId = trimmedString(formData.get("client_id"));
   const text = trimmedString(formData.get("text"));
   if (!clientId) throw new Error("Missing client id.");
@@ -40,21 +44,26 @@ export async function addClientPinnedNoteAction(
   if (clientErr) throw new Error(`Failed to load client: ${dbErrorCode(clientErr)}`);
   if (!client) throw new Error("Client not found.");
 
-  const { error } = await supabase.from("client_pinned_notes").insert({
-    client_id: clientId,
-    studio_id: studio.id,
-    text,
-    created_by_practitioner_id: practitioner.id,
-  });
-  if (error) throw new Error(`Failed to pin note: ${dbErrorCode(error)}`);
+  const { data: saved, error } = await supabase
+    .from("client_pinned_notes")
+    .insert({
+      client_id: clientId,
+      studio_id: studio.id,
+      text,
+      created_by_practitioner_id: practitioner.id,
+    })
+    .select("id, text, created_by_practitioner_id")
+    .single();
+  if (error || !saved) throw new Error(`Failed to pin note: ${error ? dbErrorCode(error) : "no row"}`);
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
+  return { id: saved.id, text: saved.text, created_by_practitioner_id: saved.created_by_practitioner_id };
 }
 
 export async function editClientPinnedNoteAction(
   formData: FormData,
-): Promise<void> {
+): Promise<SavedPinnedNote> {
   const noteId = trimmedString(formData.get("note_id"));
   const clientId = trimmedString(formData.get("client_id"));
   const text = trimmedString(formData.get("text"));
@@ -102,7 +111,7 @@ export async function editClientPinnedNoteAction(
   if (practitioner.role !== "owner") {
     update = update.eq("created_by_practitioner_id", practitioner.id);
   }
-  const { data, error } = await update.select("id").maybeSingle();
+  const { data, error } = await update.select("id, text, created_by_practitioner_id").maybeSingle();
   if (error) throw new Error("Could not update the note. Please try again.");
   if (!data) {
     throw new Error(
@@ -112,6 +121,7 @@ export async function editClientPinnedNoteAction(
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/dashboard");
+  return { id: data.id, text: data.text, created_by_practitioner_id: data.created_by_practitioner_id };
 }
 
 export async function removeClientPinnedNoteAction(

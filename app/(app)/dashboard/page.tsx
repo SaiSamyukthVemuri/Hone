@@ -131,6 +131,7 @@ import {
 } from "@/lib/payment-methods/card-on-file";
 import { CardOnFilePill, CurrentPill } from "./today-status-pills";
 import { DashboardQuickPin } from "./dashboard-quick-pin";
+import { NextSessionReminder, VISIT_ACTION_CLASS, VisitActionRow } from "./visit-actions";
 import { immediateVisitPlans } from "@/lib/dashboard/immediate-visit-plans";
 import { RowSafetyLines } from "./row-safety-lines";
 import { TodayPortalLinkButton } from "./TodayPortalLinkButton";
@@ -1185,8 +1186,9 @@ function AppointmentRow({
   // boundary and one client can never receive another's memory.
   /**
    * The compact projection of the previous visit — exactly what the collapsed
-   * row paints, and nothing else. The full `AppointmentPrepMemory` stays
-   * server-side until the practitioner explicitly opens the disclosure.
+   * row paints, and nothing else. The full `AppointmentPrepMemory` is not in
+   * the page props: for a row with prior treatment the client component loads it on page view
+   * from GET /dashboard/prep-memory, which re-checks the session and studio server-side (26 Nov 2026).
    */
   prepSummary: DashboardPrepSummary;
   // Whether the page ASKED the history question for this row at all. Only
@@ -1442,10 +1444,10 @@ function AppointmentRow({
             />
           </div>
         )}
-        <div data-testid="today-row-actions" className="order-1 ml-[5.75rem] flex min-w-0 basis-full flex-wrap items-center gap-2">
-          {/* Quick checkout (owner): take payment from the roster without opening
-              charting. Paid/Processing/Refunded show a status badge instead. */}
-          {isOwner && (
+        {/* practitioner feedback (26 Nov): ONE action row. Quick checkout (owner) takes payment from the roster without opening charting;
+            Paid / Processing / Refunded show a status badge instead. */}
+        <VisitActionRow
+          checkout={isOwner ? (
             <AppointmentCheckoutCell
               appointmentId={appt.id}
               status={appt.status}
@@ -1453,38 +1455,18 @@ function AppointmentRow({
               dashboardStartsAt={appt.starts_at}
               dashboardVisitLabel={[clientLabel, serviceName, time].filter(Boolean).join(" · ")}
               dashboardCardOnFile={cardOnFile}
+              buttonClassName={VISIT_ACTION_CLASS}
             />
-          )}
-          <PendingLink
-            href={rebookHref}
-            data-testid="today-rebook"
-            pendingLabel="Opening calendar…"
-            className={buttonClasses({ variant: "secondary", size: "sm" })}
-          >
-            Rebook
-          </PendingLink>
-          {chartHref && (
-            <PendingLink
-              href={chartHref}
-              data-testid="today-chart"
-              prefetch={false}
-              pendingLabel="Opening chart…"
-              className={buttonClasses({ variant: "secondary", size: "sm" })}
-            >
-              Chart
-            </PendingLink>
-          )}
-          {(nextAction.href !== chartHref || nextAction.label === "Finish visit") && (
-            <PendingLink
-              href={nextAction.href}
-              data-testid="today-next-action"
-              pendingLabel="Opening…"
-              className="inline-flex min-h-[44px] items-center px-2 text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
-            >
-              {nextAction.label}
-            </PendingLink>
-          )}
-        </div>
+          ) : null}
+          rebookHref={rebookHref}
+          chartHref={chartHref}
+          nextAction={nextAction.href !== chartHref || nextAction.label === "Finish visit" ? nextAction : null}
+          consultation={{
+            href: `/clients/${appt.client_id}?tab=treatment`,
+            label: isConsultationVisit ? "Start consultation notes" : "Consultation notes",
+          }}
+          intake={intakeAction}
+        />
         <div className="order-1 ml-[5.75rem] basis-full text-xs text-neutral-600 dark:text-neutral-400">
           <span className="font-medium">Upcoming session</span>{" · "}
           {nextVisit === "unavailable" ? "Couldn’t load upcoming sessions" : nextVisit ? (
@@ -1497,11 +1479,7 @@ function AppointmentRow({
           ) : "No upcoming session booked"}
         </div>
         <div data-testid="today-row-details" className="order-2 min-w-0 basis-full pl-1 sm:pl-[5.75rem]">
-          {prepSummary.remember && (
-            <p data-testid="dashboard-prep-remember" title={prepSummary.remember} className="whitespace-pre-wrap break-words text-xs leading-5 text-fg-muted">
-              <span className="font-semibold">For this visit</span>{" · "}{prepSummary.remember}
-            </p>
-          )}
+          {prepSummary.remember && <NextSessionReminder note={prepSummary.remember} />}
           {workflow && !workflow.unavailable && !workflow.hasHistory && !prepSummary.hasTreatment && !prepSummary.unavailable && (
             <p className="text-xs text-neutral-500">New client · No charted history yet</p>
           )}
@@ -1523,37 +1501,8 @@ function AppointmentRow({
               ))}
             </div>
           )}
-          {/* Secondary appointment tools stay reachable with the prior treatment closed. */}
+          {/* Only the portal-link offer stays down here: every other action lives in the ONE action row above. */}
           <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1">
-            {/* A practitioner: consultation notes in ONE TAP from the Dashboard. It
-                NAVIGATES to the canonical practitioner writer
-                (/clients/<id>?tab=treatment, client_clinical_notes) exactly as
-                the appointment-side ConsultationNotesCard does. The
-                consultation writer lives in the Treatment tab since #1300
-                (the legacy ?tab=consultation link still redirects there). No modal, no
-                drawer, no second textarea, no second note action, no second
-                clinical-note loader — a second writer is precisely what this
-                contract exists to prevent. */}
-            <PendingLink
-              href={`/clients/${appt.client_id}?tab=treatment`}
-              data-testid="today-consultation-notes"
-              pendingLabel="Opening client…"
-              className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
-            >
-              {isConsultationVisit
-                ? "Start consultation notes"
-                : "Consultation notes"}
-            </PendingLink>
-            {intakeAction && (
-              <PendingLink
-                href={intakeAction.href}
-                data-testid="today-review-intake"
-                pendingLabel="Opening intake…"
-                className="inline-flex min-h-[44px] items-center rounded-md px-0 py-1.5 text-xs font-medium text-neutral-600 sm:px-3 underline-offset-2 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-neutral-100"
-              >
-                {intakeAction.label}
-              </PendingLink>
-            )}
             {/* Only for a TRUSTED "no card". Reuses the existing practitioner
                 portal-link authority whole; sends nothing until she clicks. */}
             {offerPortalLink && (

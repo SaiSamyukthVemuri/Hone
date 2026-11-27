@@ -18,19 +18,23 @@ export function CheckoutButton({
   // instead. Defaults to the historical label so every existing call site is
   // unchanged.
   label = "Checkout",
+  className,
 }: {
   appointmentId: string;
   status: string | null;
   variant?: "primary" | "compact";
   label?: string;
+  /** Replaces the variant's look (the Dashboard action row sizes every action the same). */
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   if (status !== "completed") return null;
 
   const cls =
-    variant === "compact"
+    className ??
+    (variant === "compact"
       ? "inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-3 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-      : "inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900";
+      : "inline-flex min-h-[44px] items-center justify-center rounded-md bg-neutral-900 px-4 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900");
 
   return (
     <>

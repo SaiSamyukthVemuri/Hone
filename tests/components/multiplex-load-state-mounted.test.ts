@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { multiplexPill as multiplexPillOf, ensureThermolysis, chooseMultiplex, modeButton } from "./helpers/multiplex-modality";
 
 // THE HOST'S MULTIPLEX LOAD STATE, mounted. The real BlockSetupForm and the real Save visit control; the machine panel is a stand-in the test drives
 // by hand (it settles, applies, refuses and unmounts exactly when told), so every transition and every Save/Save visit outcome is reached on purpose.
@@ -73,11 +74,11 @@ async function mount(opts: { strict?: boolean } = {}) {
   await act(async () => root!.render(opts.strict ? createElement(StrictMode, null, tree) : tree));
 }
 const p = () => panel.props as Required<PanelProps>;
-const pill = () => host!.querySelector<HTMLButtonElement>('[data-testid="mode-multiplex"]');
+const pill = () => multiplexPillOf(host!);
 const legacyPill = (label: string) => Array.from(host!.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.trim() === label)!;
 const saveButton = () => host!.querySelector<HTMLButtonElement>('[data-testid="save-treatment-area"]')!;
 const alertText = () => host!.querySelector('[role="alert"]')?.textContent ?? null;
-const clickPill = () => act(async () => { pill()!.click(); });
+const clickPill = async () => { await ensureThermolysis(host!); await act(async () => { pill()!.click(); }); };
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
 const settle = (r: "ok" | "no_route" | "error") => act(async () => { p().onMultiplexSettled(p().multiplexLoadToken!, r); });
 const outcome = (o: "applied" | "not_applied") => act(async () => { p().onMultiplexOutcome(p().multiplexLoadToken!, o); });
@@ -96,7 +97,8 @@ describe("MultiPlex load state: transitions, mounted (stand-in panel)", () => {
     await mount();
     expect(token()).toBeNull();
     await clickPill();
-    expect(token()).toBe(1);
+    // token 1 is minted by pressing Thermolysis (any mode press invalidates the load state); the MultiPlex choice under it is token 2
+    expect(token()).toBe(2);
     expect(saveButton().disabled).toBe(true);
     expect(saveButton().textContent).toContain("Loading MultiPlex");
   });
@@ -154,7 +156,7 @@ describe("MultiPlex load state: transitions, mounted (stand-in panel)", () => {
     await outcome("applied");
     // the stand-in reports no chosen device, so the form does not show MultiPlex as selected: pressing the pill selects again (re-select -> loading)
     await clickPill();
-    expect(token()).toBe(2);
+    expect(token()).toBe(3);
   });
 
   for (const reason of ["error", "no_route"] as const) {
@@ -171,7 +173,7 @@ describe("MultiPlex load state: transitions, mounted (stand-in panel)", () => {
       expect(legacyPill("Thermolysis"), "...or another mode").toBeTruthy();
       expect(noteValue(), "the draft survives the failure").toBe("typed before the failure");
       await clickPill();
-      expect(token()).toBe(2);
+      expect(token()).toBe(3);
       await settle("ok");
       await outcome("applied");
       expect(saveButton().disabled).toBe(false);
@@ -190,7 +192,7 @@ describe("MultiPlex load state: transitions, mounted (stand-in panel)", () => {
     expect(alertText()).toBe(FAILED);
     expect(noteValue()).toBe("kept");
     await clickPill();
-    expect(token()).toBe(2);
+    expect(token()).toBe(3);
   });
 
   it("APPLY REFUSED BEFORE THE LOAD ANSWERS (a gated panel reports the refusal first): failed, and the later answer cannot reopen it", async () => {
@@ -218,7 +220,7 @@ describe("MultiPlex load state: transitions, mounted (stand-in panel)", () => {
     // and it is retryable once the panel is back
     await act(async () => { panel.show(); });
     await clickPill();
-    expect(token()).toBe(2);
+    expect(token()).toBe(3);
     await settle("ok");
     await outcome("applied");
     expect(saveButton().disabled).toBe(false);
