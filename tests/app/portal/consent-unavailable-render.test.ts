@@ -1,4 +1,3 @@
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,7 +17,7 @@ vi.mock("@/app/portal/PortalReplyForm", () => ({ PortalReplyForm: () => null }))
 vi.mock("@/app/portal/PortalConsentForms", () => ({ PortalConsentForms: () => null }));
 vi.mock("@/app/portal/PortalPaymentMethodForm", () => ({ PortalPaymentMethodForm: () => null }));
 vi.mock("@/app/portal/PortalCardOnFileCard", () => ({ PortalCardOnFileCard: () => null }));
-vi.mock("@/lib/portal/session", () => ({ getCurrentPortalSession: async () => ({ studioId: "s", clientId: "c" }) }));
+vi.mock("@/lib/portal/session", () => ({ requirePortalSessionForAction: async () => ({ ok: true, session: { studioId: "s", clientId: "c" } }) }));
 vi.mock("@/lib/portal/queries", () => ({
   getPortalBookableServices: async () => [],
   getPortalBookingReadiness: async () => false,

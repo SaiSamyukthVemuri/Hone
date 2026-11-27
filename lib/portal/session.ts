@@ -42,6 +42,7 @@ export type PortalSession = {
 // why, instead of claiming the session expired.
 export type PortalSessionState =
   | { kind: "none" }
+  | { kind: "unavailable" }
   | { kind: "disabled"; studioName: string | null }
   | { kind: "active"; session: PortalSession };
 
@@ -49,14 +50,13 @@ export async function getCurrentPortalSessionState(
   { recordVisit = true }: { recordVisit?: boolean } = {},
 ): Promise<PortalSessionState> {
   const session = await readCurrentPortalSession();
-  if (!session) return { kind: "none" };
+  if (session === undefined) return { kind: "unavailable" };
+  if (session === null) return { kind: "none" };
   const policy = await loadClientSelfServicePolicy(
     createAdminClient(),
     session.studioId,
-  );
-  // FAIL CLOSED: an unreadable policy is treated as no session at all, never
-  // as access.
-  if (!policy.ok) return { kind: "none" };
+  ).catch(() => ({ ok: false as const }));
+  if (!policy.ok) return { kind: "unavailable" };
   if (!policy.policy.portal) {
     return { kind: "disabled", studioName: policy.studioName };
   }
@@ -72,7 +72,7 @@ export async function getCurrentPortalSession(): Promise<PortalSession | null> {
   return state.kind === "active" ? state.session : null;
 }
 
-// For portal server actions: the session, or the refusal the action should
+// For protected portal pages and actions: the session, or the refusal the caller should
 // return. A disabled studio gets the HON-47 explanation rather than "your
 // session has expired", which would send the client round a sign-in loop that
 // can never succeed.
@@ -80,10 +80,13 @@ export async function requirePortalSessionForAction(
   expiredMessage: string,
 ): Promise<
   | { ok: true; session: PortalSession }
-  | { ok: false; code: "session_expired" | "portal_disabled"; error: string }
+  | { ok: false; code: "session_expired" | "portal_disabled" | "unavailable"; error: string }
 > {
   const state = await getCurrentPortalSessionState();
   if (state.kind === "active") return { ok: true, session: state.session };
+  if (state.kind === "unavailable") {
+    return { ok: false, code: "unavailable", error: "We couldn’t check your portal access. Please try again." };
+  }
   if (state.kind === "disabled") {
     return {
       ok: false,
@@ -142,11 +145,21 @@ function touchPortalSessionSeen(data: { id: string }, nowIso: string): void {
 // resolved session. Returns null when:
 //   * no cookie is present (anonymous visitor)
 //   * the hash doesn't match any row (forged or stale cookie)
-//   * the row is expired or revoked
+//   * the row is expired or revoked, or its client is no longer active in that studio
+// Returns undefined when the read failed; the portal can retry with the same cookie.
 //
 // Does not touch last_seen_at: see touchPortalSessionSeen, called only once the
 // studio allows the session.
-async function readCurrentPortalSession(): Promise<PortalSession | null> {
+type StoredPortalSession = {
+  id: string;
+  studio_id: string;
+  client_id: string;
+  expires_at: string;
+  revoked_at: string | null;
+  client: { id: string; studio_id: string; archived_at: string | null } | null;
+};
+
+async function readCurrentPortalSession(): Promise<PortalSession | null | undefined> {
   const jar = await cookies();
   const raw = jar.get(COOKIE_NAME)?.value;
   if (!raw || raw.length === 0) return null;
@@ -154,34 +167,37 @@ async function readCurrentPortalSession(): Promise<PortalSession | null> {
   const tokenHash = hashToken(raw);
   const admin = createAdminClient();
 
-  const nowIso = new Date().toISOString();
-  const { data, error } = await admin
-    .from("client_portal_sessions")
-    .select("id, studio_id, client_id, expires_at, revoked_at")
-    .eq("session_token_hash", tokenHash)
-    .maybeSingle();
-  if (error) {
-    // Omit provider text: it can quote identifiers, cookies or hashes. A DB
-    // outage should not 500 the page render; treat as anonymous.
-    console.error(
-      JSON.stringify({
-        event: "portal_session_lookup_failed",
-        code: dbErrorCode(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return null;
+  // An unexpired cookie alone cannot prove that its client still has access.
+  // Read the linked client in the same query and validate both sides of the
+  // studio boundary before any action, redirect, or last_seen_at write.
+  try {
+    const { data, error } = await admin
+      .from("client_portal_sessions")
+      .select("id, studio_id, client_id, expires_at, revoked_at, client:clients!client_portal_sessions_client_id_fkey(id, studio_id, archived_at)")
+      .eq("session_token_hash", tokenHash)
+      .maybeSingle<StoredPortalSession>();
+    if (error) throw error;
+    if (!data || data.revoked_at || !(Date.parse(data.expires_at) > Date.now())) return null;
+    if (
+      !data.client ||
+      data.client.archived_at !== null ||
+      data.client.id !== data.client_id ||
+      data.client.studio_id !== data.studio_id
+    ) return null;
+    return {
+      id: data.id,
+      studioId: data.studio_id,
+      clientId: data.client_id,
+      expiresAt: data.expires_at,
+    };
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "portal_session_lookup_failed",
+      code: dbErrorCode(error),
+      timestamp: new Date().toISOString(),
+    }));
+    return undefined;
   }
-  if (!data) return null;
-  if (data.revoked_at) return null;
-  if (data.expires_at <= nowIso) return null;
-
-  return {
-    id: data.id as string,
-    studioId: data.studio_id as string,
-    clientId: data.client_id as string,
-    expiresAt: data.expires_at as string,
-  };
 }
 
 // Create a brand new portal session for the supplied (studio, client)

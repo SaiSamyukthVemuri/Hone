@@ -10,7 +10,7 @@ import { MARKETING_PALETTE as PALETTE } from "@/app/_components/marketingNav";
 import { EyebrowCaption } from "@/app/_components/MarketingAtoms";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { MarkdownLiteBlock } from "@/app/_components/MarkdownLiteBlock";
-import { getCurrentPortalSession } from "@/lib/portal/session";
+import { requirePortalSessionForAction } from "@/lib/portal/session";
 import { PortalRebookCard } from "./PortalRebookCard";
 import { horizonRangeInStudioTz } from "@/lib/booking/horizon";
 import { todayInTz } from "@/lib/booking/tz";
@@ -67,17 +67,17 @@ import { PortalCardOnFileCard } from "./PortalCardOnFileCard";
 export const metadata: Metadata = { title: "Client portal", robots: { index: false, follow: false } };
 
 export default async function PortalHomePage({ searchParams }: { searchParams?: Promise<{ view?: string | string[] }> }) {
-  const session = await getCurrentPortalSession();
-  if (!session) {
+  const access = await requirePortalSessionForAction("Please sign in to your portal.");
+  if (!access.ok) {
+    if (access.code === "unavailable") return <PortalIdentityUnavailable />;
     redirect("/portal/login");
   }
 
+  const { session } = access;
   const identity = await getPortalIdentity(session.studioId, session.clientId).catch(() => undefined);
-  if (!identity) {
-    // The login page recognizes the cookie. Redirecting there would bounce this
-    // client straight back here. Keep their session available for a retry.
-    return <PortalIdentityUnavailable temporary={identity === undefined} />;
-  }
+  if (identity === undefined) return <PortalIdentityUnavailable />;
+  // The client can also be archived between the session read and identity read.
+  if (identity === null) redirect("/portal/login");
 
   const [
     presentation,

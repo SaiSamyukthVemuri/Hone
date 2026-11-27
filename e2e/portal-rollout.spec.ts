@@ -39,10 +39,18 @@ async function followClientEmail(page: Page, target: string) {
   await page.getByRole("link", { name: "Open email link" }).click();
 }
 
+// Report a boolean on failure so a link still in the address bar stays private.
+async function expectPortalPath(page: Page, expected: string) {
+  await expect.poll(() => {
+    const url = new URL(page.url());
+    return url.pathname + url.search + url.hash === expected;
+  }, { message: "Client reached the expected portal view" }).toBe(true);
+}
+
 async function enterPortal(page: Page, link: string) {
   await followClientEmail(page, link);
   await page.getByRole("button", { name: /continue to portal/i }).click();
-  await expect(page).toHaveURL(/\/portal$/);
+  await expectPortalPath(page, "/portal");
 }
 
 async function checkActiveSession(page: Page, previousToken?: string) {
@@ -140,7 +148,7 @@ test("original link shows the rescheduled visit once across an owner publish and
     await expect(ownerPage.getByText("Portal published.", { exact: true })).toBeVisible();
 
     await followClientEmail(page, originalLink);
-    await expect(page).toHaveURL(/\/portal$/);
+    await expectPortalPath(page, "/portal");
     await expect(page.getByTestId("studio-portal")).toBeVisible();
     await expect(page.getByRole("heading", { name: welcome })).toBeVisible();
     await checkActiveSession(page, originalSession);
@@ -158,7 +166,7 @@ test("original link shows the rescheduled visit once across an owner publish and
       new Date(visits.find((appointment) => appointment.id === appointmentId)!.starts_at).getTime(),
     );
     await followClientEmail(page, originalLink);
-    await expect(page).toHaveURL(/\/portal$/);
+    await expectPortalPath(page, "/portal");
     await assertAppointment(page, confirmed[0]);
     await expect(page.locator(`[data-portal-appointment-id="${appointmentId}"]`)).toHaveCount(0);
     await page.goto("/portal?view=records");
@@ -172,7 +180,7 @@ test("original link shows the rescheduled visit once across an owner publish and
     await enterPortal(firstPage, await portalLink(studio, newClient.clientId));
     await expect(firstPage.getByTestId("studio-portal")).toBeVisible();
     await firstPage.getByRole("link", { name: "Review forms" }).click();
-    await expect(firstPage).toHaveURL(/view=records#portal-tasks$/);
+    await expectPortalPath(firstPage, "/portal?view=records#portal-tasks");
     await expect(firstPage.getByRole("button", { name: "Review and sign" })).toBeVisible();
     await expect(firstPage.getByText(message, { exact: true })).toHaveCount(0);
     await expect(firstPage.getByText(/visa ending in 4242/i)).toHaveCount(0);
@@ -202,7 +210,7 @@ test("original link shows the rescheduled visit once across an owner publish and
     await ownerPage.getByRole("button", { name: "Switch to classic" }).click();
     await expect(ownerPage.getByText("Classic portal restored. Your draft is saved.", { exact: true })).toBeVisible();
     await followClientEmail(page, originalLink);
-    await expect(page).toHaveURL(/\/portal$/);
+    await expectPortalPath(page, "/portal");
     await expect(page.getByTestId("studio-portal")).toHaveCount(0);
     await checkActiveSession(page, originalSession);
     await assertAppointment(page, confirmed[0]);
@@ -243,7 +251,7 @@ test("a signed-out client uses the replacement email link to enter only their po
   expect(links).toHaveLength(1);
   expect((await page.context().cookies()).some((cookie) => cookie.name === "hone_portal_session")).toBe(false);
   await page.goto("/portal");
-  await expect(page).toHaveURL(/\/portal\/login/);
+  await expect.poll(() => new URL(page.url()).pathname === "/portal/login").toBe(true);
 
   const accepted = readResendLedger(mark).find((entry) => entry.to === email && entry.mode === "success");
   const hrefs = accepted?.hrefs ?? [];
@@ -253,7 +261,7 @@ test("a signed-out client uses the replacement email link to enter only their po
   expect(/^\/portal\/verify\/[A-Za-z0-9_-]{43}$/.test(delivered.pathname)).toBe(true);
   await followClientEmail(page, delivered.href);
   await page.getByRole("button", { name: /continue to portal/i }).click();
-  await expect(page).toHaveURL(/\/portal$/);
+  await expectPortalPath(page, "/portal");
   const cookie = await checkActiveSession(page);
   const sessions = await sql<{ client_id: string; studio_id: string }>(
     "select client_id, studio_id from public.client_portal_sessions where session_token_hash = $1",

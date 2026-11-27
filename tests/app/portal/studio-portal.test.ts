@@ -10,6 +10,7 @@ const visit = { id: "visit-1", serviceName: "Follow-up visit", startsAt: "2026-1
 const template = { id: "consent", title: "Consent to treatment", form_type: "treatment_consent", version: 2, body: "Example body" };
 const signature = { signed_at: "2026-10-01T12:30:00Z", template_id: "consent", template_version: 2, response: "granted" };
 const data = {
+  session: "active" as "active" | "none" | "unavailable",
   identity: validIdentity as typeof validIdentity | undefined | null,
   presentation: null as PortalPresentation | null,
   upcoming: [visit] as PortalUpcomingAppointment[] | null,
@@ -19,7 +20,7 @@ const data = {
   unread: true,
 };
 vi.mock("server-only", () => ({}));
-vi.mock("next/navigation", () => ({ redirect: () => { throw new Error("redirect"); } }));
+vi.mock("next/navigation", () => ({ redirect: (url: string) => { throw new Error("redirect " + url); } }));
 vi.mock("@/app/_components/MarketingFooter", () => ({ MarketingFooter: () => null }));
 vi.mock("@/app/portal/logout/actions", () => ({ portalLogoutAction: async () => {} }));
 vi.mock("@/app/portal/portal-message-actions", () => ({ markPortalMessageReviewedAction: async () => {} }));
@@ -28,7 +29,9 @@ vi.mock("@/app/portal/PortalConsentForms", () => ({ PortalConsentForms: () => cr
 vi.mock("@/app/portal/PortalCardOnFileCard", () => ({ PortalCardOnFileCard: () => null }));
 vi.mock("@/app/portal/PortalPaymentMethodForm", () => ({ PortalPaymentMethodForm: () => null }));
 vi.mock("@/app/portal/PortalRebookCard", () => ({ PortalRebookCard: () => createElement("div", null, "Booking form") }));
-vi.mock("@/lib/portal/session", () => ({ getCurrentPortalSession: async () => ({ studioId: "s", clientId: "c", expiresAt: "2026-12-07T00:00:00Z" }) }));
+vi.mock("@/lib/portal/session", () => ({ requirePortalSessionForAction: async () => data.session === "active"
+  ? { ok: true, session: { studioId: "s", clientId: "c", expiresAt: "2026-12-07T00:00:00Z" } }
+  : { ok: false, code: data.session === "none" ? "session_expired" : "unavailable" } }));
 vi.mock("@/lib/portal/presentation-server", () => ({ getPublishedPortalPresentation: async () => data.presentation }));
 vi.mock("@/lib/portal/queries", () => ({
   getPortalIdentity: async () => data.identity,
@@ -55,6 +58,7 @@ async function show(view = "overview") {
 }
 
 beforeEach(() => {
+  data.session = "active";
   data.identity = validIdentity;
   data.upcoming = [visit];
   data.presentation = defaultPortalPresentation();
@@ -117,14 +121,19 @@ describe("production portal renderer", () => {
     expect(html).toContain("We couldn’t check your saved card.");
     expect(html).not.toMatch(/Add payment method|You have signed card authorization|Card authorization needed/);
   });
-  it("an existing session with unreadable or archived identity receives retry/sign out without personal information", async () => {
-    for (const identity of [undefined, null]) {
-      data.identity = identity;
-      const html = await show();
-      expect(html).toContain("Try again");
-      expect(html).toContain("Sign out");
-      expect(html).not.toMatch(/Harbour|Alex|4242|Follow-up visit/);
-    }
+  it.each(["identity", "session"])("offers retry and sign-out when the %s read fails", async (read) => {
+    if (read === "session") data.session = "unavailable";
+    else data.identity = undefined;
+    const html = await show();
+    expect(html).toContain("Try again");
+    expect(html).toContain("Sign out");
+    expect(html).not.toMatch(/Harbour|Alex|4242|Follow-up visit/);
+  });
+  it("redirects an archived or removed identity, including archival after session resolution", async () => {
+    data.identity = null;
+    await expect(show()).rejects.toThrow("redirect /portal/login");
+    data.session = "none";
+    await expect(show()).rejects.toThrow("redirect /portal/login");
   });
   it("switching back with the same session keeps the existing booking, unread message, signed forms and card usable", async () => {
     data.presentation = null;
