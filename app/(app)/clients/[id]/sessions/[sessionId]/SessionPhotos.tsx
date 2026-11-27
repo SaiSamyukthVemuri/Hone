@@ -15,6 +15,19 @@ import { useGridPhotoRecovery } from "@/lib/images/use-grid-photo-recovery";
 // lib/images/grid-photo-recovery.ts): derivative, then original, re-minting an
 // EXPIRED URL once per variant (a chart left open, or restored from the router
 // cache), and only then the "reload" note, never a broken image.
+//
+// 0232: photos are GROUPED by their capture-stage label into STACKED sections,
+// "Before", "After" and "Other" (unlabelled), in that order, each its own grid;
+// an empty section is not shown, and when nothing is labelled the visit keeps
+// one plain grid. The sections are stacked on purpose: a paired, column-by-
+// column view is a comparison feature, which is deferred (PR #273 boundary,
+// pinned by tests/app/clients/treatment-photos-preview.test.ts).
+const GROUPS = [
+  { key: "before", heading: "Before" },
+  { key: "after", heading: "After" },
+  { key: null, heading: "Other" },
+] as const;
+
 export function SessionPhotos({ clientId, photos }: { clientId: string; photos: SessionPhoto[] }) {
   if (photos.length === 0) return null;
   return (
@@ -34,12 +47,31 @@ export function SessionPhotos({ clientId, photos }: { clientId: string; photos: 
           Open Photos
         </Link>
       </div>
-      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {photos.map((p) => (
-          <SessionPhotoCell key={`${p.id}:${p.url}:${p.thumbUrl ?? ""}`} clientId={clientId} photo={p} />
-        ))}
-      </ul>
+      {photos.some((p) => p.captureStage) ? (
+        GROUPS.map((g) => {
+          const inGroup = photos.filter((p) => p.captureStage === g.key);
+          if (inGroup.length === 0) return null;
+          return (
+            <div key={g.heading} className="flex flex-col gap-2" data-testid={`session-photos-group-${g.heading.toLowerCase()}`}>
+              <h3 className="text-sm font-medium text-neutral-700 dark:text-neutral-200">{g.heading}</h3>
+              <PhotoGrid clientId={clientId} photos={inGroup} />
+            </div>
+          );
+        })
+      ) : (
+        <PhotoGrid clientId={clientId} photos={photos} />
+      )}
     </section>
+  );
+}
+
+function PhotoGrid({ clientId, photos }: { clientId: string; photos: SessionPhoto[] }) {
+  return (
+    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      {photos.map((p) => (
+        <SessionPhotoCell key={`${p.id}:${p.url}:${p.thumbUrl ?? ""}`} clientId={clientId} photo={p} />
+      ))}
+    </ul>
   );
 }
 
