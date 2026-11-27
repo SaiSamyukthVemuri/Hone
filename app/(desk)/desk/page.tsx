@@ -1,3 +1,4 @@
+import { StaffWelcome } from "@/components/onboarding/staff-welcome";
 import { createClient } from "@/lib/supabase/server";
 import { requireReceptionistWithStudio } from "@/lib/desk/guard";
 import { DeskScheduleIncompleteError, readDeskSchedule, type DeskRpc } from "@/lib/desk/read";
@@ -31,6 +32,7 @@ export default async function DeskSchedulePage({ searchParams }: { searchParams:
       utcInstantFromLocal(addDays(days[days.length - 1], 1), "00:00", timezone).toISOString());
     return (
       <>
+        <StaffWelcome role="receptionist" membershipId={identity.receptionistId} booking={Boolean(booking)} />
         {!booking && <ClockFallbackNotice timezones={[null]} />}
         <DeskCalendar key={identity.receptionistId + identity.studioId} studioId={identity.studioId}
           today={today} date={date} view={view} timezone={timezone} rows={rows} booking={booking} />

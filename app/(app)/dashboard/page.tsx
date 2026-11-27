@@ -1,3 +1,4 @@
+import { StaffWelcome } from "@/components/onboarding/staff-welcome";
 import { Suspense } from "react";
 import { SummaryStrip } from "./summary-strip";
 import { dashboardRebookCalendarHref } from "@/lib/calendar/dashboard-rebook";
@@ -827,6 +828,8 @@ export default async function DashboardPage({
           Book appointment
         </Link>
       </header>
+
+      {practitioner.role === "practitioner" && <StaffWelcome role="practitioner" membershipId={practitioner.id} />}
 
       {/* Onboarding v2: pinned setup-progress card + auto-opening guided wizard,
           above the fold. Opt-in per studio + owner-only; supersedes the legacy
