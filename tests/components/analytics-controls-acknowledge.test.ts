@@ -58,7 +58,9 @@ describe("HON-109 analytics controls acknowledge a press", () => {
 
   it("the feedback e2e selects a Period option that exists and does not swallow the rejection (Codex P1)", () => {
     const spec = readFileSync(path.join(process.cwd(), "e2e/hon109-analytics-feedback.spec.ts"), "utf8");
-    const m = spec.match(/getByLabel\("Period"\)\.selectOption\("([a-z_]+)"\)(\.catch)?/);
+    // Target the select itself: getByLabel("Period") also matches the form, the compare select and the "Period in review" region (strict-mode violation).
+    expect(spec).not.toMatch(/getByLabel\("Period"\)/);
+    const m = spec.match(/locator\('select\[name="period"\]'\)\.selectOption\("([a-z_]+)"\)(\.catch)?/);
     expect(m, "a Period selectOption call").not.toBeNull();
     expect(m![2], "no .catch swallowing the failure").toBeUndefined();
     const offered = [...read("overview-screen.tsx").matchAll(/PERIOD_LABELS[^=]*= \{([^}]*)\}/g)][0][1];
