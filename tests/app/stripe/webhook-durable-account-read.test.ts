@@ -439,6 +439,19 @@ describe("PAY-002 signed refund status wiring", () => {
         currency: "cad", refund_status: "pending_stripe", stripe_refund_id: "re_1", ...attemptOverride }, error: null }],
     }, { claim_stripe_event: CLAIM_OK, reconcile_bound_payment_event: { data: [{ result: "refund_pending" }], error: null } });
   }
+  // Codex P1 on #1827: a PARTIAL refund's status event ($40 of a $50 payment) must reach the locked command (it updates or closes the review), not be refused as a money mismatch.
+  it.each(["succeeded", "failed", "canceled", "pending"])("a partial refund (%s) of the payment reaches the ordered command with its own amount", async (status) => {
+    prepareRefund(status, {}, { amount: 4000 });
+    const response = await callRoute();
+    expect(response.status).toBe(200);
+    const command = ADMIN.current!.rpcCalls.find((call) => call.name === "reconcile_bound_payment_event");
+    expect(command?.args).toMatchObject({ p_object: { refund_status: status, refund_amount_cents: 4000, refund_currency: "cad" } });
+  });
+  it.each([["above the payment", { amount: 5001 }], ["zero", { amount: 0 }], ["another currency", { currency: "usd" }]] as const)("a refund amount or currency that does not fit the payment (%s) is still refused: nothing is reconciled", async (_n, override) => {
+    prepareRefund("succeeded", {}, override as Record<string, unknown>);
+    await callRoute();
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+  });
   it.each(["pending", "requires_action", "succeeded", "failed", "canceled"])("passes actual %s and immutable original identity to the ordered command", async (status) => {
     prepareRefund(status);
     const response = await callRoute();

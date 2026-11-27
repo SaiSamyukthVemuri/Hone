@@ -154,9 +154,13 @@ describe("billedOutstanding (dashboard outstanding view)", () => {
     const voided = { ...bill, externals: [{ amountCents: 5000, state: "confirmed" }, { amountCents: 7500, state: "voided" }] };
     expect(billedOutstanding(voided, cards)).toMatchObject({ kind: "owed", outstandingCents: 7500 });
   });
-  it("a $40 payment reversal makes $40 due again; unknown money is unavailable, never zero", () => {
+  it("a $40 payment reversal does NOT make $40 due again (product rule, 27 Nov 2026); only a price reduction frees capacity; unknown money is unavailable, never zero", () => {
     const cards = [{ status: "succeeded", amountCents: 22500, currency: "cad" }];
-    expect(billedOutstanding({ ...bill, refunds: [{ amountCents: 4000, status: "succeeded" }] }, cards)).toMatchObject({ kind: "owed", outstandingCents: 4000 });
+    expect(billedOutstanding({ ...bill, refunds: [{ amountCents: 4000, status: "succeeded", kind: "payment_reversal" }] }, cards)).toEqual({ kind: "paid" });
+    // a refund with no recorded kind is a reversal too: it never reopens a balance
+    expect(billedOutstanding({ ...bill, refunds: [{ amountCents: 4000, status: "succeeded" }] }, cards)).toEqual({ kind: "paid" });
+    // a price reduction lowers the bill, so what is owed follows the reduced bill
+    expect(billedOutstanding({ ...bill, totalCents: 18500, refunds: [{ amountCents: 4000, status: "succeeded", kind: "price_reduction" }] }, cards)).toEqual({ kind: "paid" }); // the card stays gross at $225; the bill dropped to $185 and the $40 returned frees that capacity
     expect(billedOutstanding(bill, [{ status: "pending_stripe", amountCents: 100, currency: "cad" }])).toEqual({ kind: "amount_unavailable" });
     expect(billedOutstanding({ ...bill, refunds: [{ amountCents: 4000, status: "pending_stripe" }] }, cards)).toEqual({ kind: "amount_unavailable" });
     expect(billedOutstanding({ ...bill, currency: "eur" }, [])).toEqual({ kind: "amount_unavailable" });

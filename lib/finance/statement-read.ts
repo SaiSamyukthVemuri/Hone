@@ -6,16 +6,11 @@ import { utcInstantFromLocal } from "@/lib/booking/tz";
 import { clientDisplayName } from "@/lib/clients/identity";
 import { createClient } from "@/lib/supabase/server";
 import { readInChunks } from "@/lib/dashboard/in-chunks";
+import { readMoneyForAppointments } from "./statement-money-read";
 import type { Studio } from "@/lib/types/database";
 
 import { isYearMonth, monthRange, STATEMENT_MAX_SANE_MONTH, STATEMENT_MIN_MONTH, type YearMonth } from "./statement-period";
-import {
-  buildStatement,
-  type Statement,
-  type StatementCardRow,
-  type StatementLegacyFeeRow,
-  type StatementSettlementRow,
-} from "./statement";
+import { buildStatement, type Statement } from "./statement";
 
 // ===========================================================================
 // HON-64 Slice A: the read behind /financials/statement. READ-ONLY.
@@ -33,7 +28,6 @@ import {
 // IT STARTS FROM THE MONTH'S APPOINTMENTS (by the appointment's start, in the studio's timezone) and finds the money on them. Money not
 // linked to such an appointment is therefore outside this statement, and the page says so.
 
-const FEE_REASONS = ["no_show_fee", "late_cancellation_fee"];
 const APPT_CAP = 1000;
 
 export type StatementView =
@@ -121,80 +115,12 @@ export async function loadStatementView(
     return { access: "granted", ok: true, month, label: range.label, timezone: studio.timezone, startLocal: range.startLocal, endLocalExclusive: range.endLocalExclusive, statement: empty, visitInfo: {}, practitionerNames: {}, settlementQuotes: {}, noPaymentVisits: [] };
   }
 
-  // Sessions of those appointments (deleted ones included: money on them is still money, attributed by appointment).
-  const sessions = await readInChunks<{ id: string; appointment_id: string | null }>(ids, (chunk) =>
-    supabase.from("sessions").select("id, appointment_id").eq("studio_id", studio.id).in("appointment_id", chunk),
-  );
-  if (!sessions.ok) return { access: "granted", ok: false, reason: "read_failed" };
-  const sessionToAppt = new Map<string, string>();
-  for (const s of sessions.rows) if (s.appointment_id) sessionToAppt.set(s.id, s.appointment_id);
-
-  const CARD_COLS =
-    "id, charge_reason, status, amount_cents, currency, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, stripe_livemode, appointment_id, session_id";
-  type CardDb = {
-    charge_reason: string | null;
-    status: string | null;
-    amount_cents: number | null;
-    currency: string | null;
-    refund_status: string | null;
-    refund_amount_cents: number | null;
-    stripe_refund_status: string | null;
-    stripe_refund_id: string | null;
-    stripe_charge_refund_event_id: string | null;
-    stripe_livemode: boolean | null;
-    appointment_id: string | null;
-    session_id: string | null;
-  };
-
-  const [feeCards, sessionCards, settlements, legacy] = await Promise.all([
-    readInChunks<CardDb>(ids, (chunk) =>
-      supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studio.id).in("charge_reason", FEE_REASONS).in("appointment_id", chunk),
-    ),
-    sessionToAppt.size === 0
-      ? Promise.resolve({ ok: true as const, rows: [] as CardDb[] })
-      : readInChunks<CardDb>([...sessionToAppt.keys()], (chunk) =>
-          supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studio.id).eq("charge_reason", "session_payment").in("session_id", chunk),
-        ),
-    readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null; quoted_amount_cents: number | null }>(ids, (chunk) =>
-      supabase.from("appointment_settlements").select("appointment_id, method, amount_cents, currency, quoted_amount_cents").eq("studio_id", studio.id).is("superseded_at", null).in("appointment_id", chunk),
-    ),
-    readInChunks<{ appointment_id: string; status: string | null; amount_cents: number | null; currency: string | null; stripe_livemode: boolean | null }>(ids, (chunk) =>
-      supabase.from("manual_fee_charge_attempts").select("appointment_id, status, amount_cents, currency, stripe_livemode").eq("studio_id", studio.id).in("appointment_id", chunk),
-    ),
-  ]);
-  if (!feeCards.ok || !sessionCards.ok || !settlements.ok || !legacy.ok) return { access: "granted", ok: false, reason: "read_failed" };
-
-  const cardRows: StatementCardRow[] = [];
-  for (const r of [...feeCards.rows, ...sessionCards.rows]) {
-    const appointmentId = r.appointment_id ?? (r.session_id ? sessionToAppt.get(r.session_id) ?? null : null);
-    if (!appointmentId) continue; // not linked to a visit in this month: outside this statement
-    cardRows.push({
-      appointmentId,
-      chargeReason: r.charge_reason,
-      status: r.status,
-      amountCents: r.amount_cents,
-      currency: r.currency,
-      refundStatus: r.refund_status,
-      refundAmountCents: r.refund_amount_cents,
-      providerRefundStatus: r.stripe_refund_status,
-      stripeRefundId: r.stripe_refund_id,
-      cumulativeFullRefundVerified: typeof r.stripe_charge_refund_event_id === "string" && r.stripe_charge_refund_event_id.length > 0,
-      stripeLivemode: r.stripe_livemode,
-    });
-  }
-  const settlementRows: StatementSettlementRow[] = settlements.rows.map((r) => ({
-    appointmentId: r.appointment_id,
-    method: r.method,
-    amountCents: r.amount_cents,
-    currency: r.currency,
-  }));
-  const legacyFeeRows: StatementLegacyFeeRow[] = legacy.rows.map((r) => ({
-    appointmentId: r.appointment_id,
-    status: r.status,
-    amountCents: r.amount_cents,
-    currency: r.currency,
-    stripeLivemode: r.stripe_livemode,
-  }));
+  // The money rows for these appointments come from the ONE shared reader (the same one the client statement and analytics use), so the studio statement cannot
+  // omit what they show: card attempts, owner-recorded settlements, legacy fee rows AND the split-payments ledger (bill, cash/transfers, refunds, open reviews).
+  // A failed read of any of them fails the whole statement closed (HON-123, Codex P1 on #1827: split-ledger visits were silently omitted here).
+  const money = await readMoneyForAppointments(supabase, studio.id, ids);
+  if (!money.ok) return { access: "granted", ok: false, reason: "read_failed" };
+  const { cardRows, settlementRows, legacyFeeRows } = money;
 
   const statement = buildStatement({
     studioCurrency,
@@ -232,11 +158,12 @@ export async function loadStatementView(
 
   const settlementQuotes: Record<string, number> = {};
   const disagreeing = new Set<string>();
-  for (const r of settlements.rows) {
-    if (typeof r.quoted_amount_cents !== "number" || !Number.isInteger(r.quoted_amount_cents) || r.quoted_amount_cents < 0) continue;
-    const prior = settlementQuotes[r.appointment_id];
-    if (prior !== undefined && prior !== r.quoted_amount_cents) disagreeing.add(r.appointment_id);
-    settlementQuotes[r.appointment_id] = r.quoted_amount_cents;
+  for (const r of settlementRows) {
+    const quoted = r.quotedAmountCents;
+    if (typeof quoted !== "number" || !Number.isInteger(quoted) || quoted < 0) continue;
+    const prior = settlementQuotes[r.appointmentId];
+    if (prior !== undefined && prior !== quoted) disagreeing.add(r.appointmentId);
+    settlementQuotes[r.appointmentId] = quoted;
   }
   for (const id of disagreeing) delete settlementQuotes[id];
 

@@ -507,8 +507,9 @@ export function SessionPaymentPrepareCard({
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
       {visitBilled && billedMoney && <VisitMoneyBlock summary={billedMoney} currency={billedCurrency} stillToCollectCents={billedStillToCollectCents} />}
-      {/* A billed visit shows Collected / Refunded / Net above instead of one card payment's "Paid". */}
-      {!(visitBilled && billedMoney) && (<>
+      {/* A billed visit shows Collected / Refunded / Net above instead of ONE succeeded card payment's "Paid". A ready or pending attempt keeps its controls (Run charge, the status
+          recheck): hiding them would strand a prepared payment that nothing else can run (Codex P2 on #1827). */}
+      {!(visitBilled && billedMoney && activeAttempt?.status === "succeeded") && (<>
       {activeAttempt && (
         <AttemptStatusPanel
           attempt={activeAttempt}

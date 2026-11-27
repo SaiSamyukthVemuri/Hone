@@ -25,6 +25,9 @@ describe("visitMoneySummary: Collected / Refunded / Net", () => {
       expect({ collected: m.collectedCents, refunded: m.refundedCents, net: m.netCents, refundPending: m.refundPendingCents, waiting: m.waitingCents, final: m.final }).toEqual(want);
     });
   }
+  it("a prepared card attempt that was never charged (ready) is not collected: a $100 ready attempt reads Collected $0 (Codex P2 on #1827)", () => {
+    expect(visitMoneySummary(ledger({ cards: [card(10000, "ready")] }))).toMatchObject({ collectedCents: 0, refundedCents: 0, netCents: 0 });
+  });
   it("a card still with Stripe is not collected and makes Net not final", () => {
     const m = visitMoneySummary(ledger({ cards: [card(10000, "pending_stripe")] }));
     expect(m).toMatchObject({ collectedCents: 0, cardPendingCents: 10000, final: false });

@@ -1,5 +1,5 @@
 import { PendingLink } from "@/components/pending-link";
-import { MONEY_LABELS, moneyRows, statementMoneySummary } from "@/lib/billing/visit-money";
+import { MONEY_LABELS, moneyRows, refundStatusLabel, statementMoneySummary } from "@/lib/billing/visit-money";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
 import {
   FEE_REASON_COPY,
@@ -179,6 +179,7 @@ export function ClientStatementView({ document: doc, month, monthLabel, maxMonth
               <div key={r.key} className="contents"><dt className={r.key === "net" ? "font-semibold" : undefined}>{r.label}</dt><dd className="text-right tabular-nums" data-testid={`statement-money-${r.key}`}>{splitCurrency(format(r.cents)).amount}</dd></div>
             ))}
           </dl>
+          {refundStatusLabel(money) ? <p data-testid="statement-money-refund-status" className="mt-1 max-w-xs text-sm text-fg-muted">{refundStatusLabel(money)}</p> : null}
           {moneyRows(money, { statement: true }).notFinalNote ? <p role="status" data-testid="statement-money-not-final" className="mt-1 max-w-xs text-sm text-fg-muted">{moneyRows(money, { statement: true }).notFinalNote}</p> : null}
           <p className="text-sm text-fg-muted">{visitCountPhrase(doc.totals.visitCount)}{studioName ? ` · ${studioName}` : ""}</p>
         </div>

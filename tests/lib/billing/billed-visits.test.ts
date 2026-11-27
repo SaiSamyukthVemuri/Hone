@@ -30,12 +30,12 @@ const base = {
 const card = [{ status: "succeeded", amount_cents: 10000, currency: "cad" }];
 
 describe("a billed visit's roster read counts a legacy full-refund mirror of a billed card payment", () => {
-  it("$100 billed, the card fully refunded through the attempt: NOT paid (Checkout stays open)", async () => {
+  it("$100 billed, the card fully refunded through the attempt: still paid, nothing is owed (product rule: a refund never reopens a balance)", async () => {
     const r = await readBilledVisits(fake({ ...base, payment_refunds: [{ appointment_id: A, attempt_id: ATT, amount_cents: 10000, status: "succeeded", legacy: true }] }), STUDIO, [A]);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.billed.get(A)?.refunds).toEqual([{ amountCents: 10000, status: "succeeded" }]);
-      expect(billedPaymentState(r.billed.get(A)!, card)).toBe("chargeable");
+      expect(billedPaymentState(r.billed.get(A)!, card)).toBe("paid");
     }
   });
   it("control: the same visit with no refund is paid", async () => {
@@ -55,10 +55,10 @@ describe("a billed visit's roster read counts a legacy full-refund mirror of a b
 // v1 refund truth: the same money as payment_refund_money (0393), read in bulk. The attempt's own columns are Stripe's cumulative statement of the whole payment.
 describe("a billed visit's roster read: the dashboard refund of the rest, and an unconfirmed review", () => {
   const withAttempt = (extra: Record<string, unknown>) => ({ ...base, payment_charge_attempts: [{ id: ATT, appointment_id: A, status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, ...extra }] });
-  it("$40 refunded here, then the owner refunds the rest in the dashboard (attempt succeeded/100): returned is $100 (the greater, never the sum), the visit is not paid", async () => {
+  it("$40 refunded here, then the owner refunds the rest in the dashboard (attempt succeeded/100): returned is $100 (the greater, never the sum), the visit is still paid (a refund never reopens a balance)", async () => {
     const r = await readBilledVisits(fake({ ...withAttempt({ refund_status: "succeeded", refund_amount_cents: 10000 }), payment_refunds: [{ appointment_id: A, attempt_id: ATT, amount_cents: 4000, status: "succeeded", legacy: false }] }), STUDIO, [A]);
     expect(r.ok && r.billed.get(A)?.refunds).toEqual([{ amountCents: 4000, status: "succeeded" }, { amountCents: 6000, status: "succeeded" }]);
-    expect(r.ok && billedPaymentState(r.billed.get(A)!, card)).toBe("chargeable");
+    expect(r.ok && billedPaymentState(r.billed.get(A)!, card)).toBe("paid");
   });
   it("a whole-payment refund already in the rows is not counted twice", async () => {
     const r = await readBilledVisits(fake({ ...withAttempt({ refund_status: "succeeded", refund_amount_cents: 10000 }), payment_refunds: [{ appointment_id: A, attempt_id: ATT, amount_cents: 10000, status: "succeeded", legacy: true }] }), STUDIO, [A]);

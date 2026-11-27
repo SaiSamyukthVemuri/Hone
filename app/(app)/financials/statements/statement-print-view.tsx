@@ -19,7 +19,7 @@ import { formatClock12h, splitCurrency } from "@/lib/finance/statement-money";
 import { latestFirst } from "@/lib/finance/statement-paging";
 import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL, balanceText, moneyLineTexts, visitFeeWithBasis } from "@/lib/finance/statement-screen";
 
-import { MONEY_LABELS, REFUND_PENDING_LABEL, moneyRows, statementMoneySummary } from "@/lib/billing/visit-money";
+import { MONEY_LABELS, REFUND_PENDING_LABEL, moneyRows, refundStatusLabel, statementMoneySummary } from "@/lib/billing/visit-money";
 import { PrintButton } from "./print-button";
 
 // The printable statement. The same document as the screen, in one plain table that prints cleanly. The app's header, navigation and footer are
@@ -97,6 +97,7 @@ export function StatementPrintView({ document: doc, offDocumentWithMoney, backHr
       <section aria-label="Summary" className="space-y-2">
         <p className="text-xl font-semibold">{`${MONEY_LABELS.collected} ${amt(money.collectedCents)}`}</p>
         <p className="text-sm">{`${MONEY_LABELS.refunded} ${amt(money.refundedCents)} · ${MONEY_LABELS.net} ${amt(money.netCents)}`}</p>
+        {refundStatusLabel(money) ? <p className="text-sm">{refundStatusLabel(money)}</p> : null}
         {money.refundPendingCents > 0 ? <p className="text-sm">{`${REFUND_PENDING_LABEL} ${amt(money.refundPendingCents)}`}</p> : null}
         {moneyRows(money, { statement: true }).notFinalNote ? <p className="text-sm">{moneyRows(money, { statement: true }).notFinalNote}</p> : null}
         <p className="text-sm">{paidSummaryLine(doc, format)}</p>

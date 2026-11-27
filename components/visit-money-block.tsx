@@ -1,4 +1,4 @@
-import { moneyRows, type VisitMoneySummary } from "@/lib/billing/visit-money";
+import { BALANCE_DUE_LABEL, moneyRows, refundStatusLabel, type VisitMoneySummary } from "@/lib/billing/visit-money";
 import { formatMoney, type PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 
 /** Collected / Refunded / Net for one visit (or one statement), from the ONE helper in lib/billing/visit-money.ts. Same labels and order on every screen. */
@@ -15,11 +15,12 @@ export function VisitMoneyBlock({ summary, currency, testId = "visit-money", sta
         ))}
         {stillToCollectCents !== null && (
           <div className="contents">
-            <dt className="font-semibold">Still to collect</dt>
+            <dt className="font-semibold">{BALANCE_DUE_LABEL}</dt>
             <dd className="text-right font-medium tabular-nums" data-testid={`${testId}-still_to_collect`}>{formatMoney(stillToCollectCents, currency)}</dd>
           </div>
         )}
       </dl>
+      {refundStatusLabel(summary) ? <p data-testid={`${testId}-refund-status`} className="text-sm text-neutral-600 dark:text-neutral-400">{refundStatusLabel(summary)}</p> : null}
       {notFinalNote ? <p role="status" data-testid={`${testId}-not-final`} className="text-sm text-neutral-600 dark:text-neutral-400">{notFinalNote}</p> : null}
     </div>
   );

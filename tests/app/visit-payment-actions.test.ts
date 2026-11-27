@@ -14,6 +14,7 @@ const S = vi.hoisted(() => ({
   inserts: [] as unknown[],
   stripeCalls: 0,
   executeCalls: 0,
+  executeResult: null as null | Record<string, unknown>,
   prior: null as null | Record<string, unknown>,
   refundCalls: [] as unknown[],
   refundOutcome: { outcome: "succeeded", message: "Refund recorded." } as { outcome: string; message: string },
@@ -40,7 +41,7 @@ vi.mock("@/lib/billing/session-payment-eligibility", () => ({
   }),
 }));
 vi.mock("@/app/(app)/clients/[id]/sessions/[sessionId]/payment-actions", () => ({
-  executeSessionPaymentChargeAction: async () => { S.executeCalls += 1; return { ok: true, outcome: "succeeded", stripePaymentIntentId: "pi", stripeChargeId: "ch" }; },
+  executeSessionPaymentChargeAction: async () => { S.executeCalls += 1; return S.executeResult ?? { ok: true, outcome: "succeeded", stripePaymentIntentId: "pi", stripeChargeId: "ch" }; },
 }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
@@ -69,7 +70,7 @@ const form = (o: Record<string, string>) => { const f = new FormData(); for (con
 
 beforeEach(() => {
   S.role = "owner"; S.enabled = true; S.command = { result: "recorded", id: "p1", state: "confirmed" }; S.commandCalls = [];
-  S.insertError = null; S.inserts = []; S.stripeCalls = 0; S.executeCalls = 0; S.prior = null; S.refundCalls = []; S.refundOutcome = { outcome: "succeeded", message: "Refund recorded." };
+  S.executeResult = null; S.insertError = null; S.inserts = []; S.stripeCalls = 0; S.executeCalls = 0; S.prior = null; S.refundCalls = []; S.refundOutcome = { outcome: "succeeded", message: "Refund recorded." };
   S.ledger = { bill: { id: "b", totalCents: 22500, currency: "cad", referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "x" }, cards: [], externals: [], refunds: [] };
 });
 
@@ -204,6 +205,25 @@ describe("running or re-checking a card payment", () => {
     S.prior = { id: "a", status: "ready", currency: "cad" };
     expect(await runSplitCardPaymentAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ outcome: "succeeded" });
     expect(S.executeCalls).toBe(1);
+  });
+});
+
+describe("a refused re-check is not proof of 'not charged' while Stripe may have the charge (Codex P1)", () => {
+  const refusals = ["blocked", "authorization_not_current", "lineage_mismatch", "live_mode_blocked"] as const;
+  it.each(refusals)("%s on a pending_stripe attempt stays UNKNOWN: no 'not charged', so no second charge is offered", async (outcome) => {
+    S.prior = { id: "a", status: "pending_stripe", currency: "cad" };
+    S.executeResult = { ok: false, outcome, error: "refused" };
+    expect(await runSplitCardPaymentAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ outcome: "unknown" });
+  });
+  it.each(refusals)("%s on a ready attempt that was never sent is a definite 'not charged'", async (outcome) => {
+    S.prior = { id: "a", status: "ready", currency: "cad" };
+    S.executeResult = { ok: false, outcome, error: "refused" };
+    expect(await runSplitCardPaymentAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ outcome: "failed" });
+  });
+  it("a terminal 'failed' from the executor is definite either way", async () => {
+    S.prior = { id: "a", status: "pending_stripe", currency: "cad" };
+    S.executeResult = { ok: false, outcome: "failed", error: "declined" };
+    expect(await runSplitCardPaymentAction(form({ appointment_id: APPT, attempt_id: PAY }))).toMatchObject({ outcome: "failed" });
   });
 });
 

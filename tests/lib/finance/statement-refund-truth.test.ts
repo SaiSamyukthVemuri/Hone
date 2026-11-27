@@ -18,7 +18,7 @@ function fake(tables: Record<string, unknown[]>, failing: string | null = null) 
   } } as never;
 }
 const card = (extra: Record<string, unknown>) => ({ id: ATT, charge_reason: "session_payment", status: "succeeded", amount_cents: 10000, currency: "cad", refund_status: null, refund_amount_cents: null,
-  stripe_refund_status: null, stripe_refund_id: null, stripe_charge_refund_event_id: null, stripe_livemode: false, appointment_id: A, session_id: null, ...extra });
+  stripe_refund_status: null, stripe_refund_id: null, stripe_charge_refund_event_id: null, stripe_livemode: true, appointment_id: A, session_id: null, ...extra });
 const tables = (cardExtra: Record<string, unknown>, refunds: unknown[], reviews: unknown[] = []) => ({
   sessions: [], visit_bills: [{ appointment_id: A, total_cents: 10000, currency: "cad" }], visit_external_payments: [],
   payment_refunds: refunds, payment_refund_reviews: reviews, payment_charge_attempts: [card(cardExtra)], appointment_settlements: [], manual_fee_charge_attempts: [],
@@ -41,5 +41,19 @@ describe("the statement read of a billed card payment refunded in two places", (
   });
   it("a failed read of the reviews fails the whole read", async () => {
     expect((await readMoneyForAppointments(fake(tables({}, []), "payment_refund_reviews"), STUDIO, [A])).ok).toBe(false);
+  });
+  // Codex P2 on #1827: a TEST-mode (or unknown-mode) card payment is not real money, so neither is its refund. Cash and transfer refunds (no attempt) are real.
+  it("a refund of a test-mode card payment contributes nothing: no refund line, no pending line, no review line, no gap line", async () => {
+    for (const mode of [false, null]) {
+      const r = await readMoneyForAppointments(fake(tables({ stripe_livemode: mode, refund_status: "succeeded", refund_amount_cents: 10000 },
+        [{ appointment_id: A, attempt_id: ATT, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" },
+         { appointment_id: A, attempt_id: ATT, amount_cents: 1000, currency: "cad", status: "pending_stripe", legacy: false, kind: "payment_reversal" }],
+        [{ appointment_id: A, attempt_id: ATT, amount_cents: 3000, currency: "cad" }])), STUDIO, [A]);
+      expect(moneyOf(r), String(mode)).toEqual([]);
+    }
+  });
+  it("control: the same rows on a LIVE card payment do appear", async () => {
+    const r = await readMoneyForAppointments(fake(tables({ stripe_livemode: true }, [{ appointment_id: A, attempt_id: ATT, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "payment_reversal" }])), STUDIO, [A]);
+    expect(moneyOf(r)).toEqual([["partial_refund", 4000]]);
   });
 });

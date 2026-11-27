@@ -339,6 +339,9 @@ describe("Collected / Refunded / Net on the statement and its print paper", () =
       expect(out).not.toContain("Refund pending");
       expect(out).not.toContain("Not counted in Refunded or Net");
     }
+    // Codex P2 on #1827: a part refund leaves its payment in "paid" in full, so "originally paid" is $225.00, never $265.00.
+    expect(confirmed.totals.originalPaidCents).toBe(22500);
+    expect(confirmed.totals.paidCents).toBe(22500);
     expect(html(confirmed)).toMatch(/data-testid="statement-money-net">\$185\.00</);
     expect(printed(confirmed)).toContain("Refunded $40.00 · Net $185.00");
   });

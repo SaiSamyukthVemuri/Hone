@@ -1530,7 +1530,11 @@ export async function handleRefundStatusEvent(event: Stripe.Event, ctx: WebhookC
   if (!(await verifyMetadataAgainstRow({ attempt, metadata, stripeEventId: event.id, targetEvent: event.type }))) {
     return { eventType: event.type, attemptId: attempt.id, metadataMismatch: true };
   }
-  if (!(await verifyProviderMoneyAgainstRow({ attempt, provider: { amount: refund.amount, currency: refund.currency },
+  // A refund may be PART of the payment (a $40 dashboard refund of a $100 card payment): its amount is checked to lie within the payment (0 < refund <= payment) and its currency
+  // must equal the payment's, instead of equalling the whole charge, so a partial refund's status event reaches the locked command that updates or closes its review (Codex P1 on
+  // #1827). An amount above the payment, a zero or non-integer amount, or another currency is still a mismatch and mutates nothing.
+  const withinPayment = Number.isInteger(refund.amount) && refund.amount > 0 && refund.amount <= attempt.amount_cents;
+  if (!(await verifyProviderMoneyAgainstRow({ attempt, provider: { amount: withinPayment ? attempt.amount_cents : refund.amount, currency: refund.currency },
     stripeEventId: event.id, targetEvent: event.type }))) {
     return { eventType: event.type, attemptId: attempt.id, moneyMismatch: true };
   }

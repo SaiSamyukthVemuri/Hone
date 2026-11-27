@@ -69,6 +69,10 @@ const tables = (appts: unknown[], money: { card?: unknown[]; settle?: unknown[] 
   payment_charge_attempts: okr(money.card ?? []),
   appointment_settlements: okr(money.settle ?? []),
   manual_fee_charge_attempts: okr([]),
+  visit_bills: okr([]),
+  visit_external_payments: okr([]),
+  payment_refunds: okr([]),
+  payment_refund_reviews: okr([]),
   services: okr([]),
   practitioners: okr([]),
 });

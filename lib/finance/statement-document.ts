@@ -579,7 +579,8 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
         feePaidCents: feePaid,
         refundedCents: refunded,
         waivedCents: waived,
-        originalPaidCents: paid + refunded,
+        // A split-payments part refund leaves its payment in `paid` in FULL, so it is not added to it a second time: $100 paid then $40 returned is $100 originally paid, not $140.
+        originalPaidCents: paid + refunded - visits.reduce((n, v) => n + sumKinds(v.lines, ["refunded_partial"]), 0),
         recordedFeeCents: recordedFee,
         feeTotalComplete: feeComplete,
         byState,

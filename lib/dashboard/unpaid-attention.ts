@@ -199,6 +199,9 @@ export async function loadUnpaidAttention(opts: {
   const evaluate = (a: ApptRow) => {
     const bill = billed.get(a.id);
     if (bill && a.status === "completed" && Date.parse(a.ends_at) <= Date.parse(nowIso)) {
+      // Money that may exist but is not provable here (a charge on a deleted chart) makes the balance UNAVAILABLE, never owed: the card rows of that chart are deliberately not in
+      // cardsByAppt, so subtracting them would report a fully paid bill as owing (Codex P2 on #1827).
+      if ((unproven.get(a.id)?.size ?? 0) > 0) return { kind: "amount_unavailable" as const };
       return billedOutstanding(bill, cardsByAppt.get(a.id) ?? []);
     }
     let quoteCents: number | null = null;

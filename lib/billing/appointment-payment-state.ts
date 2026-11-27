@@ -284,6 +284,14 @@ async function getFreeAppointmentIds(
   return { ok: true, freeAppointmentIds: free };
 }
 
+// A visit with a split-payments BILL keeps a payment-management entry point whatever its coarse state is (paid, or unavailable while a card payment or refund is still with Stripe):
+// the roster badge stays truthful and a separate "Manage payments" control opens the same checkout panel. Carried beside the states, keyed by the returned Map, so the state type and
+// every exhaustive consumer of it stay unchanged (Codex P1 on #1827).
+const BILLED_IDS = new WeakMap<object, Set<string>>();
+export function isBilledVisit(states: ReadonlyMap<string, AppointmentPaymentState>, appointmentId: string): boolean {
+  return BILLED_IDS.get(states)?.has(appointmentId) ?? false;
+}
+
 export async function getAppointmentPaymentStates(
   studioId: string,
   appointmentIds: ReadonlyArray<string>,
@@ -291,6 +299,8 @@ export async function getAppointmentPaymentStates(
   viewerIsOwner: boolean,
 ): Promise<Map<string, AppointmentPaymentState>> {
   const out = new Map<string, AppointmentPaymentState>();
+  const billedIds = new Set<string>();
+  BILLED_IDS.set(out, billedIds);
   const ids = [...new Set(appointmentIds)].filter(Boolean);
   if (ids.length === 0) return out;
 
@@ -431,6 +441,7 @@ export async function getAppointmentPaymentStates(
       continue;
     }
     if (bill) {
+      billedIds.add(apptId);
       out.set(apptId, billedPaymentState(bill, attemptsByAppt.get(apptId) ?? []));
       continue;
     }

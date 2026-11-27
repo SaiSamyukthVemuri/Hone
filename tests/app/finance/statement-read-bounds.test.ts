@@ -41,6 +41,10 @@ const healthy = (): Record<string, Result> => ({
   payment_charge_attempts: ok([]),
   appointment_settlements: ok([]),
   manual_fee_charge_attempts: ok([]),
+  visit_bills: ok([]),
+  visit_external_payments: ok([]),
+  payment_refunds: ok([]),
+  payment_refund_reviews: ok([]),
   services: ok([]),
   practitioners: ok([]),
 });
@@ -79,11 +83,12 @@ describe("settlements: only the live disposition is read (superseded_at IS NULL)
     const settlement = calls.filter((c) => c.table === "appointment_settlements");
     expect(settlement.some((c) => c.method === "is" && c.args[0] === "superseded_at" && c.args[1] === null)).toBe(true);
     expect(settlement.some((c) => c.method === "eq" && c.args[0] === "studio_id")).toBe(true);
-    for (const c of calls) if (c.table !== "appointment_settlements") expect(c.args[0] === "superseded_at" && c.method === "is", c.table).toBe(false);
+    // visit_bills is the other table with a live-row (superseded_at) disposition: only its live bill counts.
+    for (const c of calls) if (c.table !== "appointment_settlements" && c.table !== "visit_bills") expect(c.args[0] === "superseded_at" && c.method === "is", c.table).toBe(false);
   });
-  it("source pin: the filter is in the read module, so a refactor that drops it fails here", async () => {
+  it("source pin: the filter is in the shared money read module, so a refactor that drops it fails here", async () => {
     const { readFileSync } = await import("node:fs");
-    const src = readFileSync("lib/finance/statement-read.ts", "utf8");
+    const src = readFileSync("lib/finance/statement-money-read.ts", "utf8");
     expect(src).toMatch(/from\("appointment_settlements"\)[\s\S]{0,300}\.is\("superseded_at", null\)/);
   });
 });

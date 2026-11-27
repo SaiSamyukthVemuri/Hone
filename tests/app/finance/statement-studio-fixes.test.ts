@@ -148,7 +148,7 @@ describe("the loader carries the settled quote, and only a clean one", () => {
   const run = async (settle: unknown[]) => {
     const { loadStatementView } = await import("@/lib/finance/statement-read");
     const a = (id: string) => ({ id, status: "completed", starts_at: "2026-11-03T15:00:00Z", practitioner_id: "p1", service_id: null, clients: null });
-    const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", recording({ appointments: okr([a("a1"), a("a2"), a("a3"), a("a4"), a("a5")]), sessions: okr([]), payment_charge_attempts: okr([]), appointment_settlements: okr(settle), manual_fee_charge_attempts: okr([]), services: okr([]), practitioners: okr([]) }));
+    const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", recording({ appointments: okr([a("a1"), a("a2"), a("a3"), a("a4"), a("a5")]), sessions: okr([]), payment_charge_attempts: okr([]), appointment_settlements: okr(settle), manual_fee_charge_attempts: okr([]), visit_bills: okr([]), visit_external_payments: okr([]), payment_refunds: okr([]), payment_refund_reviews: okr([]), services: okr([]), practitioners: okr([]) }));
     if (v.access !== "granted" || !v.ok) throw new Error("expected a granted view");
     return v;
   };
@@ -228,7 +228,7 @@ describe("visitMinutes and the loader", () => {
       from: (table: string) => {
         const results: Record<string, { data: unknown[]; error: null }> = {
           appointments: { data: [{ id: "a1", starts_at: "2026-11-03T15:00:00Z", ends_at: "2026-11-03T16:00:00Z", client_id: "cl-1", practitioner_id: "p1", service_id: null, clients: { name: "Synthetic", preferred_name: null } }], error: null },
-          sessions: { data: [], error: null }, payment_charge_attempts: { data: [], error: null }, appointment_settlements: { data: [], error: null }, manual_fee_charge_attempts: { data: [], error: null }, services: { data: [], error: null }, practitioners: { data: [], error: null },
+          sessions: { data: [], error: null }, payment_charge_attempts: { data: [], error: null }, appointment_settlements: { data: [], error: null }, visit_bills: { data: [], error: null }, visit_external_payments: { data: [], error: null }, payment_refunds: { data: [], error: null }, payment_refund_reviews: { data: [], error: null }, manual_fee_charge_attempts: { data: [], error: null }, services: { data: [], error: null }, practitioners: { data: [], error: null },
         };
         const chain: unknown = new Proxy(() => undefined, { get: (_x, prop) => (prop === "then" ? (res: (v: unknown) => void) => res(results[table]) : (...a: unknown[]) => { if (prop === "select" && table === "appointments") calls.push(String(a[0])); return chain; }) });
         return chain;

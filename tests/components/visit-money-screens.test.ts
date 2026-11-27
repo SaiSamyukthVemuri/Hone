@@ -4,7 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { VisitMoneyBlock } from "@/components/visit-money-block";
 import { SplitVisitPayments } from "@/components/split-visit-payments";
 import { visitBalance, type VisitLedger } from "@/lib/billing/visit-payments-core";
-import { visitMoneySummary } from "@/lib/billing/visit-money";
+import { visitMoneySummary, refundStatusLabel } from "@/lib/billing/visit-money";
+import { refundEffectCopy } from "@/components/split-visit-payments";
 
 vi.mock("@/app/(app)/visit-payment-actions", () => ({
   prepareSplitCardPaymentAction: vi.fn(), recordExternalPaymentAction: vi.fn(), refundExternalPaymentAction: vi.fn(), runSplitCardPaymentAction: vi.fn(),
@@ -34,13 +35,14 @@ describe("checkout panel", () => {
     expect([cell(out, "money-collected"), cell(out, "money-refunded"), cell(out, "money-net")]).toEqual(["$225.00 CAD", "$40.00 CAD", "$185.00 CAD"]);
     expect(labels(out).slice(0, 4)).toEqual(["Bill total", "Collected", "Refunded", "Net"]);
     expect(labels(out)).not.toContain("Received");
-    expect(labels(out)).toContain("Still to collect");
+    expect(labels(out)).toContain("Balance due");
+    expect(labels(out)).not.toContain("Still to collect");
   });
-  it("PRODUCT RULE: a refunded, fully paid visit has Still to collect $0.00 on checkout", () => {
+  it("PRODUCT RULE: a refunded, fully paid visit has Balance due $0.00 on checkout", () => {
     const out = checkout(base);
     expect(cell(out, "split-collectable")).toBe("$0.00 CAD");
   });
-  it("a genuinely unpaid bill still shows what is owed: $225 bill, $185 received -> Still to collect $40.00", () => {
+  it("a genuinely unpaid bill still shows what is owed: $225 bill, $185 received -> Balance due $40.00", () => {
     const unpaid: VisitLedger = { ...base, externals: [base.externals[0], { ...base.externals[1], amountCents: 3500 }], refunds: [] };
     const out = checkout(unpaid);
     expect([cell(out, "money-collected"), cell(out, "money-refunded"), cell(out, "money-net"), cell(out, "split-collectable")]).toEqual(["$185.00 CAD", "$0.00 CAD", "$185.00 CAD", "$40.00 CAD"]);
@@ -76,11 +78,11 @@ describe("visit page (session payment card)", () => {
     expect([cell(out, "visit-money-collected"), cell(out, "visit-money-refunded"), cell(out, "visit-money-net")]).toEqual(["$225.00 CAD", "$40.00 CAD", "$185.00 CAD"]);
     expect(out).not.toMatch(/Paid/);
   });
-  it("shows Still to collect under Net when given: $0.00 after a refund of a fully paid visit, $40.00 for the unpaid bill", () => {
+  it("shows Balance due under Net when given: $0.00 after a refund of a fully paid visit, $40.00 for the unpaid bill", () => {
     const render = (c: number) => renderToStaticMarkup(createElement(VisitMoneyBlock, { summary: visitMoneySummary(base), currency: "cad", stillToCollectCents: c }));
     expect(cell(render(0), "visit-money-still_to_collect")).toBe("$0.00 CAD");
     expect(cell(render(4000), "visit-money-still_to_collect")).toBe("$40.00 CAD");
-    expect(visitPage(base)).not.toContain("Still to collect");
+    expect(visitPage(base)).not.toContain("Balance due");
   });
   it("a pending refund is its own line and Net is flagged not final", () => {
     const out = visitPage({ ...base, refunds: [{ ...base.refunds[0], status: "pending_stripe" }] });
@@ -90,5 +92,32 @@ describe("visit page (session payment card)", () => {
   it("checkout and the visit page cannot disagree: the same summary feeds both", () => {
     const a = checkout(base), b = visitPage(base);
     expect([cell(a, "money-collected"), cell(a, "money-refunded"), cell(a, "money-net")]).toEqual([cell(b, "visit-money-collected"), cell(b, "visit-money-refunded"), cell(b, "visit-money-net")]);
+  });
+});
+
+describe("refund status and the confirmation copy (operator, 27 Nov 2026)", () => {
+  it("Partially refunded for the $225 / $40 case, Fully refunded when everything came back, nothing when nothing did", () => {
+    expect(refundStatusLabel(visitMoneySummary(base))).toBe("Partially refunded");
+    expect(refundStatusLabel(visitMoneySummary({ ...base, refunds: [{ ...base.refunds[0], amountCents: 22500 }] }))).toBe("Fully refunded");
+    expect(refundStatusLabel(visitMoneySummary({ ...base, refunds: [] }))).toBeNull();
+    expect(refundStatusLabel(visitMoneySummary({ ...base, refunds: [{ ...base.refunds[0], status: "pending_stripe" }] }))).toBeNull(); // pending money is not yet refunded
+  });
+  it("shows it on checkout and on the visit page", () => {
+    expect(cell(checkout(base), "money-refund-status")).toBe("Partially refunded");
+    expect(cell(visitPage(base), "visit-money-refund-status")).toBe("Partially refunded");
+    expect(cell(checkout({ ...base, refunds: [] }), "money-refund-status")).toBeUndefined();
+  });
+  it("the confirmation states the true effect and never promises a reopened balance", () => {
+    expect(refundEffectCopy({ kind: "payment_reversal", amount: "$40.00 CAD", card: true, method: "Card", balanceDue: "$0.00 CAD", settled: true }))
+      .toBe("Refund $40.00 CAD to the card. The visit stays paid: Balance due stays $0.00 CAD.");
+    expect(refundEffectCopy({ kind: "payment_reversal", amount: "$40.00 CAD", card: false, method: "Cash", balanceDue: "$40.00 CAD", settled: false }))
+      .toBe("Refund $40.00 CAD back to the client (cash). Balance due stays $40.00 CAD.");
+    expect(refundEffectCopy({ kind: "price_reduction", amount: "$40.00 CAD", card: true, method: "Card", balanceDue: "$0.00 CAD", settled: true }))
+      .toBe("Reduce the bill by $40.00 CAD and refund $40.00 CAD to the card. The visit stays paid: Balance due stays $0.00 CAD.");
+    for (const kind of ["payment_reversal", "price_reduction"] as const) expect(refundEffectCopy({ kind, amount: "$1.00", card: true, method: "Card", balanceDue: "$0.00", settled: true })).not.toMatch(/due again|reopen|owed again|becomes due/i);
+  });
+  it("the form's own choices no longer say a returned payment becomes due again", () => {
+    const html = renderToStaticMarkup(createElement(SplitVisitPayments as never, { appointmentId: "a", currency: "cad", country: "CA", state: { ledger: base, balance: visitBalance(base) } }));
+    expect(html).not.toMatch(/becomes due again/);
   });
 });

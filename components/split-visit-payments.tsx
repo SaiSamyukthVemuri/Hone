@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { moneyRows, visitMoneySummary } from "@/lib/billing/visit-money";
+import { BALANCE_DUE_LABEL, moneyRows, refundStatusLabel, visitMoneySummary } from "@/lib/billing/visit-money";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
   canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
@@ -186,7 +186,9 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const tenderLabel = tender === "card" ? "Charge card" : tender === "paid_cash" ? "Record cash received" : "Record transfer";
   const submitLabel = cents ? `${tenderLabel} ${fmt(cents)}` : tenderLabel;
 
-  const money = moneyRows(visitMoneySummary(ledger));
+  const summary = visitMoneySummary(ledger);
+  const money = moneyRows(summary);
+  const refundStatus = refundStatusLabel(summary);
   return (
     <section aria-labelledby="split-title" data-testid="split-visit-payments" className="flex flex-col gap-4">
       <h3 id="split-title" className="text-base font-semibold">Payments for this visit</h3>
@@ -195,10 +197,11 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-base" data-testid="split-balance">
           <dt>Bill total</dt><dd className="text-right font-medium">{fmt(balance.totalCents)}</dd>
           {money.rows.map((r) => (<Fragment key={r.key}><dt data-testid={`money-${r.key}-label`}>{r.label}</dt><dd className="text-right font-medium" data-testid={`money-${r.key}`}>{fmt(r.cents)}</dd></Fragment>))}
-          <dt className="font-semibold">Still to collect</dt>
+          <dt className="font-semibold">{BALANCE_DUE_LABEL}</dt>
           <dd className="text-right text-lg font-semibold" data-testid="split-collectable">{fmt(balance.collectableCents)}</dd>
         </dl>
       )}
+      {balance && refundStatus ? <p className="text-sm text-neutral-600 dark:text-neutral-400" data-testid="money-refund-status">{refundStatus}</p> : null}
       {balance && money.notFinalNote && (
         <p role="status" data-testid="money-not-final" className="text-sm text-neutral-600 dark:text-neutral-400">{money.notFinalNote}</p>
       )}
@@ -307,7 +310,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
       )}
 
       {refundable.length > 0 && !unknown && (
-        <RefundForm received={refundable} fmt={fmt} busy={busy}
+        <RefundForm received={refundable} fmt={fmt} busy={busy} balanceDueCents={balance ? balance.collectableCents : null}
           onSubmit={async (v) => {
             setBusy(true);
             // One id per distinct refund (payment, amount, kind, reason): a lost answer keeps it, so asking again re-reads the one refund; a different refund never replays it.
@@ -358,8 +361,16 @@ function PendingTransfer(props: { id: string; label: string; amount: string; bus
   );
 }
 
+/** What confirming a refund really does, in the studio's words. It never promises a reopened balance: returned money does not make the client owe it again. */
+export function refundEffectCopy(v: { kind: "price_reduction" | "payment_reversal"; amount: string; card: boolean; method: string; balanceDue: string | null; settled: boolean }): string {
+  const where = v.card ? "to the card" : `back to the client (${v.method.toLowerCase()})`;
+  const verb = v.kind === "price_reduction" ? `Reduce the bill by ${v.amount} and refund ${v.amount}` : `Refund ${v.amount}`;
+  const tail = v.balanceDue === null ? "" : v.settled ? ` The visit stays paid: ${BALANCE_DUE_LABEL} stays ${v.balanceDue}.` : ` ${BALANCE_DUE_LABEL} stays ${v.balanceDue}.`;
+  return `${verb} ${where}.${tail}`;
+}
+
 function RefundForm(props: {
-  received: { key: string; label: string; cents: number; id: string; card: boolean }[]; fmt: (c: number) => string; busy: boolean;
+  received: { key: string; label: string; cents: number; id: string; card: boolean }[]; fmt: (c: number) => string; busy: boolean; balanceDueCents: number | null;
   onSubmit: (v: { paymentId: string; amount: string; kind: "price_reduction" | "payment_reversal"; reason: string; card: boolean }) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
@@ -385,9 +396,9 @@ function RefundForm(props: {
           <fieldset className="flex flex-col gap-2">
             <legend className="text-sm font-medium">What is this refund?</legend>
             <label className="flex items-start gap-2 text-sm"><input type="radio" name="refund-kind" checked={kind === "payment_reversal"} onChange={() => setKind("payment_reversal")} />
-              <span><b>Return the payment.</b> The bill stays the same, so this amount becomes due again.</span></label>
+              <span><b>Return the payment.</b> The bill stays the same and no balance is reopened: a paid visit stays paid.</span></label>
             <label className="flex items-start gap-2 text-sm"><input type="radio" name="refund-kind" checked={kind === "price_reduction"} onChange={() => setKind("price_reduction")} />
-              <span><b>Reduce the price.</b> The bill goes down by this amount and the balance is unchanged.</span></label>
+              <span><b>Reduce the price.</b> The bill goes down by this amount; the balance due is unchanged.</span></label>
           </fieldset>
           <label className="text-sm font-medium">Refund amount
             <input inputMode="decimal" autoComplete="off" className={input} value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -396,6 +407,7 @@ function RefundForm(props: {
             <input className={input} value={reason} maxLength={500} aria-describedby="split-refund-reason-help" onChange={(e) => setReason(e.target.value)} />
             <span id="split-refund-reason-help" className="mt-1 block text-xs font-normal text-neutral-600 dark:text-neutral-400">{REASON_HELP}</span>
           </label>
+          {cents ? <p className="text-sm font-medium" role="status" data-testid="split-refund-effect">{refundEffectCopy({ kind, amount: props.fmt(cents), card: selected?.card ?? false, method: selected?.label ?? "", balanceDue: props.balanceDueCents === null ? null : props.fmt(props.balanceDueCents), settled: props.balanceDueCents === 0 })}</p> : null}
           <button type="button" className={primary} disabled={props.busy || !refundSendable(selected, cents, reason)}
             onClick={() => void props.onSubmit({ paymentId, amount, kind, reason: reason.trim(), card: selected?.card ?? false }).then((done) => { if (done) { setAmount(""); setReason(""); } })}>
             {cents ? `Record ${props.fmt(cents)} ${kind === "price_reduction" ? "price reduction" : "refund"}` : "Record refund"}

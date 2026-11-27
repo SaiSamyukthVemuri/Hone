@@ -34,6 +34,7 @@ vi.mock("@/lib/supabase/server", () => ({
       q.select = () => q;
       q.order = () => q;
       q.is = () => q;
+      q.not = () => q;
       q.eq = (col: string, val: unknown) => {
         eqs.push([col, val]);
         return q;
@@ -62,7 +63,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => (globalThis as { __mkSb?: () => unknown }).__mkSb!(),
 }));
 
-const { getAppointmentPaymentStates } = await import("@/lib/billing/appointment-payment-state");
+const { getAppointmentPaymentStates, isBilledVisit } = await import("@/lib/billing/appointment-payment-state");
 
 const STUDIO = "studio-1";
 const APPT = "appt-1";
@@ -179,5 +180,19 @@ describe("HON-11 #6: the session page prefills the outcome amount like quick che
     expect(card).toMatch(
       /defaultAmountCents=\{\s*presentation\.prepareFormAmount\?\.amountCents \?\?\s*settlementQuotedAmountCents\s*\}/,
     );
+  });
+});
+
+describe("a billed visit is marked so the row can offer Manage payments (Codex P1 on #1827)", () => {
+  it("a paid billed visit is paid AND billed; an unbilled one is not billed", async () => {
+    scenario({ refundCents: null });
+    h.rows.visit_bills = [{ appointment_id: APPT, studio_id: STUDIO, total_cents: CHARGED, currency: "cad", superseded_at: null }];
+    h.rows.payment_charge_attempts = [{ ...h.rows.payment_charge_attempts[0], appointment_id: APPT, visit_bill_id: "bill-1" }];
+    const billedStates = await getAppointmentPaymentStates(STUDIO, [APPT], TZ, true);
+    expect(billedStates.get(APPT)).toBe("paid");
+    expect(isBilledVisit(billedStates, APPT)).toBe(true);
+    scenario({ refundCents: null });
+    const plain = await getAppointmentPaymentStates(STUDIO, [APPT], TZ, true);
+    expect(isBilledVisit(plain, APPT)).toBe(false);
   });
 });

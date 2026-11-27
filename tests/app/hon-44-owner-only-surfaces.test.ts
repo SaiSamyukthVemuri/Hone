@@ -31,7 +31,8 @@ describe("appointment detail page", () => {
     expect(src).toMatch(/const showManualFeeCard =\s*isOwner && \(data\.status === "cancelled" \|\| data\.status === "no_show"\);/);
   });
   it("loads checkout payment state and renders the Payment section only for the owner", () => {
-    expect(src).toMatch(/const checkoutPaymentState =\s*isOwner && typedStatus === "completed"/);
+    // Owner-only is unchanged; the state read now keeps the whole map so the billed marker travels with it (Manage payments).
+    expect(src).toMatch(/const checkoutStates =\s*isOwner && typedStatus === "completed"/);
     expect(src).toMatch(/\{isOwner && typedStatus === "completed" && \(/);
   });
 });

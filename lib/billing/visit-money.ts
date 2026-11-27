@@ -13,6 +13,8 @@ import type { VisitLedger } from "@/lib/billing/visit-payments-core";
 
 export const MONEY_LABELS = { collected: "Collected", refunded: "Refunded", net: "Net" } as const;
 export const REFUND_PENDING_LABEL = "Refund pending";
+export const BALANCE_DUE_LABEL = "Balance due"; // ONE word for "what is still owed" on checkout, the visit page, the statement and the print page
+export const REFUND_STATUS_LABELS = { partial: "Partially refunded", full: "Fully refunded" } as const;
 export const NET_NOT_FINAL_PENDING = "Not counted in Refunded or Net until Stripe confirms it.";
 export const NET_NOT_FINAL_REVIEW = "A refund made in your Stripe dashboard is waiting for you to confirm it, so Net may change.";
 export const NET_NOT_FINAL_PAYMENT = "A payment or refund is still being confirmed, so Net may change.";
@@ -79,4 +81,10 @@ export function moneyRows(m: VisitMoneySummary, opts: { statement?: boolean } = 
   if (m.waitingCents > 0 && !opts.statement) rows.push({ key: "waiting", label: "Waiting for confirmation", cents: m.waitingCents, note: null });
   const notFinalNote = m.final ? null : m.reviewOpen ? NET_NOT_FINAL_REVIEW : m.refundPendingCents > 0 ? NET_NOT_FINAL_PENDING : NET_NOT_FINAL_PAYMENT;
   return { rows, notFinalNote };
+}
+
+/** "Partially refunded" or "Fully refunded" once money has been returned (succeeded refunds only); null when nothing has been returned. Never a reason to reopen a balance. */
+export function refundStatusLabel(m: Pick<VisitMoneySummary, "collectedCents" | "refundedCents">): string | null {
+  if (m.refundedCents <= 0) return null;
+  return m.collectedCents > 0 && m.refundedCents >= m.collectedCents ? REFUND_STATUS_LABELS.full : REFUND_STATUS_LABELS.partial;
 }

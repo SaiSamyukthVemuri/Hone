@@ -176,7 +176,8 @@ test("a transfer confirmed settles the bill and nothing is charged", async ({ pa
   await expect.poll(async () => (await externals()).map((e) => e.state), { timeout: 30_000 }).toEqual(["confirmed"]);
   await page.goto("/dashboard");
   await expect(page.getByTestId("appointment-payment-paid")).toBeVisible();
-  await expect(page.getByTestId("checkout-button")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Checkout", exact: true })).toHaveCount(0); // no charge button, but a way back in to manage the paid visit
+  await expect(page.getByRole("button", { name: "Manage payments", exact: true })).toHaveCount(1);
   expect(pis()).toHaveLength(0);
   expect(await attempts()).toHaveLength(0);
 });

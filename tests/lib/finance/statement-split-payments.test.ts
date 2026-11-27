@@ -98,9 +98,9 @@ describe("the statement itemises a visit paid in parts", () => {
     const red = await build({ ...LEDGER, payment_refunds: [{ appointment_id: A, amount_cents: 4000, currency: "cad", status: "succeeded", legacy: false, kind: "price_reduction" }] });
     expect(red.st.visits[0].lines.find((l) => l.kind === "bill_note")?.reducedCents).toBe(4000);
   });
-  it("the visit pill says Part refunded once money has come back", async () => {
+  it("the visit pill says Partially refunded once part of the money has come back", async () => {
     const { st } = await build(LEDGER);
-    expect(studioVisitStatus(st.visits[0].lines, 22500).label).toBe("Part refunded");
+    expect(studioVisitStatus(st.visits[0].lines, 22500).label).toBe("Partially refunded");
   });
   it("a refund of a cash payment is itemised the same way", async () => {
     const { st } = await build({ ...LEDGER, payment_charge_attempts: [], payment_refunds: [{ appointment_id: A, amount_cents: 2000, currency: "cad", status: "succeeded", legacy: false }] });

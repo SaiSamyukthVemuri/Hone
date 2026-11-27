@@ -69,7 +69,11 @@ export function studioVisitStatus(lines: readonly { kind: StatementKind; cents: 
   // anything settled. The existing words, and the existing reason for a payment or refund that is unresolved.
   if (kinds.has("unresolved")) return { label: "Unresolved", tone: "warning", reason: UNKNOWN_REASON_COPY.payment_unresolved };
   // HON-122: money was returned from a payment on this visit. The payment stays listed in full, so the visit is not simply "Paid".
-  if (kinds.has("refunded_partial")) return { label: "Part refunded", tone: "neutral" };
+  if (kinds.has("refunded_partial")) {
+    const returned = lines.reduce((n, l) => (l.kind === "refunded_partial" && l.cents !== null ? n + l.cents : n), 0);
+    const received = visitCollectedCents(lines);
+    return { label: received !== null && received > 0 && returned >= received ? "Fully refunded" : "Partially refunded", tone: "neutral" };
+  }
   const collected = visitCollectedCents(lines);
   if (collected !== null) {
     const waived = lines.reduce((n, l) => (l.kind === "waived" && l.cents !== null ? n + l.cents : n), 0);

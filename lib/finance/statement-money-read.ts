@@ -124,8 +124,8 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
       supabase.from("payment_refunds").select("appointment_id, attempt_id, amount_cents, currency, status, legacy, kind").eq("studio_id", studioId).in("appointment_id", chunk),
     ),
     // OPEN reviews (a refund made in the Stripe dashboard that the owner has not confirmed): the visit is unresolved until then, never "paid".
-    readInChunks<{ appointment_id: string | null; amount_cents: number | null; currency: string | null }>(ids, (chunk) =>
-      supabase.from("payment_refund_reviews").select("appointment_id, amount_cents, currency").eq("studio_id", studioId).is("resolved_at", null).in("appointment_id", chunk),
+    readInChunks<{ appointment_id: string | null; attempt_id: string | null; amount_cents: number | null; currency: string | null }>(ids, (chunk) =>
+      supabase.from("payment_refund_reviews").select("appointment_id, attempt_id, amount_cents, currency").eq("studio_id", studioId).is("resolved_at", null).in("appointment_id", chunk),
     ),
   ]);
   if (!bills.ok || !externals.ok || !refunds.ok || !reviews.ok) return { ok: false };
@@ -138,16 +138,6 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
     // Confirmed money is cash / e-transfer / other as the owner recorded it. A transfer still waiting for confirmation is owed, not received.
     ledgerRows.push({ appointmentId: e.appointment_id, method: e.state === "confirmed" ? e.method : "still_owes", amountCents: e.amount_cents, currency: e.currency, quotedAmountCents: null });
   }
-  // An attempt that has its own split refunds is shown through THOSE rows. When the split refunds add up to the whole charge the webhook also marks the attempt itself
-  // fully refunded (0240), and showing that full-refund line as well as each split refund would count the same money twice (two $50 refunds must read $100, not $200).
-  const splitRefundedAttempts = new Set<string>();
-  for (const r of refunds.rows) if (!r.legacy && r.attempt_id && r.status !== "failed") splitRefundedAttempts.add(r.attempt_id);
-  for (const r of refunds.rows) {
-    // A legacy row mirrors a full refund the attempt itself already carries (the card line shows it), and a failed refund moved nothing.
-    if (r.legacy || r.status === "failed" || !r.appointment_id) continue;
-    ledgerRows.push({ appointmentId: r.appointment_id, method: r.status === "succeeded" ? "partial_refund" : "refund_in_flight", amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: null, ...(r.status === "succeeded" ? {} : { pendingCents: r.amount_cents ?? 0 }) });
-  }
-
   const [feeCards, sessionCards, settlements, legacy] = await Promise.all([
     readInChunks<CardDb>(ids, (chunk) =>
       supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studioId).in("charge_reason", FEE_REASONS).in("appointment_id", chunk),
@@ -171,7 +161,22 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   ]);
   if (!feeCards.ok || !sessionCards.ok || !settlements.ok || !legacy.ok) return { ok: false };
 
+  // Only a LIVE card payment is real money. A refund row that points at an attempt is real only when that attempt is live (cash and transfer refunds have no attempt).
+  const liveAttempt = new Set<string>([...feeCards.rows, ...sessionCards.rows].filter((r) => r.stripe_livemode === true).map((r) => r.id));
+  // An attempt that has its own split refunds is shown through THOSE rows. When the split refunds add up to the whole charge the webhook also marks the attempt itself
+  // fully refunded (0240), and showing that full-refund line as well as each split refund would count the same money twice (two $50 refunds must read $100, not $200).
+  const splitRefundedAttempts = new Set<string>();
+  for (const r of refunds.rows) if (!r.legacy && r.attempt_id && r.status !== "failed") splitRefundedAttempts.add(r.attempt_id);
+  for (const r of refunds.rows) {
+    // Stripe TEST-mode money is never real money (the statement counts live card money only, so does this): a refund of a test or unknown-mode card payment adds nothing.
+    if (r.attempt_id && !liveAttempt.has(r.attempt_id)) continue;
+    // A legacy row mirrors a full refund the attempt itself already carries (the card line shows it), and a failed refund moved nothing.
+    if (r.legacy || r.status === "failed" || !r.appointment_id) continue;
+    ledgerRows.push({ appointmentId: r.appointment_id, method: r.status === "succeeded" ? "partial_refund" : "refund_in_flight", amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: null, ...(r.status === "succeeded" ? {} : { pendingCents: r.amount_cents ?? 0 }) });
+  }
+
   for (const rv of reviews.rows) {
+    if (rv.attempt_id && !liveAttempt.has(rv.attempt_id)) continue; // a review of a test-mode payment is not real money
     if (rv.appointment_id) ledgerRows.push({ appointmentId: rv.appointment_id, method: "refund_in_flight", amountCents: rv.amount_cents, currency: rv.currency, quotedAmountCents: null, pendingCents: rv.amount_cents ?? 0 });
   }
   const cardRows: StatementCardRow[] = [];
@@ -181,7 +186,7 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
     // The attempt's own refund columns are Stripe's CUMULATIVE statement of the whole payment (0078, 0240). Its split rows are shown through their own lines
     // (above), but when the columns say MORE came back than those rows (the rest was refunded in the Stripe dashboard) the difference is one more line, so
     // the statement reads the same money as payment_refund_money (0393): the greater of the two, never the sum.
-    if (splitRefundedAttempts.has(r.id) && r.status === "succeeded" && typeof r.amount_cents === "number") {
+    if (liveAttempt.has(r.id) && splitRefundedAttempts.has(r.id) && r.status === "succeeded" && typeof r.amount_cents === "number") {
       const mine = refunds.rows.filter((x) => x.attempt_id === r.id && !x.legacy);
       const gap = aggregateRefundGaps(
         { id: r.id, amountCents: r.amount_cents, refundStatus: r.refund_status, refundAmountCents: r.refund_amount_cents },

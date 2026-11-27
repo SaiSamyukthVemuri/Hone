@@ -255,11 +255,14 @@ export async function runSplitCardPaymentAction(formData: FormData): Promise<Spl
   const result = await executeSessionPaymentChargeAction(f);
   revalidatePath("/dashboard");
   if (result.ok) return { outcome: "succeeded", state: await after() };
-  if (result.outcome === "failed" || result.outcome === "blocked" || result.outcome === "authorization_not_current" || result.outcome === "lineage_mismatch"
-      || result.outcome === "live_mode_blocked") {
+  if (result.outcome === "failed") return { outcome: "failed", message: result.error, state: await after() };
+  // A REFUSAL (blocked, authorization_not_current, lineage_mismatch, live_mode_blocked) is a definite "not charged" ONLY for an attempt that was never sent. While re-checking a
+  // pending_stripe attempt an earlier Stripe request may already have charged the card, and a refused re-check (an authorization read that failed, a card that changed) says nothing
+  // about it: it stays unknown, so the screen keeps "Checking payment status" and offers no second charge (Codex P1 on #1827).
+  if (row.data.status !== "pending_stripe" && (result.outcome === "blocked" || result.outcome === "authorization_not_current" || result.outcome === "lineage_mismatch" || result.outcome === "live_mode_blocked")) {
     return { outcome: "failed", message: result.error, state: await after() };
   }
-  // needs_manual_review, not_found, not_authorized: not a definite answer about the money.
+  // needs_manual_review, not_found, not_authorized, and any refusal of a re-check of an in-flight attempt: not a definite answer about the money.
   return { outcome: "unknown", state: await after() };
 }
 

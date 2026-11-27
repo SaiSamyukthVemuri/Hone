@@ -16,6 +16,7 @@ import { inferStripeLivemode } from "@/lib/stripe/server";
 import { AppointmentCheckoutCell } from "@/components/appointment-checkout-cell";
 import {
   getAppointmentPaymentStates,
+  isBilledVisit,
   type AppointmentPaymentState,
 } from "@/lib/billing/appointment-payment-state";
 import { timed } from "@/lib/observability/perf-timing";
@@ -998,6 +999,7 @@ export default async function DashboardPage({
                   intakeStatus={intakeByClient.get(appt.client_id) ?? null}
                   linkedSession={sessionByAppointment.get(appt.id) ?? null}
                   paymentState={paymentStates.get(appt.id) ?? "unavailable"}
+                  billed={isBilledVisit(paymentStates, appt.id)}
                   isOwner={isOwner}
                   portalEnabled={clientSelfServicePolicyFromStudio(studio).portal}
                   historyAsked={viewingToday}
@@ -1156,6 +1158,7 @@ function AppointmentRow({
   intakeStatus,
   linkedSession,
   paymentState,
+  billed,
   isOwner,
   portalEnabled,
   prepSummary,
@@ -1178,6 +1181,8 @@ function AppointmentRow({
   intakeStatus: ClientIntakeForm["status"] | null;
   linkedSession: { sessionId: string; hasChartedArea: boolean } | null;
   paymentState: AppointmentPaymentState;
+  /** The visit has a split-payments bill (see isBilledVisit): its paid / unavailable badge also offers "Manage payments". */
+  billed: boolean;
   // The viewer is the studio owner. Checkout is owner-only (HON-44).
   isOwner: boolean;
   // Dashboard V2 Part 2A: the #517 previous-treatment model for THIS
@@ -1452,6 +1457,7 @@ function AppointmentRow({
               appointmentId={appt.id}
               status={appt.status}
               paymentState={paymentState}
+              billed={billed}
               dashboardStartsAt={appt.starts_at}
               dashboardVisitLabel={[clientLabel, serviceName, time].filter(Boolean).join(" · ")}
               dashboardCardOnFile={cardOnFile}

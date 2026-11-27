@@ -10,7 +10,7 @@ vi.mock("@/lib/supabase/server", () => ({
       db.queried.push(table);
       const b: Record<string, unknown> = {};
       const done = () => ({ data: db.errors.has(table) ? null : (db.rows[table] ?? []), error: db.errors.has(table) ? { code: "XX000" } : null });
-      for (const m of ["select", "eq", "is", "lte", "gte", "order", "limit"]) b[m] = () => b;
+      for (const m of ["select", "eq", "is", "not", "lte", "gte", "order", "limit"]) b[m] = () => b;
       // Records every id list a request carries, to prove no request URL grows past the gateway budget.
       b.in = (col: string, vals: unknown[]) => {
         db.ins.push({ table, col, n: vals.length, chars: vals.map((v) => encodeURIComponent(String(v))).join("%2C").length });
@@ -253,6 +253,13 @@ describe("AO2 / U2: every other money form either counts or forces 'Amount unava
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
     db.rows.payment_charge_attempts = [card({ amount_cents: 10000 })];
     expect(await balanceOf()).toEqual([]);
+  });
+  it("a BILLED visit whose card payment sits on a soft-deleted chart is never reported as owing the money it already collected (Codex P2)", async () => {
+    db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000 })];
+    db.rows.visit_bills = [{ appointment_id: "a1", total_cents: 10000, currency: "cad" }];
+    const out = await balanceOf();
+    expect(out.some((b) => (b as { kind: string }).kind === "owed")).toBe(false);
   });
   it("a failed charge on a deleted session is nothing", async () => {
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];

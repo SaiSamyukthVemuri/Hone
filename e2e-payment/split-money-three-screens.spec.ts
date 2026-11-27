@@ -71,6 +71,12 @@ test("the $225 / $40 / $185 case reads the same on checkout, the visit page and 
   await form.getByRole("combobox").selectOption({ index: 0 });
   await form.getByLabel("Refund amount").fill("40.00");
   await form.getByLabel("Reason").fill("Client unhappy with part of the visit");
+  // The refund confirmation states the TRUE effect before staff confirm: the visit's balance is not reopened.
+  const effect = form.getByTestId("split-refund-effect");
+  await expect(effect).toContainText("Refund $40.00 CAD to the card.");
+  await expect(effect).toContainText("Balance due stays");
+  await expect(effect).not.toContainText(/owe|reopen/i);
+  await shots(page, "0-refund-confirmation", form);
   await form.getByRole("button", { name: `Record ${money(4000)} refund`, exact: true }).click();
   await expect.poll(async () => Number((await adminQuery(`select count(*)::int as n from public.payment_refunds where appointment_id = $1 and legacy = false and status = 'succeeded'`, [seed.appointmentId])).rows[0].n), { timeout: 30_000 }).toBe(1);
 
@@ -96,10 +102,18 @@ test("the $225 / $40 / $185 case reads the same on checkout, the visit page and 
   // PRODUCT RULE (Sam, 27 Nov 2026): refunding a fully paid visit does not reopen a balance. The database says nothing is owed.
   expect(Number((await adminQuery(`select outstanding_cents from public.visit_payment_position((select studio_id from public.visit_bills where appointment_id = $1 and superseded_at is null), $1)`, [seed.appointmentId])).rows[0].outstanding_cents)).toBe(0);
 
-  // The roster offers no Checkout and says Paid for a visit that is paid after the refund.
+  // The roster says Paid for a visit that is paid after the refund, and still offers ONE way back into the payment panel (Manage payments), never a charge button.
   await page.goto("/dashboard");
-  await expect(page.getByTestId("checkout-button")).toHaveCount(0);
   await expect(page.getByTestId("appointment-payment-paid")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Checkout", exact: true })).toHaveCount(0);
+  const manage = page.getByRole("button", { name: "Manage payments", exact: true });
+  await expect(manage).toHaveCount(1);
+  await manage.click();
+  const reopened = page.getByTestId("split-visit-payments");
+  await expect(reopened).toBeVisible();
+  await expect(reopened.getByTestId("money-refund-status")).toHaveText("Partially refunded");
+  await expect(reopened.getByTestId("split-collectable")).toHaveText(money(0));
+  await page.keyboard.press("Escape");
 
   // 2. VISIT page (owner only), in place of the single card payment's "Paid".
   await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
@@ -167,4 +181,55 @@ test("a genuinely unpaid bill still shows what is owed: $225 bill, $185 received
   await expect(page.getByTestId("statement-money-net")).toHaveText("$185.00");
   await expect(page.locator("main")).toContainText("Not paid");
   await shots(page, "u3-statement");
+});
+
+// Sam's two statement checks, on ONE real-looking split visit whose card stays a Stripe TEST payment (the fake-Stripe lane's own mode):
+//   (1) the TEST card payment ($100) and its $40 refund contribute ZERO to the studio statement and to analytics;
+//   (2) the real $50 cash and $75 transfer on the same visit DO appear on /financials/statement and in the analytics total: $125.00, nothing else.
+test("a Stripe TEST card payment and its refund add nothing to the studio statement or analytics, while real cash and transfer do", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  await page.goto("/dashboard");
+  const modal = await openCheckout(page);
+  await modal.getByRole("button", { name: "Split this payment", exact: true }).click();
+  const panel = modal.getByTestId("split-visit-payments");
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(22500));
+  const amount = (v: string) => panel.getByLabel(/^Amount \(CAD\)/).fill(v);
+  const pick = (label: string) => panel.getByText(label, { exact: true }).first().click();
+  await amount("100.00");
+  await panel.getByRole("button", { name: `Charge card ${money(10000)}`, exact: true }).click();
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500), { timeout: 30_000 });
+  await pick("Cash"); await amount("50.00");
+  await panel.getByRole("button", { name: `Record cash received ${money(5000)}`, exact: true }).click();
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(7500));
+  await pick("E-transfer"); await amount("75.00");
+  await panel.getByRole("button", { name: `Record transfer ${money(7500)}`, exact: true }).click();
+  await panel.getByRole("button", { name: `Confirm ${money(7500)} transfer received`, exact: true }).click();
+  await expect.poll(async () => (await adminQuery(`select state from public.visit_external_payments where appointment_id = $1 and method = 'paid_e_transfer'`, [seed.appointmentId])).rows[0]?.state, { timeout: 30_000 }).toBe("confirmed");
+  await panel.getByRole("button", { name: "Refund or reduce a payment" }).click();
+  const form = panel.getByTestId("split-refund-form");
+  await form.getByRole("combobox").selectOption({ index: 0 });
+  await form.getByLabel("Refund amount").fill("40.00");
+  await form.getByLabel("Reason").fill("Client unhappy with part of the visit");
+  await form.getByRole("button", { name: `Record ${money(4000)} refund`, exact: true }).click();
+  await expect.poll(async () => Number((await adminQuery(`select count(*)::int as n from public.payment_refunds where appointment_id = $1 and legacy = false and status = 'succeeded'`, [seed.appointmentId])).rows[0].n), { timeout: 30_000 }).toBe(1);
+
+  // The card really is a TEST-mode payment in the database.
+  expect((await adminQuery(`select stripe_livemode from public.payment_charge_attempts where appointment_id = $1`, [seed.appointmentId])).rows.map((r) => r.stripe_livemode)).toEqual([false]);
+
+  await page.goto("/financials/statement");
+  const summary = page.getByRole("region", { name: "Summary" });
+  await expect(summary).toContainText("Total collected");
+  await expect(summary).toContainText("$125.00");
+  await expect(summary).not.toContainText("$225.00");
+  await expect(summary).not.toContainText("$185.00");
+  await expect(summary).not.toContainText("$100.00");
+  await expect(summary).toContainText("Cash");
+  await shots(page, "s1-studio-statement");
+
+  await page.goto("/financials/analytics");
+  const collected = page.locator('section[aria-labelledby="ov-collected-total"]');
+  // Analytics prints whole dollars ("$125CAD"): exactly the cash and the transfer, never the TEST card or its refund.
+  await expect(collected).toContainText(/\$125(\.00)?\s*CAD/);
+  await expect(collected).not.toContainText(/\$(225|185|100)(\.00)?\s*CAD/);
+  await shots(page, "s2-analytics");
 });
