@@ -71,7 +71,7 @@
 
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { currentWebhookPlatform, usWebhookStudioMismatch, webhookSecretVariable, webhookStripe } from "@/lib/stripe/webhook-platform";
+import { currentWebhookPlatform, usWebhookStudioPlatform, webhookSecretVariable, webhookStripe } from "@/lib/stripe/webhook-platform";
 import { PLATFORM_ENV } from "@/lib/stripe/platform-routing";
 import { accountToStatusSnapshot, recordAccountJurisdiction } from "@/lib/stripe/account";
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -211,9 +211,18 @@ export async function POST(req: Request): Promise<Response> {
     }
     studioId = data?.studio_id ?? null;
     // HON-90: on the US route only, an account bound to a studio that is not a US studio is an UNBOUND account (never applied to it).
-    if (studioId && (await usWebhookStudioMismatch(studioId))) {
-      logInternal("stripe_webhook_studio_platform_mismatch", { eventId: event.id, eventType: event.type });
-      studioId = null;
+    if (studioId) {
+      const platform = await usWebhookStudioPlatform(studioId);
+      if (platform === "read_failed") {
+        // A failed read is NOT a mismatch. Retryable and BEFORE the claim (nothing recorded), so Stripe redelivers; marking it processed as an
+        // unbound account would silently lose an account.updated for a real US studio.
+        logInternal("stripe_webhook_studio_platform_read_failed", { eventId: event.id, eventType: event.type });
+        return NextResponse.json({ ok: false }, { status: 500 });
+      }
+      if (platform === "mismatch") {
+        logInternal("stripe_webhook_studio_platform_mismatch", { eventId: event.id, eventType: event.type });
+        studioId = null;
+      }
     }
   }
 

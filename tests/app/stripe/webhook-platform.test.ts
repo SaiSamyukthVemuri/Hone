@@ -5,7 +5,7 @@ vi.mock("server-only", () => ({}));
 // HON-90. Which platform a delivery belongs to is the ROUTE it arrived on. Real Stripe signature verification, synthetic secrets.
 const CA_SECRET = "whsec_" + "ca".repeat(16);
 const US_SECRET = "whsec_" + "us".repeat(16);
-const BODY = JSON.stringify({ id: "evt_1", object: "event", type: "customer.created", livemode: false, data: { object: {} } });
+const BODY = JSON.stringify({ id: "evt_1", object: "event", type: "customer.created", livemode: false, account: "acct_bound", data: { object: {} } });
 
 const built = vi.hoisted(() => ({ keys: [] as string[] }));
 vi.mock("@/lib/stripe/server", async () => {
@@ -14,9 +14,14 @@ vi.mock("@/lib/stripe/server", async () => {
   return { getStripe: () => make("sk_test_" + "ca".repeat(20)), getStripeFor: (p: string) => make(`sk_test_${p === "US" ? "us" : "ca"}`.padEnd(48, "x")) };
 });
 const claims = vi.hoisted(() => ({ n: 0 }));
+const bind = vi.hoisted(() => ({
+  studioId: null as string | null,
+  jurisdiction: { ok: true, jurisdiction: { country: "US", currency: "usd" } } as { ok: boolean; jurisdiction?: { country: string; currency: string }; reason?: string },
+}));
+vi.mock("@/lib/billing/payment-jurisdiction-server", () => ({ getStudioPaymentJurisdiction: async () => bind.jurisdiction }));
 vi.mock("@/lib/supabase/admin-server", () => ({
   createAdminClient: () => ({
-    from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }) }),
+    from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: bind.studioId ? { studio_id: bind.studioId } : null, error: null }) }) }) }) }),
     rpc: async (name: string) => {
       if (name === "claim_stripe_event") { claims.n += 1; return { data: [{ already_processed: false, claimed_by_this_request: true, claim_token: "tok" }], error: null }; }
       return { data: null, error: null };
@@ -39,6 +44,8 @@ beforeEach(() => {
   process.env.STRIPE_WEBHOOK_SECRET = CA_SECRET;
   process.env.STRIPE_WEBHOOK_SECRET_US = US_SECRET;
   claims.n = 0;
+  bind.studioId = null;
+  bind.jurisdiction = { ok: true, jurisdiction: { country: "US", currency: "usd" } };
   built.keys.length = 0;
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -100,6 +107,38 @@ describe("the two webhook routes verify with their own platform's secret", () =>
     const ca = await import("@/app/api/stripe/webhook/route");
     await us.POST(req(await sign(US_SECRET)));
     expect((await ca.POST(req(await sign(US_SECRET)))).status).toBe(400);
+    expect((await ca.POST(req(await sign(CA_SECRET)))).status).toBe(200);
+  });
+});
+
+describe("the US route's studio-platform read (Codex P1)", () => {
+  it("a FAILED jurisdiction read is retryable: 5xx, and NOTHING is claimed (never treated as an unbound account)", async () => {
+    bind.studioId = "studio-1";
+    bind.jurisdiction = { ok: false, reason: "read_failed" };
+    const { POST } = await import("@/app/api/stripe/webhook-us/route");
+    expect((await POST(req(await sign(US_SECRET)))).status).toBe(500);
+    expect(claims.n).toBe(0);
+  });
+  it("CONTROL: the same delivery with a readable US studio is claimed and acknowledged", async () => {
+    bind.studioId = "studio-1";
+    const { POST } = await import("@/app/api/stripe/webhook-us/route");
+    expect((await POST(req(await sign(US_SECRET)))).status).toBe(200);
+    expect(claims.n).toBe(1);
+  });
+  it.each(["missing", "invalid"])("a SUCCESSFUL read that finds no usable US studio (%s) is the unbound-account path: acknowledged, claimed", async (reason) => {
+    bind.studioId = "studio-1";
+    bind.jurisdiction = { ok: false, reason };
+    const { POST } = await import("@/app/api/stripe/webhook-us/route");
+    expect((await POST(req(await sign(US_SECRET)))).status).toBe(200);
+    expect(claims.n).toBe(1);
+  });
+  it("a CA studio's event on the US route is unbound (acknowledged), and the CA route never reads the jurisdiction", async () => {
+    bind.studioId = "studio-1";
+    bind.jurisdiction = { ok: true, jurisdiction: { country: "CA", currency: "cad" } };
+    const us = await import("@/app/api/stripe/webhook-us/route");
+    expect((await us.POST(req(await sign(US_SECRET)))).status).toBe(200);
+    bind.jurisdiction = { ok: false, reason: "read_failed" }; // would 500 on the US route; the CA route must not care
+    const ca = await import("@/app/api/stripe/webhook/route");
     expect((await ca.POST(req(await sign(CA_SECRET)))).status).toBe(200);
   });
 });

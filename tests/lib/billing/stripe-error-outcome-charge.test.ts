@@ -24,6 +24,8 @@ import Stripe from "stripe";
 
 const h = vi.hoisted(() => ({
   createError: null as unknown,
+  clientThrows: false,
+  claimCalls: 0,
   createReply: null as Record<string, unknown> | null,
   retrieveReply: null as Record<string, unknown> | null,
   retrieveError: null as unknown,
@@ -72,7 +74,10 @@ vi.mock("@/lib/stripe/server", () => ({
   getStripe: () => fakeStripe,
 }));
 vi.mock("@/lib/stripe/session-payment-stripe", () => ({
-  getSessionPaymentStripe: () => fakeStripe,
+  getSessionPaymentStripe: () => {
+    if (h.clientThrows) throw new Error("studio payment jurisdiction read failed");
+    return fakeStripe;
+  },
 }));
 vi.mock("@/lib/ops/alerts", () => ({
   recordOpsAlert: async (input: { severity: string; event: string }) => {
@@ -138,6 +143,7 @@ vi.mock("@/lib/supabase/admin-server", () => ({
     },
     rpc: async (name: string) => {
       if (name !== "claim_session_payment_charge_attempt") return { data: null, error: null };
+      h.claimCalls += 1;
       return {
         data: [
           {
@@ -194,6 +200,8 @@ const ATTEMPT_ROW = {
 
 beforeEach(() => {
   h.createError = null;
+  h.clientThrows = false;
+  h.claimCalls = 0;
   h.createReply = null;
   h.retrieveReply = null;
   h.retrieveError = null;
@@ -601,5 +609,19 @@ describe("HON-90: the readiness guard applies to unclaimed attempts only", () =>
     expect(r).toMatchObject({ ok: false, outcome: "lineage_mismatch" });
     expect(h.retrieveCalls).toBe(0);
     expect(h.createKeys).toEqual([]);
+  });
+});
+
+describe("HON-90 (Codex P1) charge: the Stripe client is resolved BEFORE the claim", () => {
+  it("a failed client/jurisdiction read refuses the charge with the attempt still 'ready' (nothing claimed, nothing sent), and a retry then proceeds", async () => {
+    h.clientThrows = true;
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "blocked" });
+    expect(h.claimCalls, "no claim was made").toBe(0);
+    expect(h.createKeys).toEqual([]);
+    h.clientThrows = false;
+    h.createError = new Stripe.errors.StripeCardError(raw({ code: "card_declined", type: "card_error", statusCode: 402 }));
+    await run();
+    expect(h.createKeys, "the retry reached Stripe").toHaveLength(1);
   });
 });

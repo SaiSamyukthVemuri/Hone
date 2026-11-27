@@ -1624,6 +1624,18 @@ export async function runSessionPaymentCharge(args: {
     }
   }
 
+  // HON-90 (Codex P1): resolve the Stripe client BEFORE the claim. It reads the studio's jurisdiction, and a transient failure there after the
+  // claim would leave a claimed attempt with nothing sent. Before the claim, a failure is a plain refusal that leaves the attempt "ready".
+  // An ALREADY-CLAIMED attempt (pending_stripe) keeps its existing handling: it resolves the client at the point of sending, as before.
+  let sender: Stripe | null = null;
+  if (attemptRow.status === "ready") {
+    try {
+      sender = stripe ?? (await getSessionPaymentStripe(attemptRow.studio_id, "new_money"));
+    } catch {
+      return { ok: false, outcome: "blocked", message: "The payment could not be started. Nothing was charged; try again in a moment." };
+    }
+  }
+
   // 5. Atomically claim the attempt. Idempotency key is deterministic
   //    so a retry produces the same key.
   const idempotencyKey = buildIdempotencyKey(attemptRow.id, attemptRow.charge_reason ?? "session_payment");
@@ -1832,10 +1844,10 @@ export async function runSessionPaymentCharge(args: {
   //     metadata block carries every Hone identity column the future
   //     webhook handler or a manual reconciler needs to bind a
   //     leaked-back PaymentIntent to this attempt.
-  const sender = stripe ?? (await getSessionPaymentStripe(attemptRow.studio_id, "new_money"));
+  const sendWith = sender ?? stripe ?? (await getSessionPaymentStripe(attemptRow.studio_id, "new_money"));
   let pi: Stripe.PaymentIntent;
   try {
-    pi = await sender.paymentIntents.create(
+    pi = await sendWith.paymentIntents.create(
       {
         amount: attemptRow.amount_cents,
         currency: attemptRow.currency,
@@ -2078,7 +2090,7 @@ export async function runSessionPaymentCharge(args: {
   // success cannot leave Hone 'failed' while Stripe succeeded.
   if (pi.status === "requires_action") {
     return finalizeRequiresActionPaymentIntent({
-      stripe: sender,
+      stripe: sendWith,
       pi,
       expectedPaymentIntentId: attemptRow.stripe_payment_intent_id,
       stripeAccountId: card.stripe_account_id,

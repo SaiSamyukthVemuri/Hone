@@ -376,6 +376,20 @@ export async function refundPaymentChargeAttempt(args: {
   //    refund_idempotency_key BEFORE any Stripe call so a
   //    network-retry can use the same key.
   // ============================================================
+  // HON-90 (Codex P1): the Stripe client is resolved BEFORE the claim. Resolving it reads the studio's jurisdiction, and a transient failure there
+  // AFTER the claim had saved refund_status='pending_stripe' left a refund that was never sent and could never be retried (every retry saw
+  // refund_in_flight). Nothing is claimed yet, so a failure here is a plain, retryable refusal.
+  let stripe: Awaited<ReturnType<typeof getSessionPaymentStripe>>;
+  try {
+    stripe = await getSessionPaymentStripe(args.studioId, "existing_account");
+  } catch (err) {
+    logInternal("payment_refund_stripe_client_unavailable", { attemptId: attempt.id, errorClass: err instanceof Error ? err.name : "unknown" });
+    return {
+      ok: false,
+      outcome: "database_error",
+      message: "The refund could not be started. Nothing was changed; try again in a moment.",
+    };
+  }
   const idempotencyKey = buildRefundIdempotencyKey(attempt.id);
   const refundAmountCents = attempt.amount_cents;
   const { data: claimedRows, error: claimErr } = await admin
@@ -469,7 +483,6 @@ export async function refundPaymentChargeAttempt(args: {
   //    SDK retry / a same-Stripe-keyed redelivery cannot produce
   //    a second refund object.
   // ============================================================
-  const stripe = await getSessionPaymentStripe(args.studioId, "existing_account");
   let refund: Stripe.Refund | null = null;
   try {
     refund = await stripe.refunds.create(

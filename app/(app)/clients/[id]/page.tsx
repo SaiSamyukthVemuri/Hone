@@ -464,8 +464,10 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
-    // HON-90: the card form uses the publishable key of the platform that owns this studio's connected account (one read, in this wave).
-    studioPublishableKeyOk(studio.id),
+    // HON-90: the card form uses the publishable key of the platform that owns this studio's connected account. Resolving it reads the studio's
+    // payment jurisdiction, so it runs ONLY where the card block renders (the owner's Billing tab, the same gate as the card read), never on the
+    // Overview, Sessions or Treatment tabs.
+    needsCard ? studioPublishableKeyOk(studio.id) : Promise.resolve(true),
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field

@@ -38,12 +38,16 @@ export function webhookStripe(): Stripe {
 }
 
 /**
- * On the US route only: true when the studio bound to the event's connected account is NOT a US studio (its own jurisdiction row is
- * absent or says another country). Such an event is treated as an unbound account, never applied to a studio of the wrong platform.
+ * On the US route only: whether the studio bound to the event's connected account is a US studio.
+ *   "ok"          not the US route, or the studio's own verified jurisdiction row says US
+ *   "mismatch"    the read SUCCEEDED and the studio is not a US studio (no row, or another country): treated as an unbound account
+ *   "read_failed" the read itself failed. NOT a mismatch: the caller must answer retryably (5xx) before claiming, so Stripe redelivers;
+ *                 treating it as unbound would mark the event processed and lose an account.updated for a real US studio.
  * The CA route does no such read: its behaviour is unchanged.
  */
-export async function usWebhookStudioMismatch(studioId: string): Promise<boolean> {
-  if (currentWebhookPlatform() !== "US") return false;
+export async function usWebhookStudioPlatform(studioId: string): Promise<"ok" | "mismatch" | "read_failed"> {
+  if (currentWebhookPlatform() !== "US") return "ok";
   const read = await getStudioPaymentJurisdiction(studioId);
-  return !(read.ok && read.jurisdiction.country === "US");
+  if (read.ok) return read.jurisdiction.country === "US" ? "ok" : "mismatch";
+  return read.reason === "read_failed" ? "read_failed" : "mismatch";
 }
