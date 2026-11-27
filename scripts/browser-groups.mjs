@@ -501,6 +501,8 @@ export const BROWSER_GROUPS = {
       "marketing-homepage-film.spec.ts",
       // HON-84. The public /demo form still succeeds for a visitor and saves one lead with one alert row.
       "public-lead-forms.spec.ts",
+      // HON-124 item 13. Back to top on the long public pages: keyboard-operable, focus restored, reduced motion honoured.
+      "back-to-top.spec.ts",
     ],
   },
   responsive: {
