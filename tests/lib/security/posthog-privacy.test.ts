@@ -9,7 +9,7 @@ import { execSync } from "node:child_process";
 // init switches or reintroduce browser identify / inline flush.
 
 const CLIENT = readFileSync(
-  join(process.cwd(), "instrumentation-client.ts"),
+  join(process.cwd(), "lib/analytics/posthog-browser.ts"),
   "utf8",
 );
 const POSTHOG = CLIENT.slice(CLIENT.indexOf("posthog.init("));

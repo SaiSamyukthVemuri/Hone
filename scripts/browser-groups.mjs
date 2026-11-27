@@ -492,6 +492,8 @@ export const BROWSER_GROUPS = {
     specs: [
       "marketing-homepage.spec.ts",
       "marketing-pages.spec.ts",
+      // HON-124 item 6. PostHog code loads, and ph_* storage exists, only on marketing pages.
+      "marketing-analytics-boundary.spec.ts",
       "public-pages-contact-faq-mobile.spec.ts",
       // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
       // motion preference, and the poster being preloaded eagerly. Filed here

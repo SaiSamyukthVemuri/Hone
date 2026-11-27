@@ -138,8 +138,8 @@ describe("L1: marketing events carry no record id in any URL-valued property", (
 describe("L2: no /flags request leaves (Hone uses no feature flags)", () => {
   const read = (f: string) => readFileSync(path.join(process.cwd(), f), "utf8");
 
-  it("instrumentation-client.ts sets advanced_disable_flags: true", () => {
-    const src = read("instrumentation-client.ts").replace(/^\s*\/\/.*$/gm, "");
+  it("the PostHog browser init sets advanced_disable_flags: true", () => {
+    const src = read("lib/analytics/posthog-browser.ts").replace(/^\s*\/\/.*$/gm, "");
     expect(src).toMatch(/advanced_disable_flags:\s*true/);
   });
 
@@ -154,7 +154,7 @@ describe("L2: no /flags request leaves (Hone uses no feature flags)", () => {
   });
 
   it("nothing in the app evaluates a feature flag (turning /flags off changes no behaviour)", () => {
-    for (const f of ["instrumentation-client.ts"]) {
+    for (const f of ["instrumentation-client.ts", "lib/analytics/posthog-browser.ts"]) {
       expect(read(f)).not.toMatch(/isFeatureEnabled|getFeatureFlag|onFeatureFlags/);
     }
   });

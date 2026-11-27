@@ -24,7 +24,7 @@ app/
   _components/                Shared UI atoms (footer, OG card, SafeAnalytics, ...).
 
   (app)/                      AUTHENTICATED practitioner app. Header + footer.
-    layout.tsx                Mounts SafeAnalytics (safe tree).
+    layout.tsx                No analytics script (HON-124 item 6).
     dashboard/                Today + needs-attention.
     calendar/                 Day/week view, appointment detail, drag chooser.
     clients/                  Client list, profile, intake, sessions.
@@ -85,7 +85,7 @@ next.config.ts                Token-route privacy headers (PR #142).
 
 - `app/(app)/`; every page requires a practitioner session. Pages, layouts and server components resolve it with `requirePractitionerWithStudio()`, which redirects anonymous → `/login`, no active membership → `/no-access`, and 2+ memberships without a valid selection → the chooser; server actions use the throwing `getCurrentPractitionerWithStudio()`, because a redirect inside an action's try/catch would be swallowed. A page cannot rely on the shell layout's guard: Next renders a route's layouts and page in parallel, and a soft navigation does not re-render the shell (SENTRY-IDENTITY-01). `tests/app/authenticated-pages-identity-sweep.test.ts` renders every `app/(app)` page and layout in each identity state and proves the redirect; `tests/source-guards/server-render-identity-guard.test.ts` is the fast syntactic hint. Header / footer / SafeAnalytics mounted in the route-group layout.
 - `app/(auth)/`; magic-link login, callback.
-- `app/book/[slug]/`; public; slug is the studio's public booking identifier (not a bearer token). SafeAnalytics mounted in `app/book/layout.tsx`.
+- `app/book/[slug]/`; public; slug is the studio's public booking identifier (not a bearer token). No analytics script mounts here (HON-124 item 6).
 - `app/cancel/[token]/`, `app/reschedule/[token]/`, `app/manage/[token]/`, `app/intake/[token]/`, `app/portal/verify/[token]/`, `app/calendar-feed/[token]/`; public **token routes**. The token IS the credential. SafeAnalytics NOT mounted. `next.config.ts` adds `X-Robots-Tag: noindex, nofollow` and `Referrer-Policy: no-referrer`. Each page also sets `metadata.robots = { index: false, follow: false }`.
 - `app/portal/` (other than verify); public landing for magic-link request; the rest of the portal requires a `hone_portal_session` cookie issued by `app/portal/verify/[token]/page.tsx`'s POST.
 
