@@ -7,6 +7,7 @@ import { waitlistTimesFeedbackEnabled } from "@/lib/waitlist/times-feedback";
 import { loadReplyContacts } from "@/lib/waitlist/reply-contact";
 import { ReplyContactDetails } from "@/components/waitlist/reply-contact";
 import { acknowledgeReplyAction } from "./actions";
+import { PendingButton } from "@/components/pending-button";
 
 // 0319 — replies from people who said the offered times don't work. OWNER ONLY:
 // the text is a client's own words and is shown here and nowhere else.
@@ -72,9 +73,7 @@ export default async function RepliesPage({
               />
               <form action={acknowledgeReplyAction} className="mt-2">
                 <input type="hidden" name="invitationId" value={r.invitationId} />
-                <button type="submit" className="min-h-[44px] underline">
-                  Mark as seen
-                </button>
+                <PendingButton variant="quiet">Mark as seen</PendingButton>
               </form>
             </li>
           ))}
