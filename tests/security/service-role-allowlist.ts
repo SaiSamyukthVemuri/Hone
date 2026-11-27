@@ -370,7 +370,7 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "requirePlatformAdmin",
   },
   {
-    path: "lib/desk/seats.ts",
+    path: "lib/team-seats/summary.ts",
     purpose: "The studio owner's own front desk entitlement summary: switch on or off and seat numbers, no reasons.",
     why: "The summary command is a service-role-only database function that re-verifies the active OWNER of the studio in the database, so a forged studio or practitioner id gets not_authorized and never another studio's numbers. The only callers run after the server has resolved the owner.",
     scopeGuard: "p_owner_practitioner_id",

@@ -15,9 +15,9 @@ import {
 } from "./actions";
 import { PendingButton } from "@/components/pending-button";
 import { setReceptionistActiveAction } from "./receptionist-actions";
-import { readFrontDeskSummary, type FrontDeskSummary } from "@/lib/desk/seats";
-import { seatsNoticeMessage } from "@/lib/desk/seat-errors";
-import { receptionistsOverLimit } from "@/lib/desk/seat-rank";
+import { readFrontDeskSummary, type FrontDeskSummary } from "@/lib/team-seats/summary";
+import { seatsNoticeMessage } from "@/lib/team-seats/errors";
+import { receptionistsOverLimit } from "@/lib/team-seats/rank";
 
 type ReceptionistRow = { id: string; display_name: string; email: string | null; active: boolean; created_at: string };
 

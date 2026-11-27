@@ -10,8 +10,8 @@ import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
-import { readFrontDeskSummary } from "@/lib/desk/seats";
-import { FRONT_DESK_FULL_MESSAGE, FRONT_DESK_OFF_MESSAGE, seatRefusalMessage } from "@/lib/desk/seat-errors";
+import { readFrontDeskSummary } from "@/lib/team-seats/summary";
+import { FRONT_DESK_FULL_MESSAGE, FRONT_DESK_OFF_MESSAGE, seatRefusalMessage } from "@/lib/team-seats/errors";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<InvitationRole> = ["owner", "practitioner", "receptionist"];

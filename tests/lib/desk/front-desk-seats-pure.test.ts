@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => { throw new Error("no real client"); } }));
 
-import { parseFrontDeskSummary } from "@/lib/desk/seats";
-import { receptionistsOverLimit } from "@/lib/desk/seat-rank";
-import { seatRefusalMessage, FRONT_DESK_FULL_MESSAGE, FRONT_DESK_OFF_MESSAGE } from "@/lib/desk/seat-errors";
+import { parseFrontDeskSummary } from "@/lib/team-seats/summary";
+import { receptionistsOverLimit } from "@/lib/team-seats/rank";
+import { seatRefusalMessage, FRONT_DESK_FULL_MESSAGE, FRONT_DESK_OFF_MESSAGE } from "@/lib/team-seats/errors";
 import { parseFrontDeskListing } from "@/lib/rollouts/front-desk-admin";
 
 describe("the owner summary parser fails closed", () => {
@@ -55,7 +55,7 @@ describe("the admin listing parser", () => {
 });
 
 import { hasRecentIdenticalGrant, safeNotice } from "@/lib/rollouts/front-desk-admin";
-import { seatsNoticeMessage } from "@/lib/desk/seat-errors";
+import { seatsNoticeMessage } from "@/lib/team-seats/errors";
 
 describe("safeNotice: only the fixed outcome sentences reach the admin page", () => {
   it("renders a known sentence and the counted over-limit sentence", () => {
