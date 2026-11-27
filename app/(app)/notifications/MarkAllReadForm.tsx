@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { PendingButton } from "@/components/pending-button";
-import { actionFailureMessage, type ActionResult } from "@/lib/actions/action-result";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
-type MarkAllResult = (ActionResult & { updated?: number }) | { ok: true; updated: number } | { ok: false; error: string };
+type MarkAllResult = { ok: true; updated: number } | { ok: false; error: string };
 
 // HON-124 item 20. "Mark all read" used to fire and show nothing if it failed. The page keeps this component mounted, so the result stays
 // visible after the unread count drops to zero (the button then goes away, the confirmation does not). Confirms only after ok.
@@ -19,7 +19,7 @@ export function MarkAllReadForm({ action, unreadCount }: { action: () => Promise
             try {
               const result = await action();
               if (result.ok) {
-                const n = (result as { updated?: number }).updated;
+                const n = result.updated;
                 setMessage({ kind: "ok", text: typeof n === "number" ? `Marked ${n} ${n === 1 ? "notification" : "notifications"} read.` : "Marked all notifications read." });
               } else setMessage({ kind: "error", text: result.error });
             } catch (err) {

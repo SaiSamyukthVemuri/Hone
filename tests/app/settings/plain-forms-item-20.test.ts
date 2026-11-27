@@ -34,9 +34,9 @@ describe("ReceptionistActiveForm", () => {
 describe("MarkAllReadForm", () => {
   it("failure is said; ok names the count and stays visible after the unread count reaches zero", async () => {
     const { MarkAllReadForm } = await import("@/app/(app)/notifications/MarkAllReadForm");
-    let host = await mount((c) => c(MarkAllReadForm, { action: async () => ({ ok: false, error: "Couldn't mark notifications read. Please refresh and try again." }), unreadCount: 3 }), form);
+    let host = await mount((c) => c(MarkAllReadForm, { action: async () => ({ ok: false as const, error: "Couldn't mark notifications read. Please refresh and try again." }), unreadCount: 3 }), form);
     expect(host.querySelector('[role="alert"]')!.textContent).toMatch(/Couldn't mark notifications read/);
-    host = await mount((c) => c(MarkAllReadForm, { action: async () => ({ ok: true, updated: 3 }), unreadCount: 3 }), form);
+    host = await mount((c) => c(MarkAllReadForm, { action: async () => ({ ok: true as const, updated: 3 }), unreadCount: 3 }), form);
     expect(host.querySelector('[role="status"]')!.textContent).toBe("Marked 3 notifications read.");
   });
 });
