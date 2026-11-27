@@ -2,6 +2,7 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 import sharp from "sharp";
 import { seedE2eStudio, seedE2eClient, seedNoStudioAuthUser, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { followDeskMagicLink, prepareDeskPage } from "./helpers/desk";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN, E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL } from "./helpers/local-env";
 
@@ -111,7 +112,7 @@ test.describe("phone width, many photos", () => {
     // Sit past the 60 s TTL without scrolling, then bring every cell into view.
     await page.waitForTimeout(65_000);
     for (let i = 0; i < 10; i++) {
-      await page.mouse.wheel(0, 900);
+      await page.evaluate(() => window.scrollBy(0, 900)); // mouse.wheel does not exist in mobile WebKit
       await page.waitForTimeout(300);
     }
     await expect
@@ -276,13 +277,14 @@ test("PAGE-WIDE: while a re-mint hangs, a note save on the same page still compl
  * shared loginByMagicLink, which waits for /dashboard, cannot be used here.
  */
 async function loginWithoutPractitioner(page: Page, email: string) {
+  await prepareDeskPage(page); // WebKit only: strip the https upgrade from app documents (e2e/helpers/webkit-localhost.ts)
   await page.goto("/login");
   await page.getByLabel("I am using my invited email address").check();
   await page.locator("#login-email").fill(email);
   const seen = await listMessageIds(email);
   await page.getByRole("button", { name: /send magic link/i }).click();
   const link = await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seen });
-  await page.goto(link);
+  await followDeskMagicLink(page, link);
   await page.waitForURL(/\/no-access/, { timeout: 30_000 });
 }
 
