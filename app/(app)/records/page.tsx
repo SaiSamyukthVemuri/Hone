@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { buttonClasses } from "@/components/ui/button";
-import { NAV_ROW_FEEDBACK, NAV_ROW_FOCUS, TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
+import { DISCLOSURE_ROW_FEEDBACK, NAV_ROW_FEEDBACK, NAV_ROW_FOCUS, TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
 import { PendingLink } from "@/components/pending-link";
 import {
   getClientsForStudio,
@@ -200,7 +200,7 @@ function RowTools({
   return (
     <div className="mt-1 flex flex-col gap-1">
       <details open={editOpen}>
-        <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+        <summary className={cx("min-h-11 cursor-pointer text-xs text-neutral-500 pointer-fine:min-h-8", TEXT_LINK_FEEDBACK)}>
           Edit
         </summary>
         <div className="mt-3 rounded-md border border-neutral-200 p-4 dark:border-neutral-800">
@@ -208,7 +208,7 @@ function RowTools({
         </div>
       </details>
       <details>
-        <summary className="cursor-pointer text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+        <summary className={cx("min-h-11 cursor-pointer text-xs text-neutral-500 pointer-fine:min-h-8", TEXT_LINK_FEEDBACK)}>
           History
         </summary>
         <div className="mt-2">
@@ -579,7 +579,7 @@ async function SterileItemsSection({
                 return (
                   <li key={r.id} className={rowCls}>
                     <details className="group">
-                      <summary className={`grid cursor-pointer list-none grid-cols-2 items-start gap-x-3 gap-y-2 px-4 py-4 text-sm [overflow-wrap:anywhere] hover:bg-surface-sunken lg:items-center [&::-webkit-details-marker]:hidden ${sterileColumns}`}>
+                      <summary className={`grid cursor-pointer list-none grid-cols-2 items-start gap-x-3 gap-y-2 px-4 py-4 text-sm [overflow-wrap:anywhere] ${DISCLOSURE_ROW_FEEDBACK} lg:items-center [&::-webkit-details-marker]:hidden ${sterileColumns}`}>
                         <span className="col-span-2 lg:col-span-1">
                           <strong className="font-semibold">{r.item_description}</strong>
                           {r.manufacturer_name && <span className="block text-xs text-fg-muted">{r.manufacturer_name}</span>}
@@ -593,7 +593,7 @@ async function SterileItemsSection({
                         </span>
                         <span className="flex flex-col items-start gap-1 text-xs font-medium">
                           {r.lot_number && (
-                            <Link href={`/records?section=sterile&lot=${encodeURIComponent(r.lot_number)}${stockQuery}`} className="inline-flex min-h-11 items-center underline underline-offset-4 pointer-fine:min-h-8">Trace usage</Link>
+                            <Link href={`/records?section=sterile&lot=${encodeURIComponent(r.lot_number)}${stockQuery}`} className={cx("inline-flex min-h-11 items-center underline decoration-1 underline-offset-4 hover:decoration-2 pointer-fine:min-h-8", TEXT_LINK_FEEDBACK)}>Trace usage</Link>
                           )}
                           <span className="inline-flex min-h-7 items-center text-fg-muted">Details <span aria-hidden="true" className="ml-1 group-open:rotate-90">›</span></span>
                         </span>
@@ -687,7 +687,7 @@ async function DisinfectantsSection({
             <h3 className="font-semibold">{disinfectantDueStatus(nextDue, today) === "due_soon" ? "Upcoming batch replacement" : "Batch needs replacement"}</h3>
             <p className="mt-1 text-sm">{nextDue.disinfectant_name} · Replace by {dateOnly(nextDue.discard_due_date)}</p>
           </div>
-          <PendingLink href={`/records?section=disinfectants&record=${encodeURIComponent(nextDue.id)}#${disinfectantRecordAnchor(nextDue.id)}`} className="inline-flex min-h-11 items-center text-sm font-semibold underline underline-offset-4">Review batch</PendingLink>
+          <PendingLink href={`/records?section=disinfectants&record=${encodeURIComponent(nextDue.id)}#${disinfectantRecordAnchor(nextDue.id)}`} className={cx("inline-flex min-h-11 items-center text-sm font-semibold underline decoration-1 underline-offset-4 hover:decoration-2", TEXT_LINK_FEEDBACK)}>Review batch</PendingLink>
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -709,7 +709,7 @@ async function DisinfectantsSection({
               return (
                 <li key={r.id} id={disinfectantRecordAnchor(r.id)} className="scroll-mt-24">
                   <details open={r.id === focusId} className="group">
-                    <summary className={`grid cursor-pointer list-none grid-cols-2 items-start gap-x-3 gap-y-2 px-4 py-4 text-sm [overflow-wrap:anywhere] hover:bg-surface-sunken lg:items-center [&::-webkit-details-marker]:hidden ${batchColumns}`}>
+                    <summary className={`grid cursor-pointer list-none grid-cols-2 items-start gap-x-3 gap-y-2 px-4 py-4 text-sm [overflow-wrap:anywhere] ${DISCLOSURE_ROW_FEEDBACK} lg:items-center [&::-webkit-details-marker]:hidden ${batchColumns}`}>
                       <span className="col-span-2 lg:col-span-1"><strong className="font-semibold">{r.disinfectant_name}</strong>{r.concentration && <span className="block text-xs text-fg-muted">{r.concentration}</span>}</span>
                       <span><span className="text-fg-muted lg:sr-only">Prepared: </span>{dateOnly(r.date_prepared)}</span>
                       <span><span className="text-fg-muted lg:sr-only">Replace by: </span>{dateOnly(r.discard_due_date) ?? "Not set"}
