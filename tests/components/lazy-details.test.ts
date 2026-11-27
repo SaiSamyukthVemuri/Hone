@@ -5,6 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import { LazyDetails } from "@/components/waitlist/lazy-details";
 
+// createElement's overloads cannot see `children` passed as the third argument, so the props are typed once here.
+const props = (p: Record<string, unknown>) => p as unknown as Parameters<typeof LazyDetails>[0];
+
 const page = readFileSync("app/(app)/settings/waitlist/page.tsx", "utf8");
 
 describe("HON-109 LazyDetails (Waitlist rows hydrate when reached)", () => {
@@ -12,7 +15,7 @@ describe("HON-109 LazyDetails (Waitlist rows hydrate when reached)", () => {
     const html = renderToString(
       createElement(
         LazyDetails,
-        { className: "peer/entry", "data-testid": "waitlist-entry-details", summary: createElement("summary", null, "View details") },
+        props({ className: "peer/entry", "data-testid": "waitlist-entry-details", summary: createElement("summary", null, "View details") }),
         createElement("form", { action: "/x", method: "post" }, createElement("button", { type: "submit" }, "Record")),
       ),
     );
@@ -24,7 +27,7 @@ describe("HON-109 LazyDetails (Waitlist rows hydrate when reached)", () => {
   });
 
   it("is not open by default and passes no `open` attribute", () => {
-    const html = renderToString(createElement(LazyDetails, { summary: createElement("summary", null, "s") }, "body"));
+    const html = renderToString(createElement(LazyDetails, props({ summary: createElement("summary", null, "s") }), "body"));
     expect(html).not.toMatch(/<details[^>]*\sopen/);
   });
 
