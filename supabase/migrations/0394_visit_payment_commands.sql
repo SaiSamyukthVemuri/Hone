@@ -8,8 +8,10 @@
 --
 -- THE MONEY RULE, ONE PLACE. Under the visit's own advisory lock (appointment_settlement_lock_key, the lock the settlement
 -- commands already take):
---   outstanding = bill total - (confirmed external + PENDING external + card attempts ready/pending_stripe/succeeded - refunds
---                 pending or succeeded)
+--   outstanding = bill total - (confirmed external + PENDING external + card attempts ready/pending_stripe/succeeded)
+--                 + price reductions (succeeded price_reduction refunds only: the bill dropped with them)
+-- Returned money alone (a payment_reversal, pending or succeeded) does NOT reopen a balance: a refunded, fully paid visit owes $0.00
+-- (operator, 27 Nov 2026). Only a price_reduction frees capacity, and the figure never goes below zero.
 -- A PENDING TRANSFER RESERVES ITS AMOUNT from the moment it is recorded (Sam, 27 Nov 2026): it shows as still owed, but no other
 -- tender can take that money. A card charge or another payment that would exceed the outstanding amount is REFUSED before any
 -- Stripe call: 'reserved_for_pending_transfer' when the pending transfer is what blocks it, 'exceeds_balance' otherwise. Only an
