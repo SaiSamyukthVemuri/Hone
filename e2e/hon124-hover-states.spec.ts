@@ -65,7 +65,7 @@ test("desktop: the primary nav and the Business menu show hover, pressed and foc
   await focusRing(page, row, "Business menu row");
   await page.keyboard.press("Escape");
 
-  const footerLink = page.getByRole("contentinfo").getByRole("link", { name: "Privacy" });
+  const footerLink = page.getByRole("contentinfo").getByRole("link", { name: "Privacy", exact: true }).first();
   await footerLink.scrollIntoViewIfNeeded();
   await page.mouse.move(1, 1);
   expect(await underline(footerLink), "footer link at rest").toBe("none");
@@ -85,7 +85,8 @@ test("390 px: the phone menu's rows show hover, pressed and focus, and the curre
   const other = menu.getByRole("link", { name: "Calendar", exact: true });
   await threeStates(page, other, "phone menu row");
   await focusRing(page, other, "phone menu row");
-  const current = menu.locator('a[aria-current="page"]').first();
+  const current = menu.getByRole("link", { name: "Clients", exact: true });
+  await expect(current, "Clients is the current page").toHaveAttribute("aria-current", "page");
   await focusRing(page, current, "phone menu: the current page's row");
   expect((await current.boundingBox())?.height ?? 0, "a touch-sized row").toBeGreaterThanOrEqual(44);
 });
