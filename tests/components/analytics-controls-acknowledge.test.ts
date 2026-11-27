@@ -50,4 +50,18 @@ describe("HON-109 analytics controls acknowledge a press", () => {
   it("PendingButton also reflects a GET form's pending state", () => {
     expect(readFileSync(path.join(process.cwd(), "components/pending-button.tsx"), "utf8")).toMatch(/usePendingGetForm\(\)/);
   });
+
+  it("the uncontrolled filter forms are keyed on the applied params, so an unapplied choice cannot outlive a navigation (Codex P2)", () => {
+    expect(read("overview-screen.tsx")).toMatch(/<PendingGetForm key=\{\[params\.periodKind, selected, params\.from, params\.to, params\.compare, params\.series\]\.join\("\|"\)\}/);
+    expect(read("waitlist-screen.tsx")).toMatch(/<PendingGetForm key=\{`\$\{params\.serviceId \?\? ""\}\|\$\{params\.days\}`\}/);
+  });
+
+  it("the feedback e2e selects a Period option that exists and does not swallow the rejection (Codex P1)", () => {
+    const spec = readFileSync(path.join(process.cwd(), "e2e/hon109-analytics-feedback.spec.ts"), "utf8");
+    const m = spec.match(/getByLabel\("Period"\)\.selectOption\("([a-z_]+)"\)(\.catch)?/);
+    expect(m, "a Period selectOption call").not.toBeNull();
+    expect(m![2], "no .catch swallowing the failure").toBeUndefined();
+    const offered = [...read("overview-screen.tsx").matchAll(/PERIOD_LABELS[^=]*= \{([^}]*)\}/g)][0][1];
+    expect(offered).toContain(`${m![1]}:`);
+  });
 });
