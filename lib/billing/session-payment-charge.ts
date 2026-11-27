@@ -307,6 +307,11 @@ async function loadCardAndVerifyLineage(args: {
   expectedStripeAccountId: string;
   expectedStripeCustomerId: string;
   expectedStripePaymentMethodId: string;
+  /**
+   * HON-90. True ONLY for an unclaimed attempt (status 'ready'), where a NEW Stripe charge would start. A claimed pending_stripe attempt
+   * may already have a charge at Stripe, so it must still reach reconciliation even if the account has since left 'enabled'.
+   */
+  requireAccountReady: boolean;
 }): Promise<
   | { ok: true; card: CardRow }
   | { ok: false; reasons: string[] }
@@ -395,7 +400,7 @@ async function loadCardAndVerifyLineage(args: {
       // HON-90. HONE decides whether a studio may be charged, whatever the provider would allow (a sandbox account that is not onboarded
       // still accepted a charge; live Stripe would refuse it itself). The prepare-time check (eligibility) can be stale by charge time, so
       // the stored snapshot must STILL show an enabled account with charges enabled, right before any Stripe call.
-      if (settings.stripe_account_status !== "enabled" || settings.stripe_charges_enabled !== true) {
+      if (args.requireAccountReady && (settings.stripe_account_status !== "enabled" || settings.stripe_charges_enabled !== true)) {
         reasons.push("The studio's Stripe account is not ready to take charges.");
       }
       if (settings.stripe_account_id !== card.stripe_account_id) {
@@ -1547,6 +1552,7 @@ export async function runSessionPaymentCharge(args: {
     expectedStripeAccountId: attemptRow.stripe_account_id,
     expectedStripeCustomerId: attemptRow.stripe_customer_id,
     expectedStripePaymentMethodId: attemptRow.stripe_payment_method_id,
+    requireAccountReady: attemptRow.status === "ready",
   });
   if (!lineage.ok) {
     return {

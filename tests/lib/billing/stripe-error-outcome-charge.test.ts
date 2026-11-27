@@ -577,3 +577,29 @@ describe("HON-90: the charge executor refuses a studio whose account is not read
     expect(h.createKeys.length).toBe(1);
   });
 });
+
+// HON-90 (Insurance F2). The readiness guard is for the point where a NEW charge would start. A CLAIMED attempt (pending_stripe) may
+// already have a charge at Stripe, so a replay must still reconcile with it even if the account has since left 'enabled'.
+describe("HON-90: the readiness guard applies to unclaimed attempts only", () => {
+  const NOT_ENABLED = { stripe_account_id: "acct_test", stripe_livemode: false, stripe_account_status: "restricted", stripe_charges_enabled: false };
+
+  it("a claimed pending_stripe attempt with a not-enabled snapshot still reaches reconciliation (the PaymentIntent is retrieved)", async () => {
+    h.rows.studio_payment_settings = NOT_ENABLED;
+    h.claimResult = "already_pending";
+    h.claimPaymentIntentId = "pi_synthetic_original";
+    h.rows.payment_charge_attempts = { ...ATTEMPT_ROW, status: "pending_stripe", stripe_payment_intent_id: h.claimPaymentIntentId };
+    h.retrieveError = new Error("provider unreachable");
+    const r = await run();
+    expect(h.retrieveCalls, "reconciliation was reached").toBe(1);
+    expect(r).not.toMatchObject({ outcome: "lineage_mismatch" });
+    expect(h.createKeys).toEqual([]); // and no new charge is started
+  });
+
+  it("a 'ready' attempt with the same not-enabled snapshot is refused before any Stripe request", async () => {
+    h.rows.studio_payment_settings = NOT_ENABLED;
+    const r = await run();
+    expect(r).toMatchObject({ ok: false, outcome: "lineage_mismatch" });
+    expect(h.retrieveCalls).toBe(0);
+    expect(h.createKeys).toEqual([]);
+  });
+});
