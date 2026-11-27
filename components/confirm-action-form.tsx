@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useId, useRef, useState, useTransition } from "react";
 import { Button, type ButtonVariant } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 
@@ -25,7 +25,33 @@ type Props = {
   busyLabel?: string;
   tone?: "default" | "danger";
   triggerVariant?: ButtonVariant;
+  /**
+   * After a SUCCESS the row this trigger lives in is usually gone, so focus would fall to <body>. When set, focus moves to `focusId` (a stable
+   * element such as the list's heading, which must have tabIndex={-1}) once the trigger has left the page, and `message` is written into the
+   * live region `announceId`, which lives outside the row and so survives it.
+   */
+  afterSuccess?: { focusId: string; announceId: string; message: string };
 };
+
+const SETTLE_POLL_MS = 50;
+const SETTLE_MAX_MS = 3000;
+
+/** Wait until `trigger` has left the document (or give up), then focus the stable target and announce. Plain timers: this must outlive the unmounting row. */
+function moveFocusAfterRemoval(trigger: HTMLElement | null, after: NonNullable<Props["afterSuccess"]>) {
+  const started = Date.now();
+  const tick = () => {
+    const gone = !trigger || !trigger.isConnected;
+    if (gone || Date.now() - started > SETTLE_MAX_MS) {
+      const target = document.getElementById(after.focusId);
+      if (target && (document.activeElement === document.body || document.activeElement === null || gone)) target.focus();
+      const live = document.getElementById(after.announceId);
+      if (live) live.textContent = after.message;
+      return;
+    }
+    window.setTimeout(tick, SETTLE_POLL_MS);
+  };
+  window.setTimeout(tick, SETTLE_POLL_MS);
+}
 
 export function ConfirmActionForm({
   action,
@@ -38,7 +64,9 @@ export function ConfirmActionForm({
   busyLabel = "Working…",
   tone = "danger",
   triggerVariant = "secondary",
+  afterSuccess,
 }: Props) {
+  const triggerId = useId();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +83,7 @@ export function ConfirmActionForm({
       try {
         await action(fd);
         setOpen(false);
+        if (afterSuccess) moveFocusAfterRemoval(document.getElementById(triggerId), afterSuccess);
       } catch {
         setError("That did not go through. Check the list, then try again.");
       } finally {
@@ -65,7 +94,7 @@ export function ConfirmActionForm({
 
   return (
     <>
-      <Button type="button" variant={triggerVariant} size="sm" aria-label={triggerAriaLabel} onClick={() => { setError(null); setOpen(true); }}>
+      <Button id={triggerId} type="button" variant={triggerVariant} size="sm" aria-label={triggerAriaLabel} onClick={() => { setError(null); setOpen(true); }}>
         {triggerLabel}
       </Button>
       <ConfirmDialog

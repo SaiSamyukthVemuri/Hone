@@ -84,6 +84,47 @@ describe("ConfirmActionForm", () => {
   });
 });
 
+describe("after a success the row unmounts: focus moves to a stable target and the result is announced", () => {
+  it("document.activeElement is the list heading, not body, and the live region says what happened", async () => {
+    const { useState } = await import("react");
+    function Harness({ action }: { action: (fd: FormData) => Promise<void> }) {
+      const [rows, setRows] = useState(["a"]);
+      return createElement("div", null,
+        createElement("p", { id: "team-live", role: "status" }),
+        createElement("h2", { id: "pending-invitations", tabIndex: -1 }, "Pending invitations"),
+        ...rows.map((r) => createElement("div", { key: r },
+          createElement(ConfirmActionForm, {
+            ...props(async (fd: FormData) => { await action(fd); setRows([]); }),
+            afterSuccess: { focusId: "pending-invitations", announceId: "team-live", message: "Ada was removed from the team." },
+          }))));
+    }
+    const action = vi.fn().mockResolvedValue(undefined);
+    const h = render(createElement(Harness, { action }));
+    const trigger = h.querySelector("button")!;
+    trigger.focus();
+    await act(async () => { trigger.click(); });
+    await act(async () => { (document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLElement).click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)); });
+    expect(h.querySelector("button")).toBeNull(); // the row really is gone
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement?.id).toBe("pending-invitations");
+    expect(h.querySelector("#team-live")!.textContent).toBe("Ada was removed from the team.");
+  });
+
+  it("a failure keeps focus where it was (inside the open dialog) and announces nothing", async () => {
+    const action = vi.fn().mockRejectedValue(new Error("x"));
+    const h = render(createElement("div", null,
+      createElement("p", { id: "team-live", role: "status" }),
+      createElement("h2", { id: "hd", tabIndex: -1 }, "H"),
+      createElement(ConfirmActionForm, { ...props(action), afterSuccess: { focusId: "hd", announceId: "team-live", message: "done" } })));
+    await act(async () => { h.querySelector("button")!.click(); });
+    await act(async () => { (document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLElement).click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 300)); });
+    expect(h.querySelector("#team-live")!.textContent).toBe("");
+    expect(document.activeElement?.id).not.toBe("hd");
+  });
+});
+
 describe("source pins: every destructive control in scope asks first", () => {
   const ROOT = path.resolve(__dirname, "../..");
   const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
@@ -96,6 +137,12 @@ describe("source pins: every destructive control in scope asks first", () => {
     // Deactivate asks; Reactivate (not destructive) keeps its plain form
     expect(src).toMatch(/<ConfirmActionForm[^>]*\n\s*action=\{setReceptionistActiveAction\}/);
     expect(src).toMatch(/<form action=\{setReceptionistActiveAction\}>[\s\S]{0,900}Reactivate/);
+  });
+  it("each team list names a focusable heading and the page has one live region outside the rows", () => {
+    const src = read("app/(app)/settings/team/page.tsx");
+    for (const id of ["front-desk", "practitioners", "pending-invitations"]) expect(src).toMatch(new RegExp(`<h2 id="${id}" tabIndex=\\{-1\\}`));
+    expect(src.match(/id="team-live" role="status"/g)?.length).toBe(1);
+    expect(src.match(/afterSuccess=\{\{ focusId: "(front-desk|practitioners|pending-invitations)", announceId: "team-live"/g)?.length).toBe(3);
   });
   it("the practitioner's Cancel appointment runs the action only from the dialog's Confirm", () => {
     const src = read("app/(app)/calendar/PractitionerCancelForm.tsx");

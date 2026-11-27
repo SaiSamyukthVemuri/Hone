@@ -85,6 +85,8 @@ export default async function TeamSettingsPage() {
 
   return (
     <div className="flex flex-col gap-12">
+      {/* HON-124 item 14: outside every row, so a result announced after a row unmounts is still heard. */}
+      <p id="team-live" role="status" aria-live="polite" className="sr-only" />
       <CurrentPractitioners
         practitioners={practitioners}
         currentPractitionerId={practitioner.id}
@@ -117,7 +119,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 id="front-desk" className="scroll-mt-24 text-xl font-medium">
+        <h2 id="front-desk" tabIndex={-1} className="scroll-mt-24 text-xl font-medium outline-none">
           Front desk
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -151,6 +153,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
                   description={`${r.display_name} will lose access to the front desk and the schedule until you reactivate them. Nothing is deleted.`}
                   confirmLabel="Deactivate"
                   busyLabel="Deactivating…"
+                  afterSuccess={{ focusId: "front-desk", announceId: "team-live", message: `${r.display_name} was deactivated.` }}
                 />
               ) : (
                 <form action={setReceptionistActiveAction}>
@@ -252,6 +255,7 @@ function CurrentPractitioners({
                   description={`${p.display_name} will be deactivated and lose access to this studio. Their existing appointments and records are kept.`}
                   confirmLabel="Remove"
                   busyLabel="Removing…"
+                  afterSuccess={{ focusId: "practitioners", announceId: "team-live", message: `${p.display_name} was removed from the team.` }}
                 />
               )}
             </li>
@@ -270,7 +274,7 @@ function PendingInvitations({
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 id="pending-invitations" className="scroll-mt-24 text-xl font-medium">
+        <h2 id="pending-invitations" tabIndex={-1} className="scroll-mt-24 text-xl font-medium outline-none">
           Pending invitations
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -310,6 +314,7 @@ function PendingInvitations({
                 description={`The invitation sent to ${inv.email} will stop working, so they can no longer join the studio with it. You can invite them again later.`}
                 confirmLabel="Revoke invitation"
                 busyLabel="Revoking…"
+                afterSuccess={{ focusId: "pending-invitations", announceId: "team-live", message: `The invitation for ${inv.email} was revoked.` }}
               />
             </li>
           ))}

@@ -64,6 +64,9 @@ test.describe("destructive actions ask first", () => {
     await confirm(page).focus();
     await page.keyboard.press("Enter");
     await expect.poll(status, { timeout: T }).toBe("revoked");
+    // the row is gone: focus lands on the list heading (not body) and the result is announced
+    await expect(page.locator("#pending-invitations")).toBeFocused({ timeout: T });
+    await expect(page.locator("#team-live")).toHaveText(`The invitation for ${invitee} was revoked.`);
   });
 
   test("remove a team member: names them and what is kept, Cancel keeps them active, Confirm deactivates", async ({ page }) => {
