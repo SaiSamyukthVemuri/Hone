@@ -191,7 +191,8 @@ async function compareFns(who: string): Promise<{ diffs: string[]; reached: stri
       const str = await asJwt(S.userId, (q) => outcome(q, sql));
       const mem = await asJwt(M.userId, (q) => outcome(q, sql));
       const label = `${f.proname}(${f.a})`.slice(0, 110);
-      if (rec !== str) diffs.push(`${label}: receptionist ${rec.slice(0, 100)} vs stranger ${str.slice(0, 100)}`);
+      // front_desk_access() answers the caller's OWN entitlement (their studios where the desk is on and they hold a seat); a stranger has none, by design.
+      if (rec !== str && f.proname !== "front_desk_access") diffs.push(`${label}: receptionist ${rec.slice(0, 100)} vs stranger ${str.slice(0, 100)}`);
       (mem !== str ? reached : notExercised).push(label);
     }
     return { diffs, reached, notExercised, total: fns.length };

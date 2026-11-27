@@ -63,6 +63,20 @@ export async function sql<T = Record<string, unknown>>(
   }
 }
 
+/**
+ * Switches the Front Desk on for a studio with `seats` receptionist seats, as the platform admin commands would (0390). Since 0390 a receptionist cannot
+ * be invited, accepted, reactivated or act without it, so seedE2eStudio does it for every fixture studio.
+ */
+export async function enableFrontDeskForE2e(studioId: string, seats = 5): Promise<void> {
+  await sql(`update public.platform_rollouts set mode = 'pilot', updated_at = now() where key = 'front_desk' and mode = 'off'`);
+  await sql(`insert into public.platform_rollout_studios (rollout_key, studio_id) values ('front_desk', $1) on conflict do nothing`, [studioId]);
+  await sql(
+    `insert into public.studio_front_desk_seats (studio_id, seats, source, reason, granted_by_admin)
+     values ($1, $2, 'pilot', 'fixture: synthetic test studio', 'fixture@harness.local')`,
+    [studioId, seats],
+  );
+}
+
 export async function seedE2eStudio(): Promise<E2eSeed> {
   const runId = randomUUID().slice(0, 8);
   const studioId = randomUUID();
@@ -150,6 +164,7 @@ export async function seedE2eStudio(): Promise<E2eSeed> {
   if (practitioner.length !== 1 || practitioner[0].role !== "owner") {
     throw new Error("seed failed: owner practitioner was not provisioned");
   }
+  await enableFrontDeskForE2e(studioId);
 
   return {
     runId,

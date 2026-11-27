@@ -56,6 +56,9 @@ export async function GET(request: Request) {
           dest = "/no-access?reason=invite-conflict";
         } else if (status?.status === "ambiguous") {
           dest = "/no-access?reason=invite-ambiguous";
+        } else if (status?.status === "front_desk_off" || status?.status === "seat_limit") {
+          // The Front Desk is off for the studio, or no seat is free (0390). The invitation stays pending.
+          dest = "/no-access?reason=front-desk-unavailable";
         } else if (
           (status?.status === "linked" || status?.status === "already_linked") &&
           status?.role === "receptionist" &&

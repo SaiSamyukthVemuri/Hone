@@ -10,6 +10,8 @@ import { buildInvitationEmail } from "@/lib/email/templates/invitation";
 import { safeLog } from "@/lib/logging/safe-log";
 import { dbErrorCode, failureCode } from "@/lib/logging/error-class";
 import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
+import { readFrontDeskSummary } from "@/lib/team-seats/summary";
+import { FRONT_DESK_FULL_MESSAGE, FRONT_DESK_OFF_MESSAGE, seatRefusalMessage } from "@/lib/team-seats/errors";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_ROLES: ReadonlyArray<InvitationRole> = ["owner", "practitioner", "receptionist"];
@@ -178,6 +180,15 @@ export async function invitePractitionerAction(
     }
   }
 
+  // The front desk is a platform-enabled, seat-limited feature (0390). This read only gives a good message early: the database refuses the
+  // invitation itself (trigger) when the switch is off or no seat is free, including when two invitations race for the last seat.
+  if (role === "receptionist") {
+    const summary = await readFrontDeskSummary(studioId, practitionerId);
+    if (!summary) return { ok: false, error: "Could not check the front desk seats. Please try again." };
+    if (!summary.switchOn) return { ok: false, error: FRONT_DESK_OFF_MESSAGE };
+    if (summary.seatsAvailable < 1) return { ok: false, error: FRONT_DESK_FULL_MESSAGE };
+  }
+
   // Already invited at this studio (still pending)?
   const { data: existingInvite, error: inviteErr } = await supabase
     .from("pending_invitations")
@@ -206,6 +217,8 @@ export async function invitePractitionerAction(
   });
 
   if (error) {
+    const seatRefusal = seatRefusalMessage(error);
+    if (seatRefusal) return { ok: false, error: seatRefusal };
     if (error.code === PG_UNIQUE_VIOLATION) {
       return {
         ok: false,

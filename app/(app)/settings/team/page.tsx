@@ -15,8 +15,11 @@ import {
 } from "./actions";
 import { PendingButton } from "@/components/pending-button";
 import { setReceptionistActiveAction } from "./receptionist-actions";
+import { readFrontDeskSummary, type FrontDeskSummary } from "@/lib/team-seats/summary";
+import { seatsNoticeMessage } from "@/lib/team-seats/errors";
+import { receptionistsOverLimit } from "@/lib/team-seats/rank";
 
-type ReceptionistRow = { id: string; display_name: string; email: string | null; active: boolean };
+type ReceptionistRow = { id: string; display_name: string; email: string | null; active: boolean; created_at: string };
 
 // Read under the OWNER's own session: the 0216 policy lets an owner read their studio's receptionist rows, and nobody else's.
 // The legal identity of a client is not on this row or this page.
@@ -24,7 +27,7 @@ async function getReceptionists(studioId: string): Promise<ReceptionistRow[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("studio_receptionists")
-    .select("id, display_name, email, active")
+    .select("id, display_name, email, active, created_at")
     .eq("studio_id", studioId)
     .order("active", { ascending: false })
     .order("display_name", { ascending: true });
@@ -67,7 +70,7 @@ async function getPendingInvitations(
   return (data ?? []) as PendingInvitation[];
 }
 
-export default async function TeamSettingsPage() {
+export default async function TeamSettingsPage({ searchParams }: { searchParams: Promise<{ seats?: string }> }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
 
   if (practitioner.role !== "owner") {
@@ -81,6 +84,8 @@ export default async function TeamSettingsPage() {
   ]);
 
   const showReviewLink = await shouldShowReviewLink(studio.id);
+  // Null when it cannot be read: the page then offers nothing new for the front desk (the database still decides every write).
+  const seats = await readFrontDeskSummary(studio.id, practitioner.id);
 
   return (
     <div className="flex flex-col gap-12">
@@ -101,18 +106,21 @@ export default async function TeamSettingsPage() {
             join your studio.
           </p>
         </div>
-        <InviteForm />
+        <InviteForm receptionistInvites={!seats ? "unknown" : !seats.switchOn ? "off" : seats.seatsAvailable < 1 ? "full" : "available"} />
       </section>
 
       <PendingInvitations invitations={invitations} />
 
-      <FrontDesk receptionists={receptionists} />
+      <FrontDesk receptionists={receptionists} seats={seats} notice={seatsNoticeMessage((await searchParams).seats)} />
     </div>
   );
 }
 
-function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
+function FrontDesk({ receptionists, seats, notice }: { receptionists: ReceptionistRow[]; seats: FrontDeskSummary | null; notice: string | null }) {
   const active = receptionists.filter((r) => r.active).length;
+  const over = seats && seats.switchOn ? receptionistsOverLimit(receptionists, seats.seatLimit) : new Set<string>();
+  // Reactivating needs the switch on and a free seat; the database decides, this only avoids offering a button that must refuse.
+  const canActivate = !!seats && seats.switchOn && seats.seatsAvailable >= 1;
   return (
     <section className="flex flex-col gap-4">
       <div>
@@ -126,6 +134,26 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
           {receptionists.length === 0 ? " No receptionists yet." : ` ${active} active.`}
         </p>
       </div>
+      {notice && (
+        <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">{notice}</p>
+      )}
+      {seats && !seats.switchOn && (
+        <p role="status" className="rounded-lg border border-neutral-200 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
+          The front desk is not switched on for your studio yet. Contact Hone to add it.
+        </p>
+      )}
+      {seats && seats.switchOn && (
+        <p role="status" className="text-sm text-neutral-600 dark:text-neutral-300">
+          {seats.seatsActive + seats.seatsReserved} of {seats.seatLimit} front desk {seats.seatLimit === 1 ? "seat" : "seats"} used
+          {seats.seatsReserved > 0 ? ` (${seats.seatsReserved} reserved for pending ${seats.seatsReserved === 1 ? "invitation" : "invitations"})` : ""}.
+        </p>
+      )}
+      {over.size > 0 && (
+        <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+          {over.size} {over.size === 1 ? "receptionist is" : "receptionists are"} over your seat limit and cannot use the front desk. Deactivate
+          {over.size === 1 ? " them" : " some"} to match your seats, or contact Hone to add seats. Nothing is deleted.
+        </p>
+      )}
       {receptionists.length > 0 && (
         <ul className="divide-y divide-neutral-200 overflow-hidden rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           {receptionists.map((r) => (
@@ -137,6 +165,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
                     receptionist
                   </span>
                   {!r.active && <span className="text-xs text-neutral-500">inactive</span>}
+                  {r.active && over.has(r.id) && <span className="text-xs text-amber-700 dark:text-amber-300">no seat</span>}
                 </div>
                 {r.email && <div className="truncate text-xs text-neutral-500">{r.email}</div>}
               </div>
@@ -144,7 +173,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
                 <input type="hidden" name="id" value={r.id} />
                 <input type="hidden" name="active" value={r.active ? "false" : "true"} />
                 {/* PendingButton: the press is acknowledged and the control is disabled while the action runs, so a slow connection cannot show nothing or submit twice. */}
-                <PendingButton variant="secondary" size="sm">
+                <PendingButton variant="secondary" size="sm" disabled={!r.active && !canActivate}>
                   {r.active ? "Deactivate" : "Reactivate"}
                 </PendingButton>
               </form>

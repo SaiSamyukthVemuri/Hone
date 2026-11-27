@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 class Redirected extends Error {}
 type Row = { id: string; studio_id: string; display_name: string; user_id: string; active: boolean };
-const state: { user: { id: string } | null; rows: Row[]; selected: string | null; set: string[] } = { user: { id: "u1" }, rows: [], selected: null, set: [] };
+const state: { user: { id: string } | null; rows: Row[]; selected: string | null; set: string[]; blocked: string[] } = { user: { id: "u1" }, rows: [], selected: null, set: [], blocked: [] };
 
 vi.mock("server-only", () => ({}));
 vi.mock("react", async (orig) => ({ ...(await orig<typeof import("react")>()), cache: <T,>(fn: T) => fn }));
@@ -22,6 +22,8 @@ vi.mock("@/lib/supabase/selected-studio", () => ({
 vi.mock("@/lib/supabase/server", () => ({
   createClient: async () => ({
     auth: { getUser: async () => ({ data: { user: state.user } }) },
+    // front_desk_access(): the studios whose Front Desk is on and where the caller holds a seat (0390). Everything is allowed unless blocked.
+    rpc: async () => ({ data: state.rows.map((r) => r.studio_id).filter((id) => !state.blocked.includes(id)), error: null }),
     from: () => {
       let rows = state.rows;
       const q: Record<string, unknown> = {};
@@ -46,6 +48,7 @@ beforeEach(() => {
   state.rows = [];
   state.selected = null;
   state.set = [];
+  state.blocked = [];
   vi.stubEnv("HONE_RECEPTIONIST_DESK_ENABLED", "true");
 });
 

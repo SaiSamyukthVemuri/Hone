@@ -20,7 +20,7 @@ describe("Team settings: the Front desk control reports its own progress", () =>
   });
 
   it("Deactivate / Reactivate is a PendingButton inside the action's form, and no raw submit button survives in the section", () => {
-    expect(FRONT_DESK).toMatch(/<form action=\{setReceptionistActiveAction\}>[\s\S]*<PendingButton variant="secondary" size="sm">[\s\S]*<\/PendingButton>[\s\S]*<\/form>/);
+    expect(FRONT_DESK).toMatch(/<form action=\{setReceptionistActiveAction\}>[\s\S]*<PendingButton variant="secondary" size="sm"[^>]*>[\s\S]*<\/PendingButton>[\s\S]*<\/form>/);
     expect(FRONT_DESK).not.toMatch(/<button\b/);
     expect(FRONT_DESK).not.toContain('type="submit"');
     expect(PAGE).toContain('import { PendingButton } from "@/components/pending-button";');

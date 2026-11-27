@@ -198,9 +198,29 @@ export type SeededStudio = {
 // suites can re-run against the same local database without
 // colliding; assertions must scope by these ids, never by global
 // counts.
+/**
+ * Switches the Front Desk on for a studio and grants it `seats` receptionist seats, the way the platform admin commands would (0390), written
+ * directly because a fixture needs no audit row. Since 0390 a receptionist cannot be invited, accepted, reactivated or act without this. seedStudio
+ * does it by default (`frontDesk: false` opts out, for a test that proves the OFF or no-seat behaviour); a studio built any other way calls it itself.
+ */
+export async function enableFrontDesk(studioId: string, seats = 5): Promise<void> {
+  await adminQuery(
+    `update public.platform_rollouts set mode = 'pilot', updated_at = now() where key = 'front_desk' and mode = 'off'`,
+  );
+  await adminQuery(
+    `insert into public.platform_rollout_studios (rollout_key, studio_id) values ('front_desk', $1) on conflict do nothing`,
+    [studioId],
+  );
+  await adminQuery(
+    `insert into public.studio_front_desk_seats (studio_id, seats, source, reason, granted_by_admin)
+     values ($1, $2, 'pilot', 'fixture: synthetic test studio', 'fixture@harness.local')`,
+    [studioId, seats],
+  );
+}
+
 export async function seedStudio(
   label: string,
-  opts: { verifiedPaymentJurisdiction?: boolean } = {},
+  opts: { verifiedPaymentJurisdiction?: boolean; frontDesk?: boolean } = {},
 ): Promise<SeededStudio> {
   const studioId = randomUUID();
   const userId = randomUUID();
@@ -234,6 +254,7 @@ export async function seedStudio(
     `insert into public.clients (id, studio_id, name) values ($1, $2, $3)`,
     [clientId, studioId, `Client ${label}`],
   );
+  if (opts.frontDesk !== false) await enableFrontDesk(studioId);
   return { studioId, userId, practitionerId, clientId };
 }
 
