@@ -1,7 +1,7 @@
 "use client";
 
 import { refundDisplayState } from "@/lib/billing/refund-display-state";
-import { createContext, useContext, useState, useTransition } from "react";
+import { createContext, useContext, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { checkoutDraftAmount, useCheckoutFeeDraft, waivedVisitData, type CheckoutFeeDraft } from "@/components/checkout-fee-fields";
 import { waiveAppointmentFeeAction } from "@/app/(app)/appointment-settlement-actions";
@@ -224,6 +224,7 @@ export function SessionPaymentPrepareCard({
   onSettlementRecorded,
   initialMethod,
   initialFeeDraft,
+  onDraftObserved,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -266,6 +267,8 @@ export function SessionPaymentPrepareCard({
   onSettlementRecorded?: () => void | Promise<void>;
   initialMethod?: CheckoutMethod;
   initialFeeDraft?: CheckoutFeeDraft;
+  /** Tells a parent (the quick checkout) the fee draft as it stands, so a split bill is made at the reviewed fee. Observation only. */
+  onDraftObserved?: (draft: CheckoutFeeDraft | undefined) => void;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
@@ -403,6 +406,7 @@ export function SessionPaymentPrepareCard({
   // price. Keep the latter as Stripe's expected reference for its stale check.
   const outstanding = settledMethod === "still_owes" && settledAmountCents !== null && settledAmountCents > 0
     ? settledAmountCents : null;
+  useEffect(() => { onDraftObserved?.(feeDraft); }); // after every render: observation only, the parent keeps it in a ref
   const confirmWaiver = Boolean(feeDraft && checkoutDraftAmount(feeDraft.finalFee) === 0);
   const needsSavedCard = !eligibility.eligible && eligibility.blockingReasons.includes(NO_CARD_ON_FILE_REASON);
   const stripeForm = presentation.prepareFormAmount !== null && eligibleDetails ? (

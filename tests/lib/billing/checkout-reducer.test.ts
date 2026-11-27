@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  answerSettles, awaitLedger, settleFromLedger, cardReduce, chargeFingerprint, reconcileRefundSelection, refundFingerprint, refundSendable, settleSubmission, submissionFor,
-  type CardEvent, type CardPhase,
+  answerSettles, awaitRefund, bindAttempt, releaseCardAttempt, releaseRefund, settleFromLedger, cardReduce, chargeFingerprint, reconcileRefundSelection, refundFingerprint, refundSendable, settleSubmission, submissionFor,
+  type CardEvent, type CardPhase, type Submissions,
 } from "@/lib/billing/visit-payments-core";
 
 // The checkout state machine as a TRANSITION TABLE: every (phase, event) pair is stated, so a change that adds, drops or re-routes a transition fails here by name.
@@ -123,37 +123,81 @@ describe("the refund selection follows the ledger", () => {
   });
 });
 
-describe("a lost answer does not settle its submission id (Insurance F2)", () => {
-  it("only a definite answer settles: ok and not checking", () => {
-    expect(answerSettles({ ok: true })).toBe(true);
-    expect(answerSettles({ ok: true, checking: false })).toBe(true);
-    expect(answerSettles({ ok: true, checking: true })).toBe(false);
-    expect(answerSettles({ ok: false })).toBe(false);
-    expect(answerSettles({ ok: false, checking: true })).toBe(false);
+describe("the id mechanism: one rule for every path (Insurance F2, Codex P2)", () => {
+  const mint = () => { let n = 0; return () => `id-${++n}`; };
+  const card50 = chargeFingerprint({ tender: "card", cents: 5000, currency: "cad" });
+  const card30 = chargeFingerprint({ tender: "card", cents: 3000, currency: "cad" });
+  const cash50 = chargeFingerprint({ tender: "paid_cash", cents: 5000, currency: "cad" });
+
+  it("only an answer that is still being checked keeps its id", () => {
+    expect(answerSettles({})).toBe(true);
+    expect(answerSettles({ checking: false })).toBe(true);
+    expect(answerSettles({ checking: true })).toBe(false);
   });
-  it("lost answer, retry of the SAME refund: the same id; the id is released only when the ledger shows nothing pending", () => {
-    const fp = refundFingerprint({ paymentId: "p1", cents: 4000, kind: "payment_reversal", reason: "late" });
-    let n = 0; const mint = () => `id-${++n}`;
-    const first = submissionFor({}, fp, mint);
-    let awaiting = awaitLedger([], fp);
-    expect(awaitLedger(awaiting, fp)).toEqual([fp]); // remembered once
-    // the answer was lost (checking): nothing settles, a retry reuses the id
-    expect(submissionFor(first.next, fp, mint).id).toBe(first.id);
-    // the ledger still shows a refund pending at Stripe: still held
-    const still = settleFromLedger(first.next, awaiting, 1);
-    expect(still.subs).toEqual(first.next); expect(still.awaiting).toEqual([fp]);
-    // a refund pending at Stripe no longer (settled or failed on the ledger): released, the next ask is a new command
-    const done = settleFromLedger(still.subs, still.awaiting, 0);
-    expect(done.subs).toEqual({}); expect(done.awaiting).toEqual([]);
-    expect(submissionFor(done.subs, fp, mint).id).not.toBe(first.id);
+
+  // ENTRY PATHS INTO A CARD ATTEMPT'S DEFINITE OUTCOME: first answer, recheck (manual status check), ledger-restore effect, ledger settle. All are the same event for the ids: releaseCardAttempt(attempt).
+  it.each(["first answer", "manual status check (recheck)", "ledger-restore effect", "ledger settle (ledger_settled)"])(
+    "card charge: %s releases exactly that attempt's id, so the next $50 is a NEW command (the $50 + $50 sequence)", (_path) => {
+      const m = mint();
+      const first = submissionFor({}, card50, m);
+      const bound = bindAttempt({}, "att-1", card50);
+      const released = releaseCardAttempt(first.next, bound, "att-1");
+      expect(released.subs).toEqual({}); expect(released.bound).toEqual({});
+      const second = submissionFor(released.subs, card50, m);
+      expect(second.id).not.toBe(first.id);
+    });
+
+  it("a lost answer (not definite) keeps the id: the retry of the same charge is the same command", () => {
+    const m = mint();
+    const first = submissionFor({}, card50, m);
+    expect(submissionFor(first.next, card50, m).id).toBe(first.id);
   });
-  it("settling from the ledger releases only the remembered intents, never another one that is in flight", () => {
-    const a = "refund|p1|4000|payment_reversal|late", b = "refund|p2|1000|payment_reversal|other";
-    let n = 0; const mint = () => `id-${++n}`;
-    const s1 = submissionFor({}, a, mint), s2 = submissionFor(s1.next, b, mint);
-    const r = settleFromLedger(s2.next, [a], 0);
-    expect(r.subs).toEqual({ [b]: s2.id });
-    expect(settleFromLedger(s2.next, [], 0).subs).toEqual(s2.next);
+
+  it("a definite outcome releases the attempt's id AND any card id bound to no open attempt (a prepare whose answer was lost), but never cash/transfer or an id bound to ANOTHER open attempt", () => {
+    const m = mint();
+    let subs: Submissions = {};
+    const a = submissionFor(subs, card50, m); subs = a.next;           // bound to att-1
+    const b = submissionFor(subs, card30, m); subs = b.next;           // bound to att-2 (still open)
+    const c = submissionFor(subs, cash50, m); subs = c.next;           // not a card charge
+    const ghost = chargeFingerprint({ tender: "card", cents: 1234, currency: "cad" });
+    const g = submissionFor(subs, ghost, m); subs = g.next;            // its prepare answer was lost: bound to nothing
+    let bound = bindAttempt(bindAttempt({}, "att-1", card50), "att-2", card30);
+    const r = releaseCardAttempt(subs, bound, "att-1");
+    expect(r.subs).toEqual({ [card30]: b.id, [cash50]: c.id });
+    expect(r.bound).toEqual({ "att-2": card30 });
+  });
+
+  // REFUND PATHS
+  const fpR = refundFingerprint({ paymentId: "p1", cents: 4000, kind: "payment_reversal", reason: "late" });
+  const fpS = refundFingerprint({ paymentId: "p2", cents: 1000, kind: "payment_reversal", reason: "other" });
+  it("refund first answer: a definite answer settles its own intent only (answerSettles + settleSubmission)", () => {
+    const m = mint();
+    const a = submissionFor({}, fpR, m), b = submissionFor(a.next, fpS, m);
+    expect(settleSubmission(b.next, fpR)).toEqual({ [fpS]: b.id });
+  });
+  it("refund lost answer: held until the ledger shows ITS row is no longer pending (other pending rows do not release it)", () => {
+    const m = mint();
+    const a = submissionFor({}, fpR, m);
+    const awaiting = awaitRefund([], fpR, "rf-1");
+    expect(awaitRefund(awaiting, fpR, null)).toEqual([{ fp: fpR, refundId: "rf-1" }]); // remembered once, the row id is kept
+    expect(settleFromLedger(a.next, awaiting, ["rf-1", "rf-9"]).subs).toEqual(a.next);   // still pending
+    expect(settleFromLedger(a.next, awaiting, ["rf-9"]).subs).toEqual({});               // its row settled (another is pending elsewhere)
+    expect(settleFromLedger(a.next, awaiting, ["rf-9"]).awaiting).toEqual([]);
+  });
+  it("refund recheck: a definite recheck of THAT row releases exactly that intent's id", () => {
+    const m = mint();
+    const a = submissionFor({}, fpR, m), b = submissionFor(a.next, fpS, m);
+    const awaiting = awaitRefund(awaitRefund([], fpR, "rf-1"), fpS, "rf-2");
+    const r = releaseRefund(b.next, awaiting, "rf-1");
+    expect(r.subs).toEqual({ [fpS]: b.id }); expect(r.awaiting).toEqual([{ fp: fpS, refundId: "rf-2" }]);
+    expect(releaseRefund(r.subs, r.awaiting, "rf-unknown")).toEqual(r);
+  });
+  it("a row-less lost answer waits for NO refund pending, then the ledger releases it", () => {
+    const m = mint();
+    const a = submissionFor({}, fpR, m);
+    const awaiting = awaitRefund([], fpR, null);
+    expect(settleFromLedger(a.next, awaiting, ["rf-9"]).subs).toEqual(a.next);
+    expect(settleFromLedger(a.next, awaiting, []).subs).toEqual({});
   });
 });
 

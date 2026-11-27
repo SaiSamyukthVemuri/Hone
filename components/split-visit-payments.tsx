@@ -4,7 +4,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
   canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
-  STATUS_LABEL, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, answerSettles, awaitLedger, settleFromLedger, type Awaiting, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
+  STATUS_LABEL, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, answerSettles, awaitRefund, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
   confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
@@ -51,13 +51,16 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const subsRef = useRef<Submissions>({});
   const subFor = (fp: string) => { const r = submissionFor(subsRef.current, fp, () => crypto.randomUUID()); subsRef.current = r.next; return r.id; };
   const settleSub = (fp: string) => { subsRef.current = settleSubmission(subsRef.current, fp); };
-  // A refund whose answer was LOST keeps its id; the ledger settles it later (no refund pending at Stripe any more), or a definite recheck does.
+  // A card attempt's id is bound to the ATTEMPT it produced; any definite outcome of that attempt, by ANY path, releases it (see releaseCardAttempt).
+  const boundRef = useRef<AttemptBindings>({});
+  const releaseAttempt = (attemptId: string) => { const r = releaseCardAttempt(subsRef.current, boundRef.current, attemptId); subsRef.current = r.subs; boundRef.current = r.bound; };
+  // A refund whose answer was LOST keeps its id, bound to its row; the ledger, or a definite recheck of that row, releases it.
   const awaitingRef = useRef<Awaiting>([]);
-  const pendingRefundCount = ledger.refunds.filter((r) => r.status === "pending_stripe").length;
+  const pendingRefundIds = ledger.refunds.filter((r) => r.status === "pending_stripe").map((r) => r.id).sort().join(",");
   useEffect(() => {
-    const r = settleFromLedger(subsRef.current, awaitingRef.current, pendingRefundCount);
+    const r = settleFromLedger(subsRef.current, awaitingRef.current, pendingRefundIds ? pendingRefundIds.split(",") : []);
     subsRef.current = r.subs; awaitingRef.current = r.awaiting;
-  }, [pendingRefundCount]);
+  }, [pendingRefundIds]);
   const [phase, dispatch] = useReducer(cardReduce, { phase: "idle" } as CardPhase);
   const pollRef = useRef(0);
   const fmt = (c: number) => formatMoney(c, currency);
@@ -65,12 +68,12 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
 
   useEffect(() => { setAmount((a) => (a === "" && collectable > 0 ? (collectable / 100).toFixed(2) : a)); }, [collectable]);
 
-  const apply = useCallback((r: SplitActionResult & { checking?: boolean }, fp?: string) => {
+  const apply = useCallback((r: SplitActionResult & { checking?: boolean; refundId?: string | null }, fp?: string) => {
     setNote(r.note);
     if (r.state) onChanged(r.state);
     // A definite answer ends this intent (the next ask is a new command). A refusal or a lost answer keeps the id and what was typed.
-    if (answerSettles(r)) { if (fp) settleSub(fp); setAmount(""); }
-    else if (r.checking && fp) awaitingRef.current = awaitLedger(awaitingRef.current, fp);
+    if (answerSettles(r)) { if (fp) settleSub(fp); if (r.ok) setAmount(""); }
+    else if (fp) awaitingRef.current = awaitRefund(awaitingRef.current, fp, r.refundId ?? null);
   }, [onChanged]);
 
   const form = (extra: Record<string, string>) => {
@@ -81,7 +84,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   };
 
   // --- card -------------------------------------------------------------
-  const runCard = useCallback(async (attemptId: string, chargeFp?: string) => {
+  const runCard = useCallback(async (attemptId: string) => {
     let tries = 0;
     const attempt = async (): Promise<void> => {
       const mine = ++pollRef.current;
@@ -89,8 +92,8 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         const out = await runSplitCardPaymentAction(form({ attempt_id: attemptId }));
         if (mine !== pollRef.current) return;
         if (out.state) onChanged(out.state);
-        if (out.outcome === "succeeded") { dispatch({ type: "result", outcome: "succeeded" }); setNote({ tone: "ok", message: "Card payment received." }); if (chargeFp) settleSub(chargeFp); setAmount(""); return; }
-        if (out.outcome === "failed") { dispatch({ type: "result", outcome: "failed", text: out.message }); setNote({ tone: "blocked", message: out.message }); if (chargeFp) settleSub(chargeFp); return; }
+        if (out.outcome === "succeeded") { dispatch({ type: "result", outcome: "succeeded" }); setNote({ tone: "ok", message: "Card payment received." }); releaseAttempt(attemptId); setAmount(""); return; }
+        if (out.outcome === "failed") { dispatch({ type: "result", outcome: "failed", text: out.message }); setNote({ tone: "blocked", message: out.message }); releaseAttempt(attemptId); return; }
         dispatch({ type: "result", outcome: "unknown" });
       } catch {
         // The connection dropped: we do NOT know whether Stripe took the charge. Never offer a second charge; ask again.
@@ -121,6 +124,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
     if (was) {
       checkingRef.current = null;
       const c = ledger.cards.find((x) => x.id === was);
+      if (c && (c.status === "succeeded" || c.status === "failed" || c.status === "cancelled")) releaseAttempt(was);
       if (c && (c.status === "succeeded" || c.status === "failed" || c.status === "cancelled")) dispatch({ type: "ledger_settled", attemptId: was, status: c.status === "succeeded" ? "succeeded" : "failed" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -141,7 +145,8 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         return;
       }
       dispatch({ type: "prepared", attemptId: prep.attemptId });
-      await runCard(prep.attemptId, fp);
+      boundRef.current = bindAttempt(boundRef.current, prep.attemptId, fp);
+      await runCard(prep.attemptId);
     } catch {
       dispatch({ type: "prepare_refused", text: "That did not go through and nothing was charged. Check your connection and try again." });
       setNote({ tone: "blocked", message: "That did not go through and nothing was charged. Check your connection and try again." });
@@ -249,13 +254,13 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
             <span className="flex items-baseline gap-3">
               {l.status === "not_sent" && !unknown && (
                 <button type="button" className="text-sm underline" disabled={busy} data-testid="split-cancel-attempt"
-                  onClick={async () => { setBusy(true); try { apply(await cancelSplitCardAttemptAction(form({ attempt_id: l.key.slice(5) }))); } finally { setBusy(false); } }}>
+                  onClick={async () => { setBusy(true); try { const aid = l.key.slice(5); const cr = await cancelSplitCardAttemptAction(form({ attempt_id: aid })); apply(cr); if (cr.ok) releaseAttempt(aid); } finally { setBusy(false); } }}>
                   Cancel this card payment
                 </button>
               )}
               {l.status === "refund_in_progress" && (
                 <button type="button" className="text-sm underline" disabled={busy} data-testid="split-recheck-refund"
-                  onClick={async () => { setBusy(true); try { apply(await recheckCardRefundAction(form({ refund_id: l.key.slice(7) }))); } finally { setBusy(false); } }}>
+                  onClick={async () => { setBusy(true); try { const rid = l.key.slice(7); const rr = await recheckCardRefundAction(form({ refund_id: rid })); apply(rr); if (!rr.checking) { const x = releaseRefund(subsRef.current, awaitingRef.current, rid); subsRef.current = x.subs; awaitingRef.current = x.awaiting; } } finally { setBusy(false); } }}>
                   Check refund status
                 </button>
               )}

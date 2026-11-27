@@ -256,19 +256,48 @@ export function settleSubmission(subs: Submissions, fingerprint: string): Submis
 }
 
 /**
- * An answer settles its intent only when it is DEFINITE. A lost answer (checking) is not: the same intent must be asked again with the SAME id so Stripe and the
- * database re-read the one refund instead of making another.
+ * THE MECHANISM (one rule for every path). A submission id belongs to ONE intent and is released exactly when that intent has a DEFINITE outcome, whichever path learned it:
+ * the first answer, a recheck, the ledger-restore effect, the manual status check, or the ledger itself. A LOST answer (checking) is not definite: the same intent is asked
+ * again with the SAME id so the database and Stripe re-read the one payment or refund. A refusal that created nothing is definite too (nothing is bound to the id).
  */
-export const answerSettles = (r: { ok: boolean; checking?: boolean }) => r.ok && !r.checking;
+export const answerSettles = (r: { checking?: boolean }) => !r.checking;
 
-/** Intents whose answer was lost, waiting for the ledger to say how they ended. */
-export type Awaiting = ReadonlyArray<string>;
-/** A lost answer is remembered (once) so it can be settled later by the ledger. */
-export const awaitLedger = (awaiting: Awaiting, fingerprint: string): Awaiting => (awaiting.includes(fingerprint) ? awaiting : [...awaiting, fingerprint]);
-/** The ledger result: once NO refund is pending at Stripe any more, every remembered intent has a definite outcome on the ledger and is settled (its id is released). */
-export function settleFromLedger(subs: Submissions, awaiting: Awaiting, pendingRefunds: number): { subs: Submissions; awaiting: Awaiting } {
-  if (pendingRefunds > 0 || awaiting.length === 0) return { subs, awaiting };
-  return { subs: awaiting.reduce((m, fp) => settleSubmission(m, fp), subs), awaiting: [] };
+// ---- card charges: the id is bound to the ATTEMPT it produced ----
+/** attempt id -> the charge fingerprint whose id produced it */
+export type AttemptBindings = Readonly<Record<string, string>>;
+export const bindAttempt = (bound: AttemptBindings, attemptId: string, fingerprint: string): AttemptBindings => ({ ...bound, [attemptId]: fingerprint });
+const CARD_CHARGE_PREFIX = "charge|card|";
+/**
+ * A card attempt reached a definite outcome (succeeded, failed or cancelled) by ANY path: release the id bound to it, and every card-charge id that is bound to NO open
+ * attempt (a prepare whose answer was lost produced an attempt this screen never saw; reusing its id would hand back that finished attempt and collect nothing).
+ */
+export function releaseCardAttempt(subs: Submissions, bound: AttemptBindings, attemptId: string): { subs: Submissions; bound: AttemptBindings } {
+  const nextBound = { ...bound }; delete nextBound[attemptId];
+  const open = new Set(Object.values(nextBound));
+  const nextSubs: Record<string, string> = {};
+  for (const [fp, id] of Object.entries(subs)) {
+    const isCardCharge = fp.startsWith(CARD_CHARGE_PREFIX);
+    if (isCardCharge && !open.has(fp)) continue; // released (this attempt's, or bound to no open attempt)
+    nextSubs[fp] = id;
+  }
+  return { subs: nextSubs, bound: nextBound };
+}
+
+// ---- refunds: an intent whose answer was lost is bound to its refund ROW ----
+export type Awaiting = ReadonlyArray<{ fp: string; refundId: string | null }>;
+export const awaitRefund = (awaiting: Awaiting, fp: string, refundId: string | null): Awaiting =>
+  awaiting.some((a) => a.fp === fp) ? awaiting.map((a) => (a.fp === fp ? { fp, refundId: refundId ?? a.refundId } : a)) : [...awaiting, { fp, refundId }];
+/** The refund rows now pending at Stripe: every remembered intent whose row is not among them has a definite outcome on the ledger and is released. A row-less intent waits for none pending. */
+export function settleFromLedger(subs: Submissions, awaiting: Awaiting, pendingRefundIds: readonly string[]): { subs: Submissions; awaiting: Awaiting } {
+  const done = (a: { fp: string; refundId: string | null }) => (a.refundId ? !pendingRefundIds.includes(a.refundId) : pendingRefundIds.length === 0);
+  const released = awaiting.filter(done);
+  if (released.length === 0) return { subs, awaiting };
+  return { subs: released.reduce((m, a) => settleSubmission(m, a.fp), subs), awaiting: awaiting.filter((a) => !done(a)) };
+}
+/** A recheck answered definitively for this refund row: release exactly that intent's id. */
+export function releaseRefund(subs: Submissions, awaiting: Awaiting, refundId: string): { subs: Submissions; awaiting: Awaiting } {
+  const mine = awaiting.filter((a) => a.refundId === refundId);
+  return { subs: mine.reduce((m, a) => settleSubmission(m, a.fp), subs), awaiting: awaiting.filter((a) => a.refundId !== refundId) };
 }
 
 /** The payment chosen for a refund, kept while it is still refundable, else the first refundable one (never a stale id, "" when none). */

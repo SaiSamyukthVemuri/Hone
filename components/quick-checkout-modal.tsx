@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
-import type { CheckoutFeeDraft } from "@/components/checkout-fee-fields";
+import { splitBillFeeFields, type CheckoutFeeDraft } from "@/components/checkout-fee-fields";
 import type { CheckoutMethod } from "@/components/checkout-method-picker";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { AppointmentSettlementControls } from "@/components/appointment-settlement-controls";
@@ -77,6 +77,8 @@ export function QuickCheckoutModal({
     openRef.current = open;
   }, [open]);
   const requestSeq = useRef(0);
+  // The fee draft as the two checkout children hold it right now (they report it; this never re-renders).
+  const feeDraftRef = useRef<CheckoutFeeDraft | undefined>(undefined);
 
   // Resolve trusted server context. `silent` re-resolves WITHOUT tearing down
   // the visible card (no spinner, no ctx reset) so an in-place state advance
@@ -242,6 +244,7 @@ export function QuickCheckoutModal({
             {ctx.settlement?.canRecord && (ctx.settlement.quotedAmountCents !== 0 || ctx.settlement.settledMethod) && (
               <AppointmentSettlementControls
                 initialFeeDraft={initialFeeDraft}
+                onDraftObserved={(d) => { feeDraftRef.current = d; }}
                 initialMethod={initialMethod ?? (ctx.isOwner ? "paid_e_transfer" : undefined)}
                 currency={ctx.settlement.currency ?? null}
                 stripeUnavailable={ctx.settlement.quotedAmountCents === 0 ? undefined : "A linked treatment session is needed to charge with Stripe."}
@@ -294,6 +297,7 @@ export function QuickCheckoutModal({
                 the persisted next state without a close/reopen. */}
             <SessionPaymentPrepareCard
               initialFeeDraft={initialFeeDraft}
+              onDraftObserved={(d) => { feeDraftRef.current = d; }}
               initialMethod={initialMethod}
               sessionId={ctx.sessionId}
               clientId={ctx.clientId}
@@ -328,8 +332,12 @@ export function QuickCheckoutModal({
               type="button"
               className="mt-2 inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
               onClick={() => {
+                // The fee the owner reviewed (the dashboard draft, or what they edited since) travels with the bill: never the booked price by default.
+                const fee = splitBillFeeFields(feeDraftRef.current ?? initialFeeDraft, ctx?.settlement?.quotedAmountCents ?? 0);
+                if (!fee.ok) { setSplitNote(fee.message); return; }
                 const f = new FormData();
                 f.set("appointment_id", appointmentId);
+                for (const [k, v] of Object.entries(fee.fields)) f.set(k, v);
                 void startSplitBillAction(f).then((r) => {
                   setSplitNote(r.ok ? null : r.note.message);
                   if (r.state) setSplit({ enabled: true, state: r.state });

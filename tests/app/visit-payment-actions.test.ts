@@ -331,3 +331,22 @@ describe("resolveRefundReviewAction (a refund made in the Stripe dashboard)", ()
     expect((await resolveRefundReviewAction(form({ appointment_id: APPT, review_id: "x" }))).code).toBe("invalid_input");
   });
 });
+
+describe("the split bill is made at the reviewed fee (Codex P2)", () => {
+  it("adjusts $100 to $80: the command gets 8000 and the reason, so the bill is $80", async () => {
+    S.command = { result: "created", id: "b1", state: null };
+    const out = await startSplitBillAction(form({ appointment_id: APPT, final_amount_dollars: "80.00", adjustment_reason: "Loyalty discount" }));
+    expect(out.ok === true || out.code === "created" || out.code === "exists").toBe(true);
+    expect(S.commandCalls[0][0]).toBe("ensure_visit_bill");
+    expect(S.commandCalls[0][1]).toMatchObject({ p_final_cents: 8000, p_fee_adjustment_reason: "Loyalty discount" });
+  });
+  it("no adjustment: the booked price (null final), no reason", async () => {
+    await startSplitBillAction(form({ appointment_id: APPT }));
+    expect(S.commandCalls[0][1]).toMatchObject({ p_final_cents: null, p_fee_adjustment_reason: null });
+  });
+  it("a malformed fee is refused before any command", async () => {
+    const out = await startSplitBillAction(form({ appointment_id: APPT, final_amount_dollars: "eighty" }));
+    expect(out).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(S.commandCalls).toEqual([]);
+  });
+});
