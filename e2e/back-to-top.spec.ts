@@ -20,6 +20,17 @@ test.beforeEach(async ({ page }) => {
 
 const scrollY = (page: Page) => page.evaluate(() => Math.round(window.scrollY));
 
+/** The End key scrolls with the browser's own animation; wait until the page has stopped moving before acting on its position. */
+async function settled(page: Page) {
+  await expect
+    .poll(async () => {
+      const a = await scrollY(page);
+      await page.waitForTimeout(150);
+      return a === (await scrollY(page));
+    })
+    .toBe(true);
+}
+
 for (const path of PAGES) {
   test(`${path}: back to top by keyboard alone, focus restored to the top`, async ({ page }) => {
     await page.goto(path);
@@ -27,6 +38,7 @@ for (const path of PAGES) {
 
     await page.keyboard.press("End");
     await expect(page.locator(BUTTON), "shown once the page has been scrolled well down").toBeVisible();
+    await settled(page);
     expect(await scrollY(page)).toBeGreaterThan(844 * 1.5);
 
     await page.keyboard.press("Shift+Tab");
@@ -49,6 +61,7 @@ test("reduced motion: the return to the top is immediate", async ({ page }) => {
   await page.goto("/pricing");
   await page.keyboard.press("End");
   await expect(page.locator(BUTTON)).toBeVisible();
+  await settled(page);
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Enter");
   // One animation frame is enough for a jump; a smooth scroll over this distance would still be far from the top.
@@ -59,6 +72,7 @@ test("reduced motion: the return to the top is immediate", async ({ page }) => {
 test("a tap on it works on touch as well", async ({ page }) => {
   await page.goto("/pricing");
   await page.keyboard.press("End");
+  await settled(page);
   await page.locator(BUTTON).tap();
   await expect.poll(() => scrollY(page), { timeout: 10_000 }).toBe(0);
 });
