@@ -647,9 +647,10 @@ function WeeklyGrid({
                 style={{ height: GRID_HEIGHT }}
                 className={
                   "relative border-l border-neutral-200 text-left transition-colors dark:border-neutral-800 " +
-                  (isEditing ? "bg-neutral-100 dark:bg-neutral-900 " + NAV_ROW_FOCUS : NAV_ROW_FEEDBACK)
+                  (isEditing ? "bg-neutral-200 dark:bg-neutral-800 " + NAV_ROW_FOCUS : NAV_ROW_FEEDBACK)
                 }
                 aria-label={`Edit ${DAY_NAMES_LONG[dow]}`}
+                aria-current={isEditing ? "true" : undefined}
               >
                 {Array.from(
                   {

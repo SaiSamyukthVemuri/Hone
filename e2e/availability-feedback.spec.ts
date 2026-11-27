@@ -74,7 +74,22 @@ async function check(page: Page, floor: number) {
   // The day being edited keeps its own fill, but must still show the keyboard ring.
   await page.getByRole("button", { name: "Edit Monday" }).click();
   await expect(page.getByLabel("Monday opens")).toBeVisible({ timeout: T });
-  await focusRing(page, page.getByRole("button", { name: "Edit Monday" }), "the day being edited");
+  const monday = page.getByRole("button", { name: "Edit Monday" });
+  const tuesday = page.getByRole("button", { name: "Edit Tuesday" });
+  await focusRing(page, monday, "the day being edited");
+  // The day being edited is told apart by more than colour (aria-current), and its fill differs from both a resting and a hovered column.
+  await expect(monday, "the edited day is marked aria-current").toHaveAttribute("aria-current", "true");
+  await expect(tuesday, "another day is not").not.toHaveAttribute("aria-current", /.*/);
+  await page.mouse.move(1, 1);
+  await page.waitForTimeout(SETTLE);
+  const editedFill = await bg(monday);
+  const restFill = await bg(tuesday);
+  await tuesday.hover();
+  await page.waitForTimeout(SETTLE);
+  const hoverFill = await bg(tuesday);
+  await page.mouse.move(1, 1);
+  expect(editedFill, "the edited day's fill differs from a resting day").not.toBe(restFill);
+  expect(editedFill, "the edited day's fill differs from a hovered day").not.toBe(hoverFill);
 
   const editor: Array<[string, Locator, (l: Locator) => Promise<string>, boolean]> = [
     ["Save", page.getByRole("button", { name: /^Save$/ }), bg, true],
