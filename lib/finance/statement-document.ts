@@ -369,7 +369,9 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
     } else {
       state = paid > 0 ? "paid" : "adjusted";
     }
-  } else if (attestedOwes) {
+  } else if (attestedOwes || has("bill_note")) {
+    // A split-payments bill with NOTHING received (no payment recorded, or only failed or cancelled attempts, which emit no money line) is still the owner's recorded
+    // amount owed: $100 billed and nothing received is $100 due, not "no payment record".
     state = "confirmed_unpaid";
     owed = quoteRecorded && feeCents !== null && feeCents > 0 ? feeCents : null;
   } else if (feeCents === 0) {

@@ -123,6 +123,21 @@ describe("the client document judges a visit against its bill", () => {
     expect(v.paidCents).toBe(22500);
     expect(v.refundedCents).toBe(4000);
   });
+  it("a $100 bill with NOTHING received shows $100 due, not 'no payment record'", async () => {
+    const v = await doc({ visit_bills: [{ appointment_id: A, total_cents: 10000, currency: "cad" }], sessions: SESSIONS });
+    expect(v.state).toBe("confirmed_unpaid");
+    expect(v.owedCents).toBe(10000);
+    expect(v.reasons).toEqual([]);
+  });
+  it("a $100 bill whose only card attempts failed or were cancelled shows $100 due", async () => {
+    const v = await doc({
+      visit_bills: [{ appointment_id: A, total_cents: 10000, currency: "cad" }], sessions: SESSIONS,
+      payment_charge_attempts: [{ ...card(10000), status: "failed" }, { ...card(10000), status: "canceled" }],
+    });
+    expect(v.state).toBe("confirmed_unpaid");
+    expect(v.owedCents).toBe(10000);
+    expect(v.paidCents).toBe(0);
+  });
   it("the unconfirmed transfer leaves its amount owed against the bill", async () => {
     const v = await doc(LEDGER);
     expect(v.state).toBe("confirmed_unpaid");

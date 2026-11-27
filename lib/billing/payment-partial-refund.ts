@@ -44,13 +44,6 @@ export type PartialCardRefundOutcome =
  */
 export type PendingRefundRow = { id: string; studioId: string; attemptId: string; amountCents: number; status: string; source: string; requestedAt: string };
 
-/** Stripe forgets an idempotency key after 24 hours, so a retry after about 23 hours could create a SECOND refund. Past this age the existing refund is looked up first. */
-export const IDEMPOTENCY_SAFE_MS = 23 * 60 * 60 * 1000;
-export function retryNeedsLookup(requestedAt: string, now: Date = new Date()): boolean {
-  const t = Date.parse(requestedAt);
-  return !Number.isFinite(t) || now.getTime() - t > IDEMPOTENCY_SAFE_MS; // an unreadable age is treated as old
-}
-
 /** The refund Stripe already made for this row, found by the metadata the call always carries; null when there is none. Throws when Stripe cannot be asked. */
 export async function findExistingStripeRefund(
   stripe: ReturnType<typeof getSessionPaymentStripe>,
@@ -95,14 +88,12 @@ export async function refundCardPaymentPartial(args: { row: PendingRefundRow; fe
 
   let refund: Stripe.Refund;
   try {
-    let existing: Stripe.Refund | null = null;
-    if (retryNeedsLookup(row.requestedAt)) {
-      // The idempotency key may have expired, so asking Stripe to create again could refund twice. Look for the refund this row already made first;
-      // if Stripe cannot be asked, that is an unknown outcome (the catch below), never a blind create.
-      existing = await findExistingStripeRefund(getSessionPaymentStripe(), {
-        chargeId: attempt.stripe_charge_id as string, accountId: (attempt.stripe_account_id as string | null) ?? null, refundRowId: row.id,
-      });
-    }
+    // ALWAYS look for the refund this row already made before creating. Re-calling create with the same idempotency key replays Stripe's SAVED first
+    // response (still "pending") for 24 hours, so a recheck through create could never see the refund settle. The list read returns the live object.
+    // The key stays on the create below as the guard against a second refund when nothing is found (a first call, or a list that has not caught up).
+    const existing = await findExistingStripeRefund(getSessionPaymentStripe(), {
+      chargeId: attempt.stripe_charge_id as string, accountId: (attempt.stripe_account_id as string | null) ?? null, refundRowId: row.id,
+    });
     refund = existing ?? await createStripeRefund(getSessionPaymentStripe(), {
       chargeId: attempt.stripe_charge_id as string,
       amountCents: row.amountCents,
