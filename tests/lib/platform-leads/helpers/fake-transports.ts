@@ -24,6 +24,7 @@ type Alert = {
   frozen: unknown;
   frozenSha: string | null;
   messageId: string | null;
+  lastErrorCode: string | null;
 };
 
 function held(signal: AbortSignal | null | undefined): Promise<never> {
@@ -83,6 +84,7 @@ export function fakeLeadAlertDb() {
       settles.push(args);
       if (!a || !current) return "stale_claim";
       a.token = null;
+      a.lastErrorCode = args.p_outcome === "accepted" ? null : (args.p_error_code as string | null);
       if (args.p_outcome === "accepted") {
         a.status = "accepted";
         a.messageId = String(args.p_provider_message_id);
@@ -133,7 +135,7 @@ export function fakeLeadAlertDb() {
     add(id: string) {
       alerts.push({
         id, key: `lead-alert/${id}/1`, attempts: 0, token: null, leaseUntil: 0, nextAttemptAt: Date.now(),
-        status: "pending", frozen: null, frozenSha: null, messageId: null,
+        status: "pending", frozen: null, frozenSha: null, messageId: null, lastErrorCode: null,
       });
     },
     alert(id: string) {

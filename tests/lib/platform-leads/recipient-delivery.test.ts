@@ -177,3 +177,58 @@ describe("an invalid list entry is refused at config: nothing is sent", () => {
     expect(db.alert(A).status).toBe("pending");
   });
 });
+
+// Codex P2 on #1818 (1): the sends run AT ONCE inside the sweep's deadline, not one after another.
+describe("recipients are sent concurrently inside the deadline", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("three recipients at 3 s each inside a 6.5 s window: all three are attempted and accepted (sequentially the third would be cut off)", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-13T12:00:00Z") });
+    const db = fakeLeadAlertDb();
+    db.add(A);
+    const started: string[] = [];
+    const delivered = new Map<string, string>();
+    const slow: IdempotentEmailTransport = {
+      emails: {
+        send: async (payload, options) => {
+          const to = String((payload as { to: unknown }).to);
+          started.push(to);
+          await new Promise<void>((r) => setTimeout(r, 3_000));
+          if (options?.idempotencyKey) delivered.set(options.idempotencyKey, to);
+          return { data: { id: `msg-${options?.idempotencyKey}` }, error: null } as never;
+        },
+      },
+    };
+    const run = sweepPlatformLeadAlerts({ admin: db.client, transport: slow, env: ENV, appOrigin: () => "https://hone.example", budgetMs: 6_500 });
+    await vi.advanceTimersByTimeAsync(7_000);
+    const summary = await run;
+    expect(started.sort()).toEqual([R1, R2, R3].sort());
+    expect(delivered.size).toBe(3);
+    expect(summary.accepted).toBe(1);
+    expect(db.alert(A).status).toBe("accepted");
+  });
+});
+
+// Codex P2 on #1818 (2): after an attempt in which some recipient may have been accepted, a changed list is NOT known-unsent.
+describe("A accepted, B retryable, then the recipient list changes", () => {
+  it("the alert fails as 'may have been sent' (provider_exception), never recipient_changed, so a requeue cannot re-mail A under a new key", async () => {
+    const { leadAlertMayHaveBeenSent } = await import("@/lib/platform-leads/alert-status");
+    const db = fakeLeadAlertDb();
+    db.add(A);
+    const p = fakeProvider((to, attempt) => (to === R2 && attempt === 1 ? "unavailable" : "accept"));
+    const two = { LEAD_ALERT_RECIPIENTS: `${R1},${R2}` };
+    expect(await deliverPlatformLeadAlert(A, deps(db, p, two))).toEqual({ result: "retry_scheduled" });
+    expect([...p.delivered.values()]).toEqual([R1]); // A was mailed
+
+    db.alert(A).nextAttemptAt = 0;
+    const changed = { LEAD_ALERT_RECIPIENTS: `${R1},${R3}` };
+    await sweepPlatformLeadAlerts(deps(db, p, changed));
+    const row = db.alert(A);
+    expect(row.status).toBe("failed");
+    expect(row.lastErrorCode).toBe("provider_exception");
+    expect(row.lastErrorCode).not.toBe("recipient_changed");
+    expect(leadAlertMayHaveBeenSent(row.lastErrorCode, row.attempts)).toBe(true);
+    // nothing further was sent to anyone
+    expect([...p.delivered.values()]).toEqual([R1]);
+  });
+});

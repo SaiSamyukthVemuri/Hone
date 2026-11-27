@@ -1053,7 +1053,7 @@ describe("the payload is frozen per generation", () => {
     expect(await alertRow(r.alert_id!)).toMatchObject({ status: "accepted", frozen_message: null, frozen_recipient_sha256: null });
   });
 
-  it("a recipient changed mid-generation is not sent: recipient_changed, final, and the operator's Retry renders afresh", async () => {
+  it("a recipient changed after an earlier attempt is not sent: it fails as MAY-HAVE-BEEN-SENT (provider_exception), final, and the operator's Retry renders afresh", async () => {
     const r = await recordDemo();
     const sent: Sent[] = [];
     await delivery.deliverPlatformLeadAlert(r.alert_id!, { ...deps(OPS, sent), transport: throwingOnce(sent) });
@@ -1064,11 +1064,13 @@ describe("the payload is frozen per generation", () => {
     expect(sent).toHaveLength(1);
     expect(await alertRow(r.alert_id!)).toMatchObject({
       status: "failed",
-      last_error_code: "recipient_changed",
+      last_error_code: "provider_exception",
       frozen_message: null,
       frozen_recipient_sha256: null,
     });
-    expect((await adminQuery("select public.requeue_platform_lead_alert($1) r", [r.alert_id])).rows[0].r).toBe("requeued");
+    // The earlier attempt may have mailed someone, so a plain requeue is REFUSED; only the operator's explicit confirmation re-sends.
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1) r", [r.alert_id])).rows[0].r).toBe("possible_duplicate");
+    expect((await adminQuery("select public.requeue_platform_lead_alert($1, true) r", [r.alert_id])).rows[0].r).toBe("requeued");
     const c = await claim(r.alert_id);
     expect(c).toMatchObject({ idempotency_key: `lead-alert/${r.alert_id}/2`, frozen_message: null });
   });

@@ -477,7 +477,7 @@ describe("the payload is frozen per generation", () => {
     expect(sent.map((x) => x.payload)).toEqual([{ ...held, to: OPS }]);
   });
 
-  it("a changed recipient is not sent: the alert fails as recipient_changed, for the operator's Retry", async () => {
+  it("a changed recipient is not sent, and after an earlier attempt the alert fails as MAY-HAVE-BEEN-SENT (provider_exception), not known-unsent", async () => {
     const calls: Call[] = [];
     const sent: Sent[] = [];
     const out = await deliverPlatformLeadAlert(ALERT, {
@@ -495,7 +495,13 @@ describe("the payload is frozen per generation", () => {
     });
     expect(out).toEqual({ result: "failed" });
     expect(sent).toEqual([]);
-    expect(calls.find((c) => c.fn === "settle_platform_lead_alert")?.args).toMatchObject({ p_outcome: "fail", p_error_code: "recipient_changed" });
+    expect(calls.find((c) => c.fn === "settle_platform_lead_alert")?.args).toMatchObject({ p_outcome: "fail", p_error_code: "provider_exception" });
+  });
+
+  it("with no earlier attempt that could have sent anything, a changed recipient is known-unsent: recipient_changed", async () => {
+    const { recipientsChangedSettlement } = await import("@/lib/platform-leads/alert-delivery");
+    expect(recipientsChangedSettlement(1, ALERT)).toEqual({ outcome: "fail", errorCode: "recipient_changed" });
+    expect(recipientsChangedSettlement(2, ALERT)).toEqual({ outcome: "fail", errorCode: "provider_exception" });
   });
 
   it("a failed or stale freeze sends nothing", async () => {

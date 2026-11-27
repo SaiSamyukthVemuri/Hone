@@ -406,7 +406,7 @@ async function claimAndSend(
   if (row.frozen_message !== null && row.frozen_message !== undefined) {
     // A later attempt of this generation: the frozen bytes, or nothing.
     if (!isFrozenMessage(row.frozen_message) || row.frozen_recipient_sha256 !== digest) {
-      return settle(admin, row, { outcome: "fail", errorCode: "recipient_changed" }, db);
+      return settle(admin, row, recipientsChangedSettlement(row.attempt, row.alert_id), db);
     }
     message = row.frozen_message;
   } else {
@@ -451,7 +451,7 @@ async function claimAndSend(
     if (answer.result !== "frozen" && answer.result !== "existing") return "freeze_error";
     // First writer wins: send what the database holds, never our own render.
     if (!isFrozenMessage(answer.message) || answer.recipient_sha256 !== digest) {
-      return settle(admin, row, { outcome: "fail", errorCode: "recipient_changed" }, db);
+      return settle(admin, row, recipientsChangedSettlement(answer.result === "existing" ? Math.max(2, row.attempt) : row.attempt, row.alert_id), db);
     }
     message = answer.message;
   }
@@ -467,21 +467,25 @@ async function claimAndSend(
   // answered is the ambiguous outcome a timeout already is: retried later under the SAME key and frozen message.
   const send = bounds?.send ?? null;
   const transport = send ? cancellableTransport(ready.transport, send) : ready.transport;
-  const settlements: Settlement[] = [];
-  for (const recipient of ready.recipients) {
-    let outcome: WaitlistSendOutcome;
-    if (send?.aborted) {
-      outcome = { status: "ambiguous", reason: "timeout" };
-    } else {
-      outcome = await sendOnceWithIdempotencyKey(
-        transport,
-        { from: message.from, to: recipient, subject: message.subject, html: message.html, text: message.text },
-        recipientKey(row.idempotency_key, recipient),
-      );
-      if (send?.aborted && outcome.status !== "accepted") outcome = { status: "ambiguous", reason: "timeout" };
-    }
-    settlements.push(settlementFor(outcome));
-  }
+  // CONCURRENT, not one after another (Codex P2 on #1818): the reminders trigger leaves only a few seconds, so a slow provider would let
+  // the first recipients use the whole window, and every retry starts in the same order, so the last recipient could starve until all
+  // attempts were spent. Every recipient is sent at once, inside the same deadline, each under its OWN key, so a replay stays idempotent.
+  const settlements: Settlement[] = await Promise.all(
+    ready.recipients.map(async (recipient): Promise<Settlement> => {
+      let outcome: WaitlistSendOutcome;
+      if (send?.aborted) {
+        outcome = { status: "ambiguous", reason: "timeout" };
+      } else {
+        outcome = await sendOnceWithIdempotencyKey(
+          transport,
+          { from: message.from, to: recipient, subject: message.subject, html: message.html, text: message.text },
+          recipientKey(row.idempotency_key, recipient),
+        );
+        if (send?.aborted && outcome.status !== "accepted") outcome = { status: "ambiguous", reason: "timeout" };
+      }
+      return settlementFor(outcome);
+    }),
+  );
   const decided = combineSettlements(settlements);
   if (decided.failedCount > 0 && decided.settlement.outcome === "accepted") {
     // Some were mailed and the rest can never be: the alert is accepted (a retry would only repeat what was already sent), and the
@@ -495,6 +499,21 @@ async function claimAndSend(
     }, db ? { signal: db } : undefined);
   }
   return settle(admin, row, decided.settlement, db);
+}
+
+/**
+ * The recipient list changed after an earlier attempt froze the message. If NO earlier attempt could have sent anything (this is the first),
+ * the alert is known-unsent: recipient_changed, which 0213's requeue may safely re-send. If an earlier attempt ran, some recipient may
+ * ALREADY have been mailed under the old key (A accepted, B retryable, then the list changed): recipient_changed would read as known-unsent
+ * and a requeue would mail A again under a new key. So that case is recorded as the ambiguous provider_exception ("may have been sent"),
+ * which leadAlertMayHaveBeenSent treats as possibly sent. Decided here, with no change to 0213.
+ */
+export function recipientsChangedSettlement(attempt: number, alertId: string): Settlement {
+  if (attempt > 1) {
+    log("error", { event: "platform_lead_alert_recipients_changed_after_attempt", alert_id: alertId, attempt });
+    return { outcome: "fail", errorCode: "provider_exception" };
+  }
+  return { outcome: "fail", errorCode: "recipient_changed" };
 }
 
 /**
