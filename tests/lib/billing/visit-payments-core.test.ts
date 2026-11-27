@@ -105,10 +105,10 @@ describe("the card phase never offers a second charge while the outcome is unkno
     expect(cardReduce(s, { type: "submit" })).toEqual({ phase: "preparing" });
   });
   it("only a definite failure re-enables the charge", () => {
-    let s: CardPhase = cardReduce(cardReduce(cardReduce({ phase: "idle" }, { type: "submit" }), { type: "prepared", attemptId: "a1" }), { type: "result", outcome: "failed", message: "Declined" });
+    let s: CardPhase = cardReduce(cardReduce(cardReduce({ phase: "idle" }, { type: "submit" }), { type: "prepared", attemptId: "a1" }), { type: "result", outcome: "failed", text: "Declined" });
     expect(s).toMatchObject({ phase: "failed", message: "Declined" });
     expect(canStartCharge(s)).toBe(true);
-    s = cardReduce(cardReduce({ phase: "idle" }, { type: "submit" }), { type: "prepare_refused", message: "reserved" });
+    s = cardReduce(cardReduce({ phase: "idle" }, { type: "submit" }), { type: "prepare_refused", text: "reserved" });
     expect(canStartCharge(s)).toBe(true);
   });
   it("events out of order change nothing", () => {

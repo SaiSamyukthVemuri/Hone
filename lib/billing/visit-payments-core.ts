@@ -169,21 +169,21 @@ export type CardPhase =
 export type CardEvent =
   | { type: "submit" }
   | { type: "prepared"; attemptId: string }
-  | { type: "prepare_refused"; message: string }
-  | { type: "result"; outcome: "succeeded" | "failed" | "unknown"; message?: string }
+  | { type: "prepare_refused"; text: string }
+  | { type: "result"; outcome: "succeeded" | "failed" | "unknown"; text?: string }
   | { type: "lost_response" }
-  | { type: "status"; outcome: "succeeded" | "failed" | "unknown"; message?: string };
+  | { type: "status"; outcome: "succeeded" | "failed" | "unknown"; text?: string };
 
 export function cardReduce(s: CardPhase, e: CardEvent): CardPhase {
   switch (e.type) {
     case "submit": return s.phase === "idle" || s.phase === "failed" || s.phase === "succeeded" ? { phase: "preparing" } : s;   // never from unknown or charging; a finished payment does not block the next one
     case "prepared": return s.phase === "preparing" ? { phase: "charging", attemptId: e.attemptId } : s;
-    case "prepare_refused": return s.phase === "preparing" ? { phase: "failed", attemptId: null, message: e.message } : s;
+    case "prepare_refused": return s.phase === "preparing" ? { phase: "failed", attemptId: null, message: e.text } : s;
     case "lost_response": return s.phase === "charging" ? { phase: "unknown", attemptId: s.attemptId } : s;
     case "result": case "status": {
       if (s.phase !== "charging" && s.phase !== "unknown") return s;
       if (e.outcome === "succeeded") return { phase: "succeeded", attemptId: s.attemptId };
-      if (e.outcome === "failed") return { phase: "failed", attemptId: s.attemptId, message: e.message ?? "The card was not charged." };
+      if (e.outcome === "failed") return { phase: "failed", attemptId: s.attemptId, message: e.text ?? "The card was not charged." };
       return { phase: "unknown", attemptId: s.attemptId };
     }
   }

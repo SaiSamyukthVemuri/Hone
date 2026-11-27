@@ -76,7 +76,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         if (mine !== pollRef.current) return;
         if (out.state) onChanged(out.state);
         if (out.outcome === "succeeded") { dispatch({ type: "result", outcome: "succeeded" }); setNote({ tone: "ok", message: "Card payment received." }); setSubmission(crypto.randomUUID()); setAmount(""); return; }
-        if (out.outcome === "failed") { dispatch({ type: "result", outcome: "failed", message: out.message }); setNote({ tone: "blocked", message: out.message }); setSubmission(crypto.randomUUID()); return; }
+        if (out.outcome === "failed") { dispatch({ type: "result", outcome: "failed", text: out.message }); setNote({ tone: "blocked", message: out.message }); setSubmission(crypto.randomUUID()); return; }
         dispatch({ type: "result", outcome: "unknown" });
       } catch {
         // The connection dropped: we do NOT know whether Stripe took the charge. Never offer a second charge; ask again.
@@ -96,7 +96,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
     try {
       const prep = await prepareSplitCardPaymentAction(form({ amount_dollars: amount, submission_id: submission, expected_currency: currency }));
       if (!prep.ok) {
-        dispatch({ type: "prepare_refused", message: prep.note.message });
+        dispatch({ type: "prepare_refused", text: prep.note.message });
         setNote(prep.note);
         if (prep.state) onChanged(prep.state);
         return;
@@ -104,7 +104,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
       dispatch({ type: "prepared", attemptId: prep.attemptId });
       await runCard(prep.attemptId);
     } catch {
-      dispatch({ type: "prepare_refused", message: "That did not go through and nothing was charged. Check your connection and try again." });
+      dispatch({ type: "prepare_refused", text: "That did not go through and nothing was charged. Check your connection and try again." });
       setNote({ tone: "blocked", message: "That did not go through and nothing was charged. Check your connection and try again." });
     } finally {
       setBusy(false);

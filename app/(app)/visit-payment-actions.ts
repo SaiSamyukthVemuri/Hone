@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { inferStripeLivemode } from "@/lib/stripe/server";
@@ -127,11 +126,6 @@ export async function refundExternalPaymentAction(formData: FormData): Promise<S
     p_amount_cents: cents, p_kind: kind, p_reason: reason, p_submission_id: submissionId,
   });
   return finish(who.studioId, appointmentId, row.result, row.id);
-}
-
-/** A fresh submission id for a form, chosen on the server for forms rendered on the server. Client forms make their own once per render. */
-export async function newSubmissionIdAction(): Promise<string> {
-  return randomUUID();
 }
 
 // ---------------------------------------------------------------------------

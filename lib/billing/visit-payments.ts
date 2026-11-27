@@ -85,15 +85,20 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
 
 export type CommandRow = { result: string; id: string | null; state: string | null };
 
+export type CommandName = "ensure_visit_bill" | "record_visit_external_payment" | "confirm_visit_external_payment" | "void_visit_external_payment" | "request_payment_refund";
+
 /** One staff command as the signed-in person. A transport or permission failure is `result: "unavailable"`; the database's own refusals come back as their code. */
-export async function callCommand(fn: string, args: Record<string, unknown>): Promise<CommandRow> {
+export async function callCommand(fn: CommandName, args: Record<string, unknown>): Promise<CommandRow> {
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase.rpc(fn, args);
-    if (error) {
-      // The card wall and the 0394 commands refuse with closed codes; anything else is unavailable and is not guessed at.
-      return { result: "unavailable", id: null, state: null };
-    }
+    // Every command is named here as a literal so the permission census sees each one.
+    const { data, error } =
+      fn === "ensure_visit_bill" ? await supabase.rpc("ensure_visit_bill", args)
+      : fn === "record_visit_external_payment" ? await supabase.rpc("record_visit_external_payment", args)
+      : fn === "confirm_visit_external_payment" ? await supabase.rpc("confirm_visit_external_payment", args)
+      : fn === "void_visit_external_payment" ? await supabase.rpc("void_visit_external_payment", args)
+      : await supabase.rpc("request_payment_refund", args);
+    if (error) return { result: "unavailable", id: null, state: null };
     const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
     if (!row || typeof row.result !== "string") return { result: "unavailable", id: null, state: null };
     const id = [row.payment_id, row.refund_id, row.bill_id].find((v) => typeof v === "string") as string | undefined;
