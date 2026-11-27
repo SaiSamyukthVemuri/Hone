@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type MouseEvent } from "react";
 
-import { cx } from "@/components/ui/control-base";
+import { ACK_PRESS, cx } from "@/components/ui/control-base";
 import { spinnerClasses } from "@/components/ui/spinner";
 import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-context";
 
@@ -77,7 +77,7 @@ export function WaitlistNavLink({
   }
 
   return (
-    <a {...anchorRest} onClick={handleClick} href={href} data-waitlist-nav="true" data-pending="false" aria-busy={going || undefined} className={cx("relative", className)}>
+    <a {...anchorRest} onClick={handleClick} href={href} data-waitlist-nav="true" data-pending="false" aria-busy={going || undefined} className={cx("relative", ACK_PRESS, className)}>
       {children}
       {going ? (
         <span data-link-pending="true" aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[inherit] bg-white/60 dark:bg-neutral-950/60">

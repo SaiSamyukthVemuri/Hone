@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { PendingGetForm, PendingSubmit } from "@/components/pending-get-form";
+import { ACK_PRESS } from "@/components/ui/control-base";
 import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 import { useInviteOutcomePending } from "@/components/waitlist/invite-pending-context";
 import { WAITLIST_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
@@ -82,7 +83,7 @@ export function WorkspaceQueue({ initialView, waiting, invited, responses, respo
           <input name="q" type="search" required minLength={searchMin} maxLength={searchMax} disabled={pending}
             placeholder="Search waitlist by name" className="h-11 w-full rounded-lg border border-line bg-surface px-3 text-sm" />
         </label>
-        <PendingSubmit disabled={pending} pendingLabel="Searching…" className="min-h-11 rounded-lg border border-line px-4 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:hover:bg-neutral-900">Search</PendingSubmit>
+        <PendingSubmit disabled={pending} pendingLabel="Searching…" className={"min-h-11 rounded-lg border border-line px-4 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:hover:bg-neutral-900 " + ACK_PRESS}>Search</PendingSubmit>
       </PendingGetForm>
       {children}
     </div>
