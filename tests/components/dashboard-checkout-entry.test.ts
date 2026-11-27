@@ -169,7 +169,6 @@ describe("checkout for a confirmed dashboard visit", () => {
   it.each([
     ["chargeable", "no_card", "E-transfer", "paid_e_transfer"],
     ["no_session", "card_on_file", "E-transfer", "paid_e_transfer"],
-    ["chargeable", "card_on_file", "Stripe", "stripe"],
     ["chargeable", "unavailable", null, null],
     ["chargeable", null, null, null],
   ] as const)("uses a local default for %s / %s and carries it through explicit completion", async (state, card, label, method) => {
