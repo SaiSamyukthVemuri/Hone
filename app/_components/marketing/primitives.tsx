@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { MK_FONT_DISPLAY } from "./tokens";
 import { MarketingAnalytics } from "./MarketingAnalytics";
+import { BackToTop, BACK_TO_TOP_TARGET_ID } from "./BackToTop";
 import { marketingSans } from "./fonts";
 
 // Marketing design-system primitives (server components). These encapsulate the
@@ -30,8 +31,13 @@ export function MarketingSurface({
   className?: string;
 }) {
   return (
-    <div className={`marketing-surface min-h-screen ${marketingSans.variable} ${className}`}>
+    <div
+      id={BACK_TO_TOP_TARGET_ID}
+      tabIndex={-1}
+      className={`marketing-surface min-h-screen outline-none ${marketingSans.variable} ${className}`}
+    >
       {children}
+      <BackToTop />
       <MarketingAnalytics />
     </div>
   );

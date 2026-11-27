@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PageRevision } from "@/app/_components/marketing/PageRevision";
 import Link from "next/link";
 import { SafeAnalytics } from "../_components/SafeAnalytics";
 import { SiteHeader } from "../_components/marketing/SiteHeader";
@@ -88,6 +89,14 @@ const FAQ: { q: string; a: string }[] = [
   {
     q: "How do payments work?",
     a: "Hone connects to your own Stripe account, so payments and payouts go directly to you and card details never touch Hone's servers. Payments are enabled during guided onboarding.",
+  },
+  {
+    q: "Can my clients book online?",
+    a: "Yes. Each studio has its own public booking link on hone.care. A client chooses from the services and times the studio has published, and the studio's own availability and rules decide what is offered.",
+  },
+  {
+    q: "Can clients change or cancel their own appointment?",
+    a: "Where the studio's policy allows it, yes. A client's appointment emails carry private links to reschedule or cancel it.",
   },
   {
     q: "How does the Studio plan work?",
@@ -285,6 +294,7 @@ export default function PricingPage() {
             </div>
           </Container>
         </Section>
+        <PageRevision path="/pricing" />
       </main>
       <SiteFooter />
       <SafeAnalytics />

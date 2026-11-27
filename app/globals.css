@@ -6,8 +6,18 @@
  * etc. would still fire on a phone in night mode even after the
  * @media block below was disabled. Switch this to `.dark` and apply
  * `.dark` on <html> when a real System/Light/Dark toggle ships.
+ *
+ * PRINT IS ALWAYS LIGHT. Paper is white and "background graphics" are off by default, so a dark-theme text colour (near-white) would print as
+ * near-white on white. The variant therefore never applies in print media: a printed record, statement or note keeps its light colours whichever
+ * theme the screen is in.
  */
-@custom-variant dark (&:where(.dark, .dark *));
+@custom-variant dark {
+  @media not print {
+    &:where(.dark, .dark *) {
+      @slot;
+    }
+  }
+}
 
 :root {
   --background: #ffffff;

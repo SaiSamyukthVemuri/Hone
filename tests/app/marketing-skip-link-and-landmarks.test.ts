@@ -117,8 +117,10 @@ describe("1 + 2: the skip link exists once, and names the canonical target", () 
     expect(code).toContain("sr-only");
     expect(code).toContain("focus:not-sr-only");
     // Either of these would take it out of the tab order entirely and make it
-    // exactly as useless as not having one.
-    expect(code).not.toMatch(/\bhidden\b/);
+    // exactly as useless as not having one. `print:hidden` is the one allowed
+    // use: it applies only to printed output, never to the on-screen tab order.
+    expect(code).toContain("print:hidden");
+    expect(code.replace(/\bprint:hidden\b/g, "")).not.toMatch(/\bhidden\b/);
     expect(code).not.toContain("display:none");
     expect(code).not.toContain("visibility:hidden");
   });
