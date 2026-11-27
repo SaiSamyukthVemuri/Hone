@@ -254,6 +254,9 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // HON-124 item 11: the booking-link copy control on an iPhone-sized viewport: Copied only after the write, a calm failure message with the
+      // link text selected, and keyboard-only operation. Here because settings/booking/** selects this group.
+      "settings-booking-copy-mobile.spec.ts",
       // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
       "team-invite-receptionist.spec.ts",
       // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
