@@ -321,7 +321,10 @@ Whom to trust — the Codex bot and the human resolvers — is 05B's policy (SPE
   `malformed`.
 - Channel A: every review becomes `{ id, channel: "PR_REVIEW", actor, verdict: state, qualifiesAtHead }`.
   `qualifiesAtHead` is `commitOid === key.headSha` **and** the marker rule.
-- Channel B: a comment whose body **begins** with the clean prefix becomes
+- Channel B: a comment whose body **begins** with the clean prefix, either directly or after exactly one leading
+  receipt header `<!-- codex-review-receipt:v1 -->` and one blank line (REVIEW-RECEIPT-01: Codex has opened every
+  clean verdict with it since 25 Oct 2026; the header is fixed here like the marker, and any other prefix is not
+  channel B), becomes
   `{ id, channel: "CLEAN_COMMENT", actor, verdict: "CLEAN", qualifiesAtHead }`. `qualifiesAtHead` is `edited: false`
   **and** the marker rule. Anyone with write access can edit another account's comment while its author stays the
   same, so an edited body is no longer its author's statement (verifier finding R4-EDIT). Codex does not edit its
