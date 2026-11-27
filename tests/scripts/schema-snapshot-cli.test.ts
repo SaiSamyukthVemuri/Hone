@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -17,7 +17,8 @@ afterEach(() => {
 
 /** A throwaway root holding only the generator, the migrations and the committed snapshot. */
 function copyRoot(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "hone-schema-cli-"));
+  // realpath: the script runs only when argv[1] equals its own resolved path, and macOS tmpdir() is a symlink.
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), "hone-schema-cli-")));
   scratch.push(dir);
   mkdirSync(path.join(dir, "scripts"));
   cpSync(path.join(ROOT, "scripts/schema-snapshot.mjs"), path.join(dir, "scripts/schema-snapshot.mjs"));
