@@ -17,7 +17,6 @@ import { todayInTz } from "@/lib/booking/tz";
 import { loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
 import { AppFooter } from "@/app/_components/AppFooter";
 import { SkipLink } from "@/app/_components/marketing/SkipLink";
-import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { identifyServerUser } from "@/lib/analytics/server";
 import { timed } from "@/lib/observability/perf-timing";
 import { showWaitlistInPrimaryNav } from "@/lib/settings/nav-registry";
@@ -238,10 +237,9 @@ export default async function AppLayout({
       </SignOutFlightProvider>
       <AppMain>{children}</AppMain>
       <AppFooter />
-      {/* PR #142. Analytics mounts here (and at the other safe-tree
-          layouts + marketing leaf pages) instead of the root layout,
-          so token-bearing public routes never inherit it. */}
-      <SafeAnalytics />
+      {/* HON-124 item 6: no analytics script mounts in the signed-in app
+          (Vercel Analytics/Speed Insights used to, with no recorded purpose).
+          Authenticated measurement is server-side (lib/analytics/server.ts). */}
     </div>
   );
 }
