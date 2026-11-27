@@ -50,6 +50,7 @@ test("a visit photo is served only through a signed, private URL; another studio
   await loginAsOwner(page, a);
   await uploadSessionPhoto(page, clientId, previousSessionId);
   const [{ id: imageId }] = await sql<{ id: string }>("select id from public.treatment_images where session_id=$1 and deleted_at is null", [previousSessionId]);
+  await page.waitForLoadState("networkidle"); // the upload's own refresh may still be navigating; let it settle before the next goto
   await page.goto(`/clients/${clientId}/images`);
   await expect(page.getByTestId("capture-stage-badge")).toHaveText("Before", { timeout: T });
   await expect(page.getByRole("button", { name: /Use as ID photo|Remove ID photo/ })).toHaveCount(0);

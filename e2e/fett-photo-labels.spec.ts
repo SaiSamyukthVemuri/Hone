@@ -7,6 +7,8 @@ import {
   sql,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { followDeskMagicLink, prepareDeskPage } from "./helpers/desk";
+import { isWebKit } from "./helpers/webkit-localhost";
 import { listMessageIds, waitForMagicLink } from "./helpers/mail";
 import { E2E_APP_ORIGIN, E2E_SUPABASE_URL } from "./helpers/local-env";
 
@@ -80,13 +82,14 @@ async function focusedButton(page: Page): Promise<string | null> {
 const AWAY_FROM_APP = /\/(front-desk|no-access)/;
 
 async function loginAsReceptionist(page: Page, email: string): Promise<void> {
+  await prepareDeskPage(page); // WebKit only: strip the https upgrade from app documents (e2e/helpers/webkit-localhost.ts)
   await page.goto("/login");
   await page.getByLabel("I am using my invited email address").check();
   await page.locator("#login-email").fill(email);
   const seen = await listMessageIds(email);
   await page.getByRole("button", { name: /send magic link/i }).click();
   const link = await waitForMagicLink(email, E2E_APP_ORIGIN, { excludeIds: seen });
-  await page.goto(link);
+  await followDeskMagicLink(page, link);
   // A receptionist has no practitioners row: the middleware sends every app
   // route, /dashboard included, away from the practitioner surface. With the
   // front-desk routing that is /front-desk; on a build without it (the #1035
@@ -261,9 +264,16 @@ test("a practitioner labels a visit photo at upload, relabels and clears it by k
   try {
     const p = await desk.newPage();
     await loginAsReceptionist(p, deskEmail);
-    await p.goto(`/clients/${clientId}/images`);
-    await expect(p).toHaveURL(/\/(front-desk|no-access)$/);
-    await expect(p.getByTestId("capture-stage")).toHaveCount(0);
+    if (isWebKit(p)) {
+      // A navigated redirect chain is not intercepted by the WebKit route (only its first URL is); read the redirect instead of following it.
+      const gate = await p.context().request.get(`/clients/${clientId}/images`, { maxRedirects: 0 });
+      expect(gate.status()).toBe(307);
+      expect(AWAY_FROM_APP.test(gate.headers()["location"] ?? "")).toBe(true);
+    } else {
+      await p.goto(`/clients/${clientId}/images`);
+      await expect(p).toHaveURL(/\/(front-desk|no-access)$/);
+      await expect(p.getByTestId("capture-stage")).toHaveCount(0);
+    }
     const r = await p.request.get(`/api/clients/${clientId}/images/${imageId}/signed-url?variant=thumb`, { maxRedirects: 0 });
     expect(r.status()).toBe(307);
     const location = r.headers()["location"] ?? "";
