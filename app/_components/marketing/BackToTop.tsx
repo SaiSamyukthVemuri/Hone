@@ -13,11 +13,24 @@ import { useEffect, useState } from "react";
 //
 // It is mounted once, by MarketingSurface, which wraps every marketing and policy page. It lives in the bottom-right corner, clear of the footer text on a
 // phone by the safe-area inset.
+// A MODAL DIALOG HIDES IT. The mobile menu is a full-screen modal dialog inside the sticky header's own stacking context, so a z-index here could not reliably
+// outrank it (a later sibling context paints above). Instead the control is not rendered at all while any modal dialog is open (aria-modal, not inert): it
+// cannot paint over the dialog, cannot be clicked, and cannot take focus out of it.
+const MODAL_OPEN = '[role="dialog"][aria-modal="true"]:not([inert])';
 export const BACK_TO_TOP_TARGET_ID = "mk-top";
 const SHOW_AFTER_SCREENS = 1.5;
 
 export function BackToTop() {
   const [visible, setVisible] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  useEffect(() => {
+    const check = () => setModalOpen(document.querySelector(MODAL_OPEN) !== null);
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["inert", "aria-modal"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const update = () => setVisible(window.scrollY > window.innerHeight * SHOW_AFTER_SCREENS);
@@ -30,7 +43,7 @@ export function BackToTop() {
     };
   }, []);
 
-  if (!visible) return null;
+  if (!visible || modalOpen) return null;
 
   return (
     <button

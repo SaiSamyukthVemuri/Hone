@@ -15,11 +15,15 @@ describe("Back to top", () => {
 
   it("is a real button, hidden at the top, moves focus before it scrolls, and honours reduced motion", () => {
     expect(BTT).toMatch(/<button\s+type="button"/);
-    expect(BTT).toMatch(/if \(!visible\) return null/);
+    expect(BTT).toMatch(/if \(!visible \|\| modalOpen\) return null/);
     expect(BTT.indexOf(".focus({ preventScroll: true })")).toBeGreaterThan(-1);
     expect(BTT.indexOf(".focus({ preventScroll: true })")).toBeLessThan(BTT.indexOf("window.scrollTo"));
     expect(BTT).toMatch(/prefers-reduced-motion: reduce/);
     expect(BTT).toMatch(/behavior: reduce \? "auto" : "smooth"/);
+  });
+
+  it("is not rendered while a modal dialog is open", () => {
+    expect(BTT).toMatch(/aria-modal="true"\]:not\(\[inert\]\)/);
   });
 
   it("is a touch-sized target that never prints", () => {

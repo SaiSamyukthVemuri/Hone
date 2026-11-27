@@ -56,6 +56,24 @@ for (const path of PAGES) {
   });
 }
 
+test("opening the phone menu hides it: it is neither visible nor clickable and focus stays in the dialog", async ({ page }) => {
+  await page.goto("/pricing");
+  await page.keyboard.press("End");
+  await expect(page.locator(BUTTON)).toBeVisible();
+  await settled(page);
+  await page.getByRole("button", { name: "Menu" }).click();
+  const dialog = page.getByRole("dialog", { name: "Site navigation" });
+  await expect(dialog).toBeVisible();
+  await expect(page.locator(BUTTON), "gone while the menu is open").toHaveCount(0);
+  // Nothing at the button's corner position can be the button, and focus is still inside the dialog.
+  const hit = await page.evaluate(() => document.elementFromPoint(window.innerWidth - 40, window.innerHeight - 30)?.closest("[data-back-to-top]") !== null);
+  expect(hit, "the button is not under that point").toBe(false);
+  expect(await page.evaluate(() => !!document.activeElement?.closest("#site-navigation-dialog")), "focus is inside the dialog").toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page.locator(BUTTON), "back once the menu is closed").toBeVisible();
+});
+
 test("reduced motion: the return to the top is immediate", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/pricing");
