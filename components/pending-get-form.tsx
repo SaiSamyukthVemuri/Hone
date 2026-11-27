@@ -1,6 +1,7 @@
 "use client";
 
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { PathnameContext, SearchParamsContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 import { createContext, useContext, useEffect, useState, useTransition, type ComponentProps, type FormEvent, type ReactNode } from "react";
 
 import { spinnerClasses } from "@/components/ui/spinner";
@@ -26,7 +27,18 @@ import { cx } from "@/components/ui/control-base";
 // It does not change what is requested: the URL is built from the form's own successful controls exactly as the browser would (`FormData`,
 // urlencoded), so the request, the page and its access rules are unchanged. It does not delay anything and it adds no artificial wait.
 
+// WHAT THE FORM SHOWS IS ALWAYS WHAT IS APPLIED (Codex P2 x2, HON-109)
+// ---------------------------------------------------------------------
+// The fields are uncontrolled (a server-rendered `defaultValue`), and a soft navigation that does not submit THIS form (a series toggle, a sort header,
+// a chip, a page link, a tab) keeps it mounted, so a choice the person made but never submitted would keep showing next to figures for another period.
+// That was fixed twice, once per control, and the same bug came back on the next control. The mechanism fix is here: the <form> is keyed on the FULL
+// applied address (path + whole search string, read from the router), so EVERY navigation, whatever caused it, remounts the fields from the values the
+// server just rendered, and an unsubmitted edit never survives a navigation. A choice that is not submitted yet changes no address and so no key.
 const PendingGetFormContext = createContext(false);
+
+// A native navigation the person cancels (Escape, Stop) fires no event of its own. The pending mark clears on Escape, on any edit inside the form, and
+// after this long, so a cancelled navigation can never leave the button locked until reload. The request is a GET, so a repeat submit is harmless.
+const NATIVE_PENDING_MAX_MS = 15_000;
 
 /** True while the enclosing PendingGetForm's navigation is in flight. False outside one. */
 export function usePendingGetForm(): boolean {
@@ -51,21 +63,30 @@ export function PendingGetForm({ action, children, native = false, ...rest }: Fo
   const [routerPending, start] = useTransition();
   const [nativePending, setNativePending] = useState(false);
   const pending = routerPending || nativePending;
+  // Read from the router contexts rather than usePathname()/useSearchParams(): outside a mounted app router (a server-render test) they are null and the key is constant.
+  const appliedAddress = `${useContext(PathnameContext) ?? ""}?${useContext(SearchParamsContext)?.toString() ?? ""}`;
   useEffect(() => {
     if (!native) return;
     const restored = (e: PageTransitionEvent) => { if (e.persisted) setNativePending(false); };
     window.addEventListener("pageshow", restored);
     return () => window.removeEventListener("pageshow", restored);
   }, [native]);
+  useEffect(() => {
+    if (!native || !nativePending) return;
+    const clear = () => setNativePending(false);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") clear(); };
+    const timer = window.setTimeout(clear, NATIVE_PENDING_MAX_MS);
+    document.addEventListener("keydown", onKey);
+    return () => { window.clearTimeout(timer); document.removeEventListener("keydown", onKey); };
+  }, [native, nativePending]);
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     // Anything the browser would do differently (a submitter with its own formaction/target, a modified click) stays a native submit.
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | HTMLInputElement | null;
     if (submitter && (submitter.hasAttribute("formaction") || submitter.hasAttribute("formtarget") || submitter.hasAttribute("formmethod"))) return;
     if (native) {
-      // The browser submits; we only say so. A second press while it is in flight is swallowed.
-      if (pending) event.preventDefault();
-      else setNativePending(true);
+      // The browser submits; we only say so. A second press is NOT swallowed (see NATIVE_PENDING_MAX_MS): a cancelled navigation must not lock the form.
+      setNativePending(true);
       return;
     }
     if (!router) return;
@@ -86,7 +107,7 @@ export function PendingGetForm({ action, children, native = false, ...rest }: Fo
 
   return (
     <PendingGetFormContext.Provider value={pending}>
-      <form {...rest} action={action} method="get" onSubmit={onSubmit} aria-busy={pending || undefined}>
+      <form key={appliedAddress} {...rest} action={action} method="get" onSubmit={onSubmit} onInput={() => { if (native && nativePending) setNativePending(false); }} aria-busy={pending || undefined}>
         {children}
       </form>
     </PendingGetFormContext.Provider>
