@@ -1,6 +1,8 @@
 "use client";
 
 import { copyText } from "@/lib/clipboard/copy-text";
+import { buttonClasses } from "@/components/ui/button";
+import { CONTROL_MIN_TOUCH, TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
 import { useState, useTransition } from "react";
 import {
   rotateCalendarFeedTokenAction,
@@ -125,7 +127,7 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
               type="button"
               onClick={generate}
               disabled={pending}
-              className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-neutral-900"
+              className={buttonClasses({ variant: "primary" })}
             >
               {pending ? "Generating…" : "Generate calendar feed URL"}
             </button>
@@ -163,7 +165,7 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
                 type="button"
                 onClick={copy}
                 disabled={pending}
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+                className={buttonClasses({ variant: "secondary" })}
               >
                 {copied ? "Copied" : "Copy feed URL"}
               </button>
@@ -173,7 +175,7 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
                 type="button"
                 onClick={rotate}
                 disabled={pending}
-                className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+                className={buttonClasses({ variant: "secondary" })}
               >
                 Regenerate feed URL
               </button>
@@ -184,7 +186,7 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
                   type="button"
                   onClick={rotate}
                   disabled={pending}
-                  className="rounded-md border border-amber-400 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100"
+                  className={buttonClasses({ variant: "danger" })}
                 >
                   {pending ? "Regenerating…" : "This will break the old subscribed URL"}
                 </button>
@@ -192,7 +194,7 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
                   type="button"
                   onClick={() => setConfirmRotate(false)}
                   disabled={pending}
-                  className="text-xs text-neutral-500 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-700 dark:decoration-neutral-700 dark:hover:decoration-neutral-300"
+                  className={cx(CONTROL_MIN_TOUCH, "text-xs text-neutral-500 underline decoration-neutral-300 underline-offset-2", TEXT_LINK_FEEDBACK)}
                 >
                   Cancel
                 </button>
@@ -202,7 +204,7 @@ export function CalendarFeedCard({ appOrigin, initialActive }: Props) {
               type="button"
               onClick={disable}
               disabled={pending}
-              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+              className={buttonClasses({ variant: "secondary" })}
             >
               Disable feed
             </button>
