@@ -74,6 +74,12 @@ import type {
 type Args = {
   studioId: string;
   sessionId: string;
+  /**
+   * HON-123. A visit with a bill may take SEVERAL card payments, so an active attempt is not a reason to refuse another: the database
+   * (0394's card wall, under the visit's lock) decides whether the amount still fits. Omitted for every legacy single-payment visit, where
+   * an active attempt still blocks exactly as before.
+   */
+  allowActiveAttempt?: boolean;
 };
 
 // PAY-READ-01 PR D. A Supabase query ERROR is not a business fact. PostgREST
@@ -448,7 +454,7 @@ export async function getSessionPaymentEligibility(
     const activeAttempt = existingAttempts.find((a) =>
       blockingStatuses.has(a.status),
     );
-    if (activeAttempt) {
+    if (activeAttempt && !args.allowActiveAttempt) {
       reasons.push(
         `A session payment attempt is already prepared for this session (status: ${activeAttempt.status}). Cancel it before preparing another.`,
       );

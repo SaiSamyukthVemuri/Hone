@@ -11,6 +11,7 @@ import { deriveAppointmentPaymentState } from "@/lib/billing/appointment-payment
 import type { UnpaidAttention } from "./needs-attention-model";
 import { readInChunks } from "./in-chunks";
 import { readOtherMoneyForms } from "./other-money-forms";
+import { billedOutstanding, type BilledVisitRows } from "@/lib/billing/visit-payments-core";
 
 // ===========================================================================
 // Finished appointments with money still owed: the OWNER-ONLY loader.
@@ -159,6 +160,33 @@ export async function loadUnpaidAttention(opts: {
     settlements.set(r.appointment_id, b);
   }
 
+  // HON-123. A visit with a live BILL (split payments) is owed what its ledger says: bill total minus confirmed cash/transfers and card money kept,
+  // with an unconfirmed transfer still owed. The ledger is read whole or not at all: a failed read is a failed check, never "nothing owed".
+  const billed = new Map<string, BilledVisitRows>();
+  {
+    const bills = await readInChunks<{ id: string; appointment_id: string; total_cents: number; currency: string }>(ids, (chunk) =>
+      supabase.from("visit_bills").select("id, appointment_id, total_cents, currency").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
+    );
+    if (!bills.ok) return { ok: false };
+    if (bills.rows.length > 0) {
+      const billedIds = bills.rows.map((b) => b.appointment_id);
+      const [ext, refs] = await Promise.all([
+        readInChunks<{ appointment_id: string; amount_cents: number; state: string }>(billedIds, (chunk) =>
+          supabase.from("visit_external_payments").select("appointment_id, amount_cents, state").eq("studio_id", studioId).in("appointment_id", chunk)),
+        readInChunks<{ appointment_id: string; amount_cents: number; status: string }>(billedIds, (chunk) =>
+          supabase.from("payment_refunds").select("appointment_id, amount_cents, status").eq("studio_id", studioId).eq("legacy", false).in("appointment_id", chunk)),
+      ]);
+      if (!ext.ok || !refs.ok) return { ok: false };
+      for (const b of bills.rows) {
+        billed.set(b.appointment_id, {
+          totalCents: b.total_cents, currency: b.currency,
+          externals: ext.rows.filter((r) => r.appointment_id === b.appointment_id).map((r) => ({ amountCents: r.amount_cents, state: r.state })),
+          refunds: refs.rows.filter((r) => r.appointment_id === b.appointment_id).map((r) => ({ amountCents: r.amount_cents, status: r.status })),
+        });
+      }
+    }
+  }
+
   // The quote. A failed read leaves every quote unknown (-> "Amount unavailable"), never a guessed or zero price.
   const serviceIds = [...new Set(appts.map((a) => a.service_id).filter(Boolean))] as string[];
   const clientIds = [...new Set(appts.map((a) => a.client_id).filter(Boolean))] as string[];
@@ -190,6 +218,10 @@ export async function loadUnpaidAttention(opts: {
   const today = todayInTz(opts.studioTimezone);
 
   const evaluate = (a: ApptRow) => {
+    const bill = billed.get(a.id);
+    if (bill && a.status === "completed" && Date.parse(a.ends_at) <= Date.parse(nowIso)) {
+      return billedOutstanding(bill, cardsByAppt.get(a.id) ?? []);
+    }
     let quoteCents: number | null = null;
     // Same priority as the settlement coverage logic (lib/billing/settlement-coverage.ts): the settlement's recorded quote first; today's
     // price only when none was recorded. There is no booked-price snapshot on appointments, so nothing sits between the two.
@@ -238,7 +270,7 @@ export async function loadUnpaidAttention(opts: {
     // HON-65: never contradict the appointment page. When it reads this visit as "Paid" (a Hone-verified card charge that was not refunded,
     // the same reducer the page uses), the dashboard neither lists it NOR counts it as unknown, whatever today's price or any other money form says.
     const cards = cardsByAppt.get(a.id) ?? [];
-    if (cards.length > 0 && deriveAppointmentPaymentState(true, cards.map((c) => ({ status: c.status, refund_status: c.refundStatus, amount_cents: c.amountCents, refund_amount_cents: c.refundAmountCents }))) === "paid") continue;
+    if (!billed.has(a.id) && cards.length > 0 && deriveAppointmentPaymentState(true, cards.map((c) => ({ status: c.status, refund_status: c.refundStatus, amount_cents: c.amountCents, refund_amount_cents: c.refundAmountCents }))) === "paid") continue;
     // List a visit only when Hone can ESTABLISH that money is still owed. An amount Hone cannot determine is not a reason to nag, but it is counted.
     if (result.kind === "amount_unavailable") {
       unlisted += 1;
