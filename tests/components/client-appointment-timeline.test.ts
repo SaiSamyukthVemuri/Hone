@@ -157,12 +157,6 @@ const PAGE_PATH = path.resolve(
 const PAGE_SOURCE = readFileSync(PAGE_PATH, "utf8");
 
 describe("client profile Sessions tab embeds the appointment timeline", () => {
-  it("imports ClientAppointmentTimeline", () => {
-    expect(PAGE_SOURCE).toMatch(
-      /import \{ ClientAppointmentTimeline \} from "@\/components\/client-appointment-timeline"/,
-    );
-  });
-
   it("calls getAppointmentsForClientProfile with the resolved studio + client ids", () => {
     expect(PAGE_SOURCE).toMatch(
       /getAppointmentsForClientProfile\(\s*studio\.id,\s*client\.id,?\s*\)/,

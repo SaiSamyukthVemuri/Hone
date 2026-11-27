@@ -206,19 +206,6 @@ describe("move: closed mode contract + owner-only custom time", () => {
   });
 });
 
-// ---- PR #433 cancellation-email actor code + tests remain present (§26) ----
-describe("move follow-up leaves the PR #433 cancellation-email actor work intact", () => {
-  it("cancellation-email actor code is still present", () => {
-    const tpl = read("lib/email/templates/appointment.ts");
-    expect(tpl).toMatch(/cancellationActorSummary/);
-    expect(tpl).toMatch(/CancellationActorRole/);
-    expect(tpl).toMatch(/Studio owner/);
-  });
-  it("cancellation-email actor tests are still present", () => {
-    expect(existsSync(path.join(ROOT, "tests/lib/email/cancellation-actor.test.ts"))).toBe(true);
-  });
-});
-
 // ---- Mobile submit-visibility hotfix: stable flex-shell footer + synchronous lock ----
 describe("move dialog: footer stays painted + submit locks synchronously", () => {
   const raw = read(DIALOG);

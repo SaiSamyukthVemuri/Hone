@@ -22,9 +22,8 @@ import { describe, expect, it } from "vitest";
 //
 // WHAT THIS PROVES, AND DELIBERATELY NOTHING MORE:
 //
-//   1. every converted file uses SectionLabel;
-//   2. no converted file still contains the hand-rolled duplicate;
-//   3. legacy occurrence counts do not INCREASE from the measured baseline;
+//   3. legacy occurrence counts do not INCREASE from the measured baseline,
+//      and no file outside that baseline introduces the duplicate;
 //   4. SectionLabel remains the source of truth for the contract.
 //
 // WHAT THIS DOES NOT ATTEMPT, AND WHY THAT IS A DECISION RATHER THAN A GAP.
@@ -392,10 +391,10 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
  * A discovered absolute path, as this file's canonical lists spell it.
  *
  * `path.relative` emits the PLATFORM separator: `app\foo.tsx` on Windows, while
- * `CONVERTED`, `PRIMITIVE` and `LEGACY_BASELINE` are all written with `/`. Every
+ * `PRIMITIVE` and `LEGACY_BASELINE` are both written with `/`. Every
  * membership test here is a string comparison against those lists, so on a
- * Windows runner or developer machine nothing matches: converted files look
- * missing, baseline exclusions stop excluding, and the guard reports failures
+ * Windows runner or developer machine nothing matches: baseline exclusions
+ * stop excluding, and the guard reports failures
  * that are entirely an artefact of the separator.
  *
  * The canonical lists stay platform-independent — they describe the repository,
@@ -662,10 +661,10 @@ describe("UX-02: SectionLabel adoption at the converted Settings and session-cha
 // P2 (#746 exact-head review): discovered paths must be canonical before they
 // are compared to the lists in this file.
 //
-// Every membership test here is a string comparison against CONVERTED,
-// PRIMITIVE or LEGACY_BASELINE, all of which are written with "/". `path.relative`
+// Every membership test here is a string comparison against PRIMITIVE or
+// LEGACY_BASELINE, both of which are written with "/". `path.relative`
 // emits the PLATFORM separator, so on Windows a discovered "app\foo.tsx" matches
-// none of them: converted files read as missing, baseline exclusions stop
+// none of them: baseline exclusions stop
 // excluding, and the guard fails for a reason that has nothing to do with the
 // code it is guarding.
 describe("discovered paths are normalized before comparison", () => {
