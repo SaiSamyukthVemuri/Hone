@@ -46,11 +46,15 @@ export default async function PortalVerifyPage({
   // Read-only lookup. The unique index on token_hash means at
   // most one row. NO conditional update; the consumed_at stamp
   // lives on the POST action below.
-  const { data: link, error: lookupErr } = await Promise.resolve(admin
-    .from("client_portal_magic_links")
-    .select("id, studio_id, client_id, email_normalized, expires_at, consumed_at")
-    .eq("token_hash", tokenHash)
-    .maybeSingle()).catch((error: unknown) => ({ data: null, error }));
+  const [{ data: link, error: lookupErr }, state] = await Promise.all([
+    Promise.resolve(
+      admin.from("client_portal_magic_links")
+        .select("id, studio_id, client_id, email_normalized, expires_at, consumed_at")
+        .eq("token_hash", tokenHash)
+        .maybeSingle(),
+    ).catch((error: unknown) => ({ data: null, error })),
+    getCurrentPortalSessionState({ recordVisit: false }),
+  ]);
   if (lookupErr) {
     console.error(
       JSON.stringify({
@@ -61,9 +65,9 @@ export default async function PortalVerifyPage({
     );
     return <RetryOriginalLink />;
   }
-  if (!link) return <Recovery token={token} />;
-  const state = await getCurrentPortalSessionState({ recordVisit: false });
+  // A session outage produces the same neutral retry even for an unknown token.
   if (state.kind === "unavailable") return <RetryOriginalLink />;
+  if (!link) return <Recovery token={token} />;
   const sameSession =
     state.kind === "active" &&
     state.session.studioId === link.studio_id &&
@@ -75,12 +79,13 @@ export default async function PortalVerifyPage({
   // belongs to the same studio the link was minted for. An archive
   // that happened between request and verify must not let the
   // Continue button appear.
-  const { data: clientRow, error: clientError } = await Promise.resolve(admin
-    .from("clients")
-    .select("id, studio_id, archived_at, normalized_email")
-    .eq("id", link.client_id)
-    .eq("studio_id", link.studio_id)
-    .maybeSingle()).catch((error: unknown) => ({ data: null, error }));
+  const { data: clientRow, error: clientError } = await Promise.resolve(
+    admin.from("clients")
+      .select("id, studio_id, archived_at, normalized_email")
+      .eq("id", link.client_id)
+      .eq("studio_id", link.studio_id)
+      .maybeSingle(),
+  ).catch((error: unknown) => ({ data: null, error }));
   if (clientError) return <RetryOriginalLink />;
   if (!clientRow || clientRow.archived_at != null) {
     return <Recovery token={token} />;

@@ -134,6 +134,12 @@ describe("the original emailed link", () => {
     expect(t.send).not.toHaveBeenCalled();
     expect(t.createSession).not.toHaveBeenCalled();
   });
+  it("does not reveal whether a token exists while the session read is unavailable", async () => {
+    t.session = { kind: "unavailable" };
+    const oldLink = await page();
+    t.rows.client_portal_magic_links = [];
+    expect(await page()).toBe(oldLink);
+  });
   it.each(["link-read", "client-read", "policy-read", "rejected-read"])("offers only a same-path retry during %s failure", async (failure) => {
     link().expires_at = FUTURE;
     if (failure === "link-read") t.dbFailures.client_portal_magic_links = "error";
