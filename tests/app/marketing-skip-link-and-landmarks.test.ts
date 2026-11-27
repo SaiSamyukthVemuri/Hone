@@ -157,6 +157,17 @@ describe("3 + 6: the pair is bound — renaming either side is RED", () => {
     }
   });
 
+  // HON-124 item 17. The authenticated app shell is a third pair: the layout
+  // renders the one SkipLink and AppMain owns the target. Bound to the link's
+  // own href like the others, so a one-sided rename is red here too.
+  it("the app shell renders it once and AppMain declares the matching target", () => {
+    const uses = codeOnly(read("app/(app)/layout.tsx")).match(/<SkipLink\s*\/>/g) ?? [];
+    expect(uses).toHaveLength(1);
+    const ids = mainTargetIds("app/(app)/AppMain.tsx");
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toBe(target);
+  });
+
   it("the policy shell declares exactly one, and it matches too", () => {
     const ids = mainTargetIds(POLICY_LAYOUT);
     expect(ids).toHaveLength(1);
