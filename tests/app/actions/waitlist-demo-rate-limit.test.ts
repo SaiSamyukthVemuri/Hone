@@ -3,14 +3,21 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #187. submitWaitlistEntry and submitDemoRequest are anonymous
-// landing-page actions that insert directly into waitlist /
-// demo_requests; before this PR they had no rate limit and could be
-// scripted to fill the database. These source-grep tests pin: both
-// actions route through the shared lib/rate-limit/public.ts limiter,
-// the check runs AFTER validation but BEFORE the Supabase insert,
-// the limiter key uses the normalized email, the refusal copy is the
-// shared generic message, and the new limiter buckets are namespaced
-// with the windows decided in the PR (5/h per IP, 2/d per email).
+// landing-page actions that save into waitlist / demo_requests; before
+// PR #187 they had no rate limit and could be scripted to fill the
+// database. These source-grep tests pin: both actions route through the
+// shared lib/rate-limit/public.ts limiter, the check runs AFTER
+// validation but BEFORE the database write, the limiter key uses the
+// normalized email, the refusal copy is the shared generic message, and
+// the new limiter buckets are namespaced with the windows decided in the
+// PR (5/h per IP, 2/d per email).
+//
+// LEAD-ALERT-01 (#826) moved the write itself into the 0213 commands
+// (record_platform_early_access_signup / record_platform_demo_request),
+// which save the lead and its operator alert together. The behaviour is
+// proved against a real database in
+// tests/db/platform-lead-alert-actions.db.test.ts; these pins keep the
+// ORDER: validate, limit, write, and only then schedule the alert.
 
 const ROOT = path.resolve(__dirname, "../../..");
 const WAITLIST = readFileSync(
@@ -55,9 +62,9 @@ describe("waitlist action: rate-limited via shared infrastructure", () => {
     expect(limitIdx).toBeGreaterThan(normIdx);
   });
 
-  it("rate-limit check happens BEFORE the Supabase insert", () => {
+  it("rate-limit check happens BEFORE the database write", () => {
     const limitIdx = WAITLIST_CODE.indexOf("limitWaitlistSubmit(");
-    const insertIdx = WAITLIST_CODE.indexOf('.from("waitlist")');
+    const insertIdx = WAITLIST_CODE.indexOf('.rpc("record_platform_early_access_signup"');
     expect(limitIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(limitIdx);
   });
@@ -76,9 +83,9 @@ describe("waitlist action: rate-limited via shared infrastructure", () => {
     expect(limitIdx).toBeGreaterThan(validateIdx);
   });
 
-  it("duplicate-as-success handling is unchanged", () => {
+  it("duplicate-as-success handling is unchanged: an address already on the list still reads as success", () => {
     expect(WAITLIST_CODE).toMatch(
-      /error\.code === PG_UNIQUE_VIOLATION/,
+      /if \(saved\.result === "duplicate"\) \{\s*\n?\s*return \{ ok: true \};/,
     );
   });
 });
@@ -99,9 +106,9 @@ describe("demo request action: rate-limited via shared infrastructure", () => {
     );
   });
 
-  it("rate-limit check happens BEFORE the Supabase insert", () => {
+  it("rate-limit check happens BEFORE the database write", () => {
     const limitIdx = DEMO_CODE.indexOf("limitDemoRequestSubmit(");
-    const insertIdx = DEMO_CODE.indexOf('.from("demo_requests")');
+    const insertIdx = DEMO_CODE.indexOf('.rpc("record_platform_demo_request"');
     expect(limitIdx).toBeGreaterThan(-1);
     expect(insertIdx).toBeGreaterThan(limitIdx);
   });
@@ -168,9 +175,24 @@ describe("PR #187 boundaries", () => {
     expect(DEMO_CODE).not.toMatch(/console\./);
   });
 
-  it("no email sending or SMS added", () => {
+  it("the actions send nothing themselves: no transport, no SMS, nothing to the submitter", () => {
     const both = WAITLIST_CODE + DEMO_CODE;
     expect(both).not.toMatch(/sendEmailSafely|resend|sendSms|twilio/i);
+  });
+
+  it("LEAD-ALERT-01: the operator alert is only SCHEDULED, after the write, once per saved lead", () => {
+    for (const [code, write] of [
+      [WAITLIST_CODE, '.rpc("record_platform_early_access_signup"'],
+      [DEMO_CODE, '.rpc("record_platform_demo_request"'],
+    ] as const) {
+      const scheduled = code.match(/schedulePlatformLeadAlert\(alertId\)/g) ?? [];
+      expect(scheduled).toHaveLength(1);
+      expect(code.indexOf("schedulePlatformLeadAlert(alertId)")).toBeGreaterThan(code.indexOf(write));
+      // Codex P2 4249961225: never a callback handed to after() (SENTRY-AFTER-01).
+      expect(code).not.toMatch(/\bafter\(/);
+      // The anonymous form never writes the tables directly any more.
+      expect(code).not.toMatch(/\.from\("(waitlist|demo_requests)"\)/);
+    }
   });
 
   it("no payment / Stripe code in the touched files", () => {

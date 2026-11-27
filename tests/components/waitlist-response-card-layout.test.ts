@@ -158,7 +158,7 @@ describe("contact variants and the phone format", () => {
 describe("each handling control is wired to its OWN action, with the response's id", () => {
   const src = readFileSync(join(process.cwd(), "components/waitlist/decline-follow-up-section.tsx"), "utf8");
   const form = (action: string, label: string) =>
-    new RegExp(`<form action=\\{${action}\\}>\\s*<Hidden id=\\{r\\.followupId\\} />\\s*<button type="submit" className=\\{SECONDARY\\}>\\s*${label}\\s*</button>`);
+    new RegExp(`<form action=\\{${action}\\}>\\s*<Hidden id=\\{r\\.followupId\\} />\\s*<PendingButton variant="secondary">\\s*${label}\\s*</PendingButton>`);
   it("Mark handled posts markHandledAction, and Keep on the waitlist posts keepWithdrawalAction", () => {
     expect(src).toMatch(form("markHandledAction", "Mark handled"));
     expect(src).toMatch(form("keepWithdrawalAction", "Keep on the waitlist"));

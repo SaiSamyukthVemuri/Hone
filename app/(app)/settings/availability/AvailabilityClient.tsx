@@ -22,6 +22,7 @@ import {
   settlePendingPreset,
 } from "@/lib/availability/preset-state";
 import { fieldControlClass } from "@/components/ui/field";
+import { PendingButton } from "@/components/pending-button";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const DAY_NAMES_LONG = [
@@ -908,12 +909,9 @@ function OverridesSection({
               </div>
               <form action={deleteOverrideAction}>
                 <input type="hidden" name="id" value={o.id} />
-                <button
-                  type="submit"
-                  className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                >
+                <PendingButton variant="secondary" size="sm">
                   Remove
-                </button>
+                </PendingButton>
               </form>
             </li>
           ))}
@@ -1105,12 +1103,9 @@ function BlockoutsSection({ blockouts }: { blockouts: StudioBlockout[] }) {
               </div>
               <form action={deleteBlockoutAction}>
                 <input type="hidden" name="id" value={b.id} />
-                <button
-                  type="submit"
-                  className="rounded-md border border-neutral-300 px-2 py-1 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                >
+                <PendingButton variant="secondary" size="sm">
                   Remove
-                </button>
+                </PendingButton>
               </form>
             </li>
           ))}

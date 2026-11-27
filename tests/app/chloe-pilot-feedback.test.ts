@@ -220,7 +220,9 @@ describe("5. dashboard: worklist first", () => {
 
   it("PR #236 Today actions are untouched, and the snapshot still renders the same metrics", () => {
     expect(DASH).toMatch(/resolveDayNextAction\(\{/);
-    expect(DASH).toMatch(/\{nextAction\.label\}/);
+    // The action row moved to visit-actions.tsx: the page still resolves the action and hands it to the row, which renders its label.
+    expect(DASH).toMatch(/nextAction=\{nextAction\.href !== chartHref/);
+    expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8")).toMatch(/\{nextAction\.label\}/);
     // Part 1 split "Action needed" out of the snapshot; Part 2B retired that
     // component entirely and folded its data into the ONE To-do model. The
     // snapshot keeps its metrics and its livemode gate; the SAME

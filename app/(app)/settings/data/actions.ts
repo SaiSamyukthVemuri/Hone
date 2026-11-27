@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { rowsToCsv } from "@/lib/csv";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 // The clinical-notes filename and header row are still owned by this module;
 // the export registry imports them from here, and this module reaches them
 // through the registry like every other file. One definition, one consumer.
@@ -15,6 +16,7 @@ import {
   type ClinicalNoteExportSource,
 } from "@/lib/export/clinical-notes";
 import { fetchAllRows, EXPORT_PAGE_SIZE } from "@/lib/export/paginate";
+import { padDecimalText } from "@/lib/export/decimal-text";
 import { exportDeclineAnswersPage } from "@/lib/waitlist/followups-owner";
 import {
   emptyExportRpcRead,
@@ -170,6 +172,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     // TRUTH-01B-1: four studio-owned resources become first-class files.
     consentSignaturesRes,
     probeLotsRes,
+    treatmentSetupReadingsRes,
     servicePractitionersRes,
     treatmentGoalsRes,
     budgetContextRes,
@@ -441,6 +444,19 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // TRUTH-01B: machine-native readings (xCell Pur MultiPlex ...). studio_id-scoped at the query, under the owner-only gate above and the
+    // studio-member SELECT policy; no new grant. Readings of a removed area are kept, like every other clinical row.
+    fetchExportRows("treatment_setup_readings", (from, to) =>
+      supabase
+        .from("treatment_setup_readings")
+        .select(
+          "id, session_block_id, studio_machine_id, machine_profile_id, machine_profile_version, mode_key, group_key, channels, stage_key, field_key, value_numeric::text, value_text, absence_reason, native_unit, decimals, observation_source, revision, recorded_by_practitioner_id, recorded_at, capture_id",
+        )
+        .eq("studio_id", studio.id)
+        .order("recorded_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
     fetchExportRows("service_practitioners", (from, to) =>
       supabase
         .from("service_practitioners")
@@ -499,6 +515,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     clinicalNotesRes,
     consentSignaturesRes,
     probeLotsRes,
+    treatmentSetupReadingsRes,
     servicePractitionersRes,
     treatmentGoalsRes,
     // budgetContextRes is handled SEPARATELY, immediately below — not
@@ -567,6 +584,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
     servicesRes,
     consentSignaturesRes,
     probeLotsRes,
+    treatmentSetupReadingsRes,
     servicePractitionersRes,
     treatmentGoalsRes,
     budgetContextRes,
@@ -810,8 +828,8 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       const b = e.block_id ? blocksById.get(e.block_id) : undefined;
       return {
         ...e,
-        // A NATIVE area's legacy entry holds only the database default (pulse_count 1, migration 0166); the pulse count that was done is a native
-        // reading, which this file does not carry yet. A 1 here would read as the pulse count actually done, so it is blank.
+        // A NATIVE area's legacy entry holds only the database default (pulse_count 1, migration 0166); its pulse count is the snap_count row in
+        // treatment_setup_readings.csv. Exporting the 1 here would read as the pulse count actually done.
         pulse_count: isNativeMachineBlock(b) ? null : e.pulse_count,
         areas: Array.isArray(e.areas) ? e.areas.join("; ") : "",
         // Migration 0108 + charting unification: flatten the UNIFIED findings,
@@ -979,6 +997,27 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
 
   writeCsv("probe_lots", probeLotsRes);
 
+  // value_numeric is read as TEXT (value_numeric::text) and padded to the contract's own decimals by string handling only, so a recorded
+  // 1.80 stays "1.80" and a 16-digit value stays exact: it never becomes a JavaScript number.
+  //
+  // A reading on the studio's per-studio "Machine not specified" placeholder (studio_machines.is_unspecified, migration 0385) has no real machine: its
+  // studio_machine_id is exported BLANK, because that id points at a row the archive does not carry and would read as a machine the studio never had.
+  // The placeholder ids are read under the same owner gate and studio scope; if that read fails the export is refused (a fixed sentence by class from
+  // userFacingDbFailure, the code only in the log), never written with ids that should have been blank.
+  const unspecifiedMachines = await supabase.from("studio_machines").select("id").eq("studio_id", studio.id).eq("is_unspecified", true);
+  if (unspecifiedMachines.error) return { ok: false, error: userFacingDbFailure("export your data", unspecifiedMachines.error, "studio_export_read_failed") };
+  const unspecifiedMachineIds = new Set((unspecifiedMachines.data ?? []).map((m) => m.id as string));
+  writeCsv(
+    "treatment_setup_readings",
+    mapExportRows(treatmentSetupReadingsRes, (rows) =>
+      (rows as unknown as Array<Record<string, unknown>>).map((r) => ({
+        ...r,
+        studio_machine_id: unspecifiedMachineIds.has(r.studio_machine_id as string) ? null : r.studio_machine_id,
+        value_numeric: padDecimalText(r.value_numeric as string | null, r.decimals as number | null),
+      })),
+    ),
+  );
+
   writeCsv("service_practitioners", servicePractitionersRes);
 
   writeCsv("treatment_goals", treatmentGoalsRes);
@@ -1037,7 +1076,7 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
   // instead protected by the sessions count below. They are filtered against
   // the session id set, which is the amplification this whole change fixes.
   // ---------------------------------------------------------------------
-  const [clientsCount, sessionsCount, appointmentsCount, notesCount] =
+  const [clientsCount, sessionsCount, appointmentsCount, notesCount, readingsCount] =
     await Promise.all([
       supabase
         .from("clients")
@@ -1054,6 +1093,11 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
         .eq("studio_id", studio.id),
       supabase
         .from("client_clinical_notes")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studio.id),
+      // Machine-native readings are clinical and append-only; a page lost from this file would read as a treatment with no readings.
+      supabase
+        .from("treatment_setup_readings")
         .select("id", { count: "exact", head: true })
         .eq("studio_id", studio.id),
     ]);
@@ -1087,6 +1131,12 @@ export async function exportStudioDataAction(): Promise<ExportResult> {
       fetched: (clinicalNotesRes.data ?? []).length,
       expected: notesCount.error ? null : notesCount.count,
       error: notesCount.error ? dbErrorCode(notesCount.error) : undefined,
+    },
+    {
+      table: "treatment_setup_readings",
+      fetched: (treatmentSetupReadingsRes.data ?? []).length,
+      expected: readingsCount.error ? null : readingsCount.count,
+      error: readingsCount.error ? dbErrorCode(readingsCount.error) : undefined,
     },
   ];
 

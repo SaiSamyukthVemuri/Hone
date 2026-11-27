@@ -10,6 +10,9 @@ import { AdminModeBadge } from "@/app/admin/mode-badge";
 import { FormattedDateTime } from "@/components/formatted-date-time";
 import { ResendWelcomeButton } from "./ResendWelcomeButton";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { loadStudioActivity } from "@/lib/admin/studio-activity";
+import { loadStaffSignIns } from "@/lib/admin/staff-sign-in";
+import { StaffSignInSection, StudioActivitySection } from "./activity-sections";
 
 // PR #256: admin studio-detail privacy follow-up. Operator-only (the /admin
 // layout's isAdmin gate covers this page). Shows operational metadata +
@@ -181,6 +184,12 @@ export default async function AdminStudioPage({
   // PR B: per-studio payment status: capability/status/counts only, both
   // modes, redacted account suffix. Read via the shared admin helper.
   const payments = await loadStudioPaymentStatus(createAdminClient(), id);
+  // HON-82: read-only and never throwing; each degrades to its own "Unknown" state rather than failing the page.
+  const adminForActivity = createAdminClient();
+  const [activity, staffSignIns] = await Promise.all([
+    loadStudioActivity(adminForActivity, id),
+    loadStaffSignIns(adminForActivity, id),
+  ]);
 
   const inviteLabel =
     studio.owner_invite_status === "accepted"
@@ -237,6 +246,10 @@ export default async function AdminStudioPage({
           content are shown here.
         </p>
       </section>
+
+      <StudioActivitySection activity={activity} />
+
+      <StaffSignInSection report={staffSignIns} />
 
       <section>
         <h2 className="mb-3 text-xl font-medium">Setup checks</h2>

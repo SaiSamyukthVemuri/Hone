@@ -238,6 +238,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 48: #1308's dashboard-phone-overflow.spec.ts joined `sessions` with the other Today-roster specs.
     // RECORDED AS A DECISION per the note above. Cost: FIVE executed cases (320 and 390 x owner and practitioner, plus one
     // five-tap navigation case), each a seeded studio, a magic-link login and a page load or a few.
+    // Now 72 (was 71): dashboard-visit-card-actions.spec.ts (practitioner feedback, 26 Nov) joined `sessions` with the other Today-roster specs. RECORDED AS A DECISION per the note above. Cost: ONE case, a few seconds.
     // Now 51 after the merge of production: HON-8's machine-real-3g.spec.ts joined `sessions` beside machine-create-mode-journey (same surface; it proves the REAL
     // contracts, which the synthetic-id sibling cannot). CI cost: four journeys (flash and blend per model) at about 25 s each.
     // Before that, 49: the merge of production joined one more spec to this selection (production's own pin was 47 before #1308's two). The
@@ -287,7 +288,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // above. It is REQUIRED, not opt-in. Cost, to be MEASURED on an owned stack and recorded in the pull request: three cases in the chromium project
     // (desktop, a 390px iPhone-sized emulation, and the rollout-off toggle check), each a seeded studio and a login; the iPhone WebKit case runs only in the
     // non-required `webkit-iphone-visit` project and skips everywhere else.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(71);
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(72);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

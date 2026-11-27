@@ -51,6 +51,23 @@ const click = (label: string) => act(async () => { button(label).click(); });
 const checkout = () => host.querySelector('[role="dialog"]');
 
 describe("checkout for a confirmed dashboard visit", () => {
+  it("offers one enabled way to finish the visit and review the saved-card charge", async () => {
+    loadQuote.mockResolvedValue({ referenceCents: 9000, currency: "cad" });
+    complete.mockResolvedValue({ ok: true });
+    await render("confirmed", past, "chargeable", "card_on_file");
+    await click("Checkout");
+    expect(button("Stripe").getAttribute("aria-pressed")).toBe("true");
+    expect(button("Finish visit and review card charge").disabled).toBe(false);
+    expect([...host.querySelectorAll("button")].some(b => b.textContent?.startsWith("Confirm payment"))).toBe(false);
+    expect(complete).not.toHaveBeenCalled();
+    await click("Finish visit and review card charge");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect([...complete.mock.calls[0][0].entries()]).toEqual([["appointment_id", appointmentId]]);
+    expect(checkout()?.getAttribute("data-method")).toBe("stripe");
+    await render("completed", past);
+    expect(checkout()?.getAttribute("data-appointment")).toBe(appointmentId);
+  });
+
   it("opens the payment flow for this appointment only after explicit completion and keeps it open through refresh", async () => {
     complete.mockResolvedValue({ ok: true });
     await render("confirmed", past);
@@ -152,7 +169,6 @@ describe("checkout for a confirmed dashboard visit", () => {
   it.each([
     ["chargeable", "no_card", "E-transfer", "paid_e_transfer"],
     ["no_session", "card_on_file", "E-transfer", "paid_e_transfer"],
-    ["chargeable", "card_on_file", "Stripe", "stripe"],
     ["chargeable", "unavailable", null, null],
     ["chargeable", null, null, null],
   ] as const)("uses a local default for %s / %s and carries it through explicit completion", async (state, card, label, method) => {

@@ -121,8 +121,8 @@ type Props = {
   /** The signed-in viewer, derived on the server; it decides which controls show. */
   viewer: { isOwner: boolean; practitionerId: string };
   notes: ClientPinnedNote[];
-  addAction: (formData: FormData) => Promise<void>;
-  editAction: (formData: FormData) => Promise<void>;
+  addAction: (formData: FormData) => Promise<unknown>;
+  editAction: (formData: FormData) => Promise<unknown>;
   removeAction: (formData: FormData) => Promise<void>;
 };
 

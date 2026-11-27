@@ -86,4 +86,42 @@ describe("inline dashboard pinned notes", () => {
     expect(edit).not.toHaveBeenCalled();
     expect(host.querySelector("textarea")).toBeNull();
   });
+  // The refreshed page tree after a save can arrive late or never; the saved note must not depend on it.
+  it("draws a newly saved pin from the action's result when no refreshed tree ever arrives", async () => {
+    render(true, []);
+    add.mockResolvedValue({ id: "new-pin", text: "Allergic to adhesive tape.", created_by_practitioner_id: "practitioner" });
+    act(() => button("Add pinned note for Morgan").click());
+    type("Allergic to adhesive tape.");
+    await act(async () => button("Save pinned note").click());
+    expect(host.querySelector("textarea")).toBeNull();
+    expect([...host.querySelectorAll("li")].map(el => el.textContent?.replace(/Edit$/, ""))).toEqual(["Allergic to adhesive tape."]);
+    expect(host.textContent).toContain("Pinned");
+  });
+
+  it("then shows the pin once, not twice, when the refreshed tree carries it", async () => {
+    render(true, []);
+    add.mockResolvedValue({ id: "new-pin", text: "Allergic to adhesive tape.", created_by_practitioner_id: "practitioner" });
+    act(() => button("Add pinned note for Morgan").click());
+    type("Allergic to adhesive tape.");
+    await act(async () => button("Save pinned note").click());
+    render(true, [{ id: "new-pin", text: "Allergic to adhesive tape.", created_by_practitioner_id: "practitioner" }]);
+    expect(host.querySelectorAll("li")).toHaveLength(1);
+    render(true, [{ id: "new-pin", text: "Changed elsewhere", created_by_practitioner_id: "practitioner" }]);
+    expect([...host.querySelectorAll("li")].map(el => el.textContent?.replace(/Edit$/, ""))).toEqual(["Changed elsewhere"]);
+  });
+
+  it("draws an edited pin from the action's result when no refreshed tree arrives, and keeps the editor open on failure", async () => {
+    render(false);
+    edit.mockRejectedValueOnce(new Error("conflict"));
+    act(() => button("Edit pinned note for Morgan: Winter travel").click());
+    type("Back in December");
+    await act(async () => button("Save pinned note").click());
+    expect(host.querySelector("[role=alert]")).not.toBeNull();
+    expect(host.querySelector("textarea")?.value).toBe("Back in December");
+    edit.mockResolvedValue({ id: "mine", text: "Back in December", created_by_practitioner_id: "practitioner" });
+    await act(async () => button("Save pinned note").click());
+    expect(host.querySelector("textarea")).toBeNull();
+    expect(host.textContent).toContain("Back in December");
+    expect(host.textContent).not.toContain("Winter travel");
+  });
 });

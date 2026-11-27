@@ -4,12 +4,13 @@ import { useState, useTransition } from "react";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { invitePractitionerAction } from "./actions";
 import { fieldControlClass } from "@/components/ui/field";
+import { CopyButton } from "@/components/copy-button";
 
 type Status =
   | { kind: "idle" }
   | { kind: "sending" }
   | { kind: "error"; message: string }
-  | { kind: "success"; email: string; copied: boolean };
+  | { kind: "success"; email: string };
 
 function buildShareMessage(email: string): string {
   return `Tell ${email}: visit hone.care, click Sign in, use ${email}. They will be added to your team automatically.`;
@@ -43,25 +44,11 @@ export function InviteForm() {
         setStatus({ kind: "error", message: result.error });
         return;
       }
-      setStatus({ kind: "success", email: result.email, copied: false });
+      setStatus({ kind: "success", email: result.email });
       setEmail("");
       setDisplayName("");
       setRole("practitioner");
     });
-  }
-
-  async function handleCopy() {
-    if (status.kind !== "success") return;
-    const message = buildShareMessage(status.email);
-    try {
-      await navigator.clipboard.writeText(message);
-      setStatus({ ...status, copied: true });
-      window.setTimeout(() => {
-        setStatus((s) => (s.kind === "success" ? { ...s, copied: false } : s));
-      }, 1500);
-    } catch {
-      // Clipboard API unavailable. Leave the message visible so the user can select+copy manually.
-    }
   }
 
   if (status.kind === "success") {
@@ -69,17 +56,15 @@ export function InviteForm() {
     return (
       <div className="flex flex-col gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900">
         <p className="text-sm font-medium">Invite created for {status.email}.</p>
-        <pre className="whitespace-pre-wrap break-words rounded-md border border-neutral-200 bg-white p-3 text-sm leading-[1.55] text-neutral-800 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-200">
+        <pre id="invite-share-message" className="whitespace-pre-wrap break-words rounded-md border border-neutral-200 bg-white p-3 text-sm leading-[1.55] text-neutral-800 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-200">
 {message}
         </pre>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-950"
-          >
-            {status.copied ? "Copied" : "Copy message"}
-          </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <CopyButton
+            value={message}
+            label="Copy message"
+            selectTargetId="invite-share-message"
+          />
           <button
             type="button"
             onClick={() => setStatus({ kind: "idle" })}

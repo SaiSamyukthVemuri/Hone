@@ -946,9 +946,8 @@ for (const width of CARD_WIDTHS) {
           bodyX: textCol.getBoundingClientRect().x,
           footerX: footer.getBoundingClientRect().x,
           detailsX,
-          secondaryTextX: textLeft(
-            document.querySelector('[data-testid="today-consultation-notes"]'),
-          ),
+          // Practitioner feedback (26 Nov): Consultation notes (and Review intake) now live in the ONE action row.
+          consultationInGroup: footer.contains(document.querySelector('[data-testid="today-consultation-notes"]')),
           actions: actions.map((a) => ({
             id: a.getAttribute("data-testid"),
             ...rect(a)!,
@@ -975,11 +974,11 @@ for (const width of CARD_WIDTHS) {
       // The primary group aligns with the client name. Each wrapped line can fit
       // multiple controls. Secondary links align with the details column.
       expect(m.footerX).toBeCloseTo(m.bodyX, 0);
-      expect(m.actions.map(a => a.id)).toEqual(expect.arrayContaining(["today-rebook", "today-chart"]));
+      expect(m.actions.map(a => a.id)).toEqual(expect.arrayContaining(["today-rebook", "today-chart", "today-consultation-notes"]));
       for (const a of m.actions) {
         expect(a.x, `${a.id} left edge`).toBeGreaterThanOrEqual(m.footerX - 1);
       }
-      expect(Math.abs((m.secondaryTextX ?? 0) - m.detailsX)).toBeLessThanOrEqual(2);
+      expect(m.consultationInGroup).toBe(true);
 
       // 5. Actions stay inside the card.
       for (const a of m.actions) {

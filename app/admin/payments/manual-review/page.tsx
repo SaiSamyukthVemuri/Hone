@@ -39,7 +39,7 @@ export const dynamic = "force-dynamic";
 const ATTEMPT_SELECT =
   "id, studio_id, client_id, session_id, appointment_id, charge_reason, amount_cents, currency, status, stripe_payment_intent_id, stripe_livemode, failure_code, created_at, updated_at, studio:studios(name)";
 const ALERT_SELECT =
-  "id, created_at, severity, event, message, studio_id, client_id, appointment_id, stripe_payment_intent_id, route";
+  "id, created_at, severity, event, message, studio_id, client_id, appointment_id, stripe_payment_intent_id, route, safe_details";
 
 export default async function PaymentManualReviewPage() {
   // Defense-in-depth admin re-check (read-only; never mutates).

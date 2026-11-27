@@ -9,6 +9,7 @@
 import { useTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { cancelAppointmentAction } from "./actions";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 
 export type PractitionerCancelFormProps = {
   appointmentId: string;
@@ -19,9 +20,16 @@ export function PractitionerCancelForm({ appointmentId }: PractitionerCancelForm
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  // HON-124 item 14: pressing Cancel appointment asks first. The action below runs only from the dialog's Confirm.
+  const [confirming, setConfirming] = useState(false);
 
-  function submit(e: React.FormEvent) {
+  function ask(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
+    setConfirming(true);
+  }
+
+  function submit() {
     setError(null);
     const fd = new FormData();
     fd.set("appointment_id", appointmentId);
@@ -45,7 +53,7 @@ export function PractitionerCancelForm({ appointmentId }: PractitionerCancelForm
 
   return (
     <form
-      onSubmit={submit}
+      onSubmit={ask}
       className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
     >
       <h2 className="text-xs font-medium uppercase tracking-wider text-neutral-500">
@@ -67,10 +75,20 @@ export function PractitionerCancelForm({ appointmentId }: PractitionerCancelForm
         >
           {pending ? "Cancelling…" : "Cancel appointment"}
         </button>
-        {error && (
-          <span className="text-xs text-red-700 dark:text-red-300">{error}</span>
-        )}
       </div>
+      <ConfirmDialog
+        open={confirming}
+        title="Cancel this appointment?"
+        description="The appointment will be cancelled and its time freed up. The client is emailed about the cancellation where they have an email address on file."
+        confirmLabel="Cancel appointment"
+        cancelLabel="Keep appointment"
+        busyLabel="Cancelling…"
+        tone="danger"
+        pending={pending}
+        error={error}
+        onConfirm={submit}
+        onCancel={() => setConfirming(false)}
+      />
     </form>
   );
 }

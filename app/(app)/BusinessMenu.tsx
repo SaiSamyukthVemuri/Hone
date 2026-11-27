@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
-import { cx } from "@/components/ui/control-base";
+import { cx, NAV_ROW_FEEDBACK, NAV_ROW_FOCUS } from "@/components/ui/control-base";
 import { BUSINESS_MENU_ITEMS, BUSINESS_MENU_LABEL, isBusinessPath } from "@/lib/nav/business-menu";
 
 // The owner's Business menu in the desktop primary navigation: one button, two destinations (Capacity, Statements).
@@ -72,8 +72,8 @@ export function BusinessMenu() {
         className={cx(
           "flex items-center gap-1 rounded-md px-3 py-2",
           current
-            ? "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
-            : "hover:bg-neutral-100 dark:hover:bg-neutral-900",
+            ? `bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 ${NAV_ROW_FOCUS}`
+            : NAV_ROW_FEEDBACK,
         )}
       >
         {BUSINESS_MENU_LABEL}
@@ -111,7 +111,7 @@ export function BusinessMenu() {
                 onClick={here ? () => setOpen(false) : undefined}
                 className={cx(
                   "flex min-h-[40px] items-center rounded-md px-3 py-2",
-                  here ? "bg-neutral-100 dark:bg-neutral-800" : "hover:bg-neutral-100 dark:hover:bg-neutral-900",
+                  here ? `bg-neutral-100 dark:bg-neutral-800 ${NAV_ROW_FOCUS}` : NAV_ROW_FEEDBACK,
                 )}
               >
                 {item.label}

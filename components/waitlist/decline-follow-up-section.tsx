@@ -13,6 +13,7 @@ import {
 import type { FollowUpNotice } from "@/lib/waitlist/follow-up-notice";
 import type { ReplyContact } from "@/lib/waitlist/reply-contact-pure";
 import { ReplyContactDetails } from "@/components/waitlist/reply-contact";
+import { PendingButton } from "@/components/pending-button";
 
 // HON-7 (b). The owner's follow-up section: the target of the `#follow-up` anchor the email, the bell and the sign-in return all land on.
 // OWNER-ONLY BY CONSTRUCTION: it renders the recipient's answers, so it must only ever be rendered after the page's owner check (a test pins the
@@ -46,7 +47,6 @@ export const OWNER_ANSWER_LABELS = { why: "Why these times don't work", better: 
 
 /** Hierarchy: ONE primary per card (Book now), everything else secondary. */
 const PRIMARY = buttonClasses({ variant: "primary", size: "md" });
-const SECONDARY = buttonClasses({ variant: "secondary", size: "md" });
 
 const BUTTON =
   "inline-flex min-h-[44px] items-center rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900";
@@ -64,9 +64,9 @@ function EraseControl({ id }: { id: string }) {
       <form action={eraseAnswersAction} className="mt-2 flex flex-col gap-2">
         <Hidden id={id} />
         <p className="break-words text-neutral-600 dark:text-neutral-400">{ERASE_CONFIRM_COPY}</p>
-        <button type="submit" className={BUTTON}>
+        <PendingButton variant="danger" busyLabel="Erasing…">
           Yes, erase all of this person&apos;s answers
-        </button>
+        </PendingButton>
       </form>
     </details>
   );
@@ -201,16 +201,12 @@ export function DeclineFollowUpSection({
                     {r.kind === "decline" ? (
                       <form action={markHandledAction}>
                         <Hidden id={r.followupId} />
-                        <button type="submit" className={SECONDARY}>
-                          Mark handled
-                        </button>
+                        <PendingButton variant="secondary">Mark handled</PendingButton>
                       </form>
                     ) : (
                       <form action={keepWithdrawalAction}>
                         <Hidden id={r.followupId} />
-                        <button type="submit" className={SECONDARY}>
-                          Keep on the waitlist
-                        </button>
+                        <PendingButton variant="secondary">Keep on the waitlist</PendingButton>
                       </form>
                     )}
                   </div>
@@ -218,9 +214,9 @@ export function DeclineFollowUpSection({
                     <form key={a.id} action={linkAppointmentAction}>
                       <Hidden id={r.followupId} />
                       <input type="hidden" name="appointmentId" value={a.id} />
-                      <button type="submit" className={`${SECONDARY} max-w-full text-left`}>
+                      <PendingButton variant="secondary" className="max-w-full text-left">
                         Link booking: {a.label}
-                      </button>
+                      </PendingButton>
                     </form>
                   ))}
                   <p className="text-neutral-600 dark:text-neutral-400">

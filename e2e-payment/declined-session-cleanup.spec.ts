@@ -120,7 +120,7 @@ test("a declined session payment: original intent cancelled once, replacement pr
         .toEqual(["failed/canceled"]);
     } finally {
       const rows = await attemptRows(seed.sessionId);
-      const alerts = await adminQuery(`select event, severity, safe_details from public.ops_alerts where studio_id = $1 order by created_at`, [seed.studioId]);
+      const alerts = await adminQuery(`select event, severity, safe_details from public.ops_alerts where (studio_id = $1 or safe_details->>'studio_id' = $1::text) order by created_at`, [seed.studioId]);
       console.log(`[cleanup-details] ${JSON.stringify(alerts.rows.map((a) => [a.event, a.safe_details]))}`);
       console.log(`[cleanup] attempts=${JSON.stringify(rows.map((r) => [r.status, r.stripe_status, r.stripe_payment_intent_id != null]))} alerts=${JSON.stringify(alerts.rows.map((a) => `${a.severity}:${a.event}`))}`);
     }
