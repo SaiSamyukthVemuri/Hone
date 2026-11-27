@@ -737,6 +737,7 @@ export async function NeedsAttentionSection(props: OwnerNeedsInputs) {
       unpaid={v.unpaid}
       unpaidAll={props.unpaidAll}
       unpaidHrefs={props.unpaidHrefs}
+      timeZone={props.studioTimezone}
     />
   );
 }
