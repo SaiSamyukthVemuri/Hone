@@ -30,6 +30,8 @@ export type SessionPhoto = {
   thumbUrl: string | null;
   areaLabel: string | null;
   note: string | null;
+  /** 0232: taken before or after treatment; null = not labelled. */
+  captureStage: "before" | "after" | null;
 };
 
 export async function signedSessionPhotos(input: {
@@ -42,7 +44,7 @@ export async function signedSessionPhotos(input: {
     const { data: rows, error } = await supabase
       .from("treatment_images")
       .select(
-        "id, studio_id, client_id, storage_bucket, storage_path, session_block_id, practitioner_note, session_blocks ( primary_area, side, custom_area_detail )",
+        "id, studio_id, client_id, storage_bucket, storage_path, session_block_id, practitioner_note, capture_stage, session_blocks ( primary_area, side, custom_area_detail )",
       )
       .eq("studio_id", input.studioId)
       .eq("client_id", input.clientId)
@@ -105,6 +107,8 @@ export async function signedSessionPhotos(input: {
             thumbUrl,
             areaLabel: treatmentPhotoAreaLabel(r.session_block_id, block),
             note: r.practitioner_note ?? null,
+            captureStage:
+              r.capture_stage === "before" || r.capture_stage === "after" ? r.capture_stage : null,
           };
         } catch {
           return null;

@@ -280,7 +280,8 @@ export function selectedColumnsByResource(
     const { resource, select } = read[EXPORT_PROVENANCE];
     out[resource] = select
       .split(",")
-      .map((column) => column.trim())
+      // A column read under a PostgREST cast (`value_numeric::text`, so a numeric never passes through a JavaScript number) is still that column.
+      .map((column) => column.trim().replace(/::[a-z_]+(\[\])?$/i, ""))
       .filter((column) => column.length > 0);
   }
   return out;
