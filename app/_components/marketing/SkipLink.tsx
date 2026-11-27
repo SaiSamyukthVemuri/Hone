@@ -17,6 +17,10 @@
 // So each shell renders this directly, and exactly the routes that gain a
 // target also gain the link.
 //
+// THE AUTHENTICATED APP SHELL renders it too (`app/(app)/layout.tsx`, HON-124),
+// pointing at AppMain's `<main id="main-content">`. The tokens it uses are
+// global `@theme` colours, not marketing-scoped, so it renders the same there.
+//
 // A PLAIN <a>, NOT next/link: the target is already on the page, so a router
 // navigation is the wrong primitive and would not move focus.
 export function SkipLink() {
