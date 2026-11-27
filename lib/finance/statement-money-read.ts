@@ -109,6 +109,14 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   const sessionToAppt = new Map<string, string>();
   for (const s of sessions.rows) if (s.appointment_id) sessionToAppt.set(s.id, s.appointment_id);
 
+  // HON-123, INTERIM. A visit with a split-payments BILL carries cash/transfer rows and partial refunds that this statement model does not itemise
+  // yet (its kinds are card, settlement and legacy fee, with full refunds only). Rather than show a total that leaves them out, the read FAILS CLOSED
+  // for any scope that contains one, exactly as it does for any other read it cannot prove. The itemised history replaces this.
+  const billed = await readInChunks<{ appointment_id: string }>(ids, (chunk) =>
+    supabase.from("visit_bills").select("appointment_id").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
+  );
+  if (!billed.ok || billed.rows.length > 0) return { ok: false };
+
   const [feeCards, sessionCards, settlements, legacy] = await Promise.all([
     readInChunks<CardDb>(ids, (chunk) =>
       supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studioId).in("charge_reason", FEE_REASONS).in("appointment_id", chunk),
