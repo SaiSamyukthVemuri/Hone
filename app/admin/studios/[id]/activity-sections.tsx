@@ -77,6 +77,13 @@ function PendingInvites({ counts }: { counts: StaffSignInReport["pendingInvites"
     return <p className="mt-2 text-sm text-neutral-500">Pending invitations: unknown, they could not be read just now.</p>;
   }
   if (counts.total === 0) return null;
+  if (counts.truncated) {
+    return (
+      <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300" data-testid="pending-invitations">
+        More than {counts.total} invitations pending. Not yet accepted, so no sign-in to show.
+      </p>
+    );
+  }
   const parts = [
     counts.owner ? `${counts.owner} owner` : null,
     counts.practitioner ? `${counts.practitioner} practitioner` : null,

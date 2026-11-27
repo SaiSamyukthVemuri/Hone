@@ -154,9 +154,19 @@ describe("pending invitations: counted by role only", () => {
     const c = staffClient({ invites: [{ role: "owner" }, { role: "receptionist" }, { role: "practitioner" }, { role: "practitioner" }] });
     const r = await loadStaffSignIns(c.client, "s");
     expect(r.staff).toEqual([]);
-    expect(r.pendingInvites).toEqual({ owner: 1, practitioner: 2, receptionist: 1, total: 4 });
+    expect(r.pendingInvites).toEqual({ owner: 1, practitioner: 2, receptionist: 1, total: 4, truncated: false });
     expect(c.selects.pending_invitations).toBe("role");
     expect(JSON.stringify(r)).not.toMatch(/@|email/);
+  });
+  it("more than the cap pending: flagged truncated and never presented as exact", async () => {
+    const many = Array.from({ length: STAFF_SIGN_IN_CAP + 1 }, () => ({ role: "practitioner" }));
+    const r = await loadStaffSignIns(staffClient({ invites: many }).client, "s");
+    expect(r.pendingInvites?.truncated).toBe(true);
+    expect(r.pendingInvites?.total).toBe(STAFF_SIGN_IN_CAP);
+    const exact = await loadStaffSignIns(staffClient({ invites: many.slice(0, STAFF_SIGN_IN_CAP) }).client, "s");
+    expect(exact.pendingInvites?.truncated).toBe(false);
+    const src = readFileSync(path.resolve(__dirname, "../../..", "app/admin/studios/[id]/activity-sections.tsx"), "utf8");
+    expect(src).toMatch(/counts\.truncated[\s\S]{0,260}More than \{counts\.total\} invitations pending/);
   });
   it("a failed invitation read is null (unknown), never zero", async () => {
     const r = await loadStaffSignIns(staffClient({ inviteErr: true }).client, "s");

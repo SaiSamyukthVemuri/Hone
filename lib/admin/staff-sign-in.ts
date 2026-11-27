@@ -46,7 +46,14 @@ export type StaffSignInReport = {
   pendingInvites: PendingInviteCounts | null;
 };
 
-export type PendingInviteCounts = { owner: number; practitioner: number; receptionist: number; total: number };
+export type PendingInviteCounts = {
+  owner: number;
+  practitioner: number;
+  receptionist: number;
+  total: number;
+  /** true when more than STAFF_SIGN_IN_CAP invitations are pending: the read is a sample, so the numbers are a floor, never exact. */
+  truncated: boolean;
+};
 
 /** Count pending invitations by role. Reads the role column of unaccepted, unrevoked rows and nothing else. */
 async function loadPendingInviteCounts(admin: SupabaseClient, studioId: string): Promise<PendingInviteCounts | null> {
@@ -58,8 +65,10 @@ async function loadPendingInviteCounts(admin: SupabaseClient, studioId: string):
       .eq("status", "pending")
       .limit(STAFF_SIGN_IN_CAP + 1);
     if (error) return null;
-    const counts: PendingInviteCounts = { owner: 0, practitioner: 0, receptionist: 0, total: 0 };
-    for (const r of (data ?? []) as Array<{ role: string | null }>) {
+    const rows = (data ?? []) as Array<{ role: string | null }>;
+    const truncated = rows.length > STAFF_SIGN_IN_CAP;
+    const counts: PendingInviteCounts = { owner: 0, practitioner: 0, receptionist: 0, total: 0, truncated };
+    for (const r of truncated ? rows.slice(0, STAFF_SIGN_IN_CAP) : rows) {
       counts.total += 1;
       if (r.role === "owner") counts.owner += 1;
       else if (r.role === "receptionist") counts.receptionist += 1;
