@@ -241,3 +241,19 @@ describe("visitBalance mirrors which card money counts (studio_has_gone_live)", 
     expect(visitBalance(ledger({ studioLive: true, cards: [liveCard], refunds: [red("l")] }))?.collectableCents).toBe(12500 + 3000);
   });
 });
+
+// Cash and transfers use the database's own position; only the CARD path assumes the studio is going live (it mirrors the card wall, which judges a live row that way).
+describe("visitBalance: cash/transfer collectable vs card collectable (not-yet-live studio, $100 test charge on a $100 bill)", () => {
+  const b100 = { ...bill, totalCents: 10000 };
+  const testCard = { kind: "card" as const, id: "t", amountCents: 10000, status: "succeeded", at: "t", platformFeeCents: null, test: true };
+  it("a live deployment: cash is offered $0, a real card the full $100", () => {
+    const b = visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: false, cardAssumesLive: true });
+    expect(b).toMatchObject({ collectableCents: 0, cardCollectableCents: 10000 });
+  });
+  it("a test deployment: both follow the database position", () => {
+    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: false, cardAssumesLive: false })).toMatchObject({ collectableCents: 0, cardCollectableCents: 0 });
+  });
+  it("a studio that has gone live: both are $100", () => {
+    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: true, cardAssumesLive: true })).toMatchObject({ collectableCents: 10000, cardCollectableCents: 10000 });
+  });
+});

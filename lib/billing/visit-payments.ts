@@ -125,8 +125,8 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
       cds.push({ kind: "card", id: r.id, amountCents: r.amount_cents as number, status: String(r.status), at: String(r.created_at), platformFeeCents: null, receiptSent: typeof r.receipt_sent_at === "string", ...(r.stripe_livemode !== true ? { test: true } : {}) });
     }
     if (liveProbe.error) return { ok: false };
-    return { ok: true, ledger: { // A live deployment is about to take live cards: the card wall (0394) treats the studio as gone live for a live row being inserted, so the page must not block first (inferStripeLivemode is deployment config, never a caller input).
-      studioLive: (liveProbe.data?.length ?? 0) > 0 || inferStripeLivemode(), bill, cards: cds, externals: ext, refunds: refs, reviewOpen: pos?.review_open === true, reviews } };
+    return { ok: true, ledger: { // studioLive is the database's own position (the live probe only): cash and transfers use it. cardAssumesLive mirrors the card wall (0394), which judges a live row as if the studio had gone live; inferStripeLivemode is deployment config, never a caller input.
+      studioLive: (liveProbe.data?.length ?? 0) > 0, cardAssumesLive: inferStripeLivemode(), bill, cards: cds, externals: ext, refunds: refs, reviewOpen: pos?.review_open === true, reviews } };
   } catch {
     return { ok: false };
   }

@@ -52,7 +52,7 @@ export type LedgerReview = { id: string; amountCents: number; settled: boolean }
 export const OBSERVED_REFUND_LABEL = "Refunded in the Stripe dashboard";
 /** `reviewOpen`: a refund Stripe reported that Hone did not make is waiting for the owner (the payment is frozen and the visit is NOT settled). */
 /** `studioLive`: the studio has gone live (a succeeded live card attempt exists), so card payments that are not live no longer count toward capacity (studio_has_gone_live, 0394). */
-export type VisitLedger = { studioLive?: boolean; bill: LedgerBill | null; cards: LedgerCard[]; externals: LedgerExternal[]; refunds: LedgerRefund[]; reviewOpen?: boolean; reviews?: LedgerReview[] };
+export type VisitLedger = { studioLive?: boolean; cardAssumesLive?: boolean; bill: LedgerBill | null; cards: LedgerCard[]; externals: LedgerExternal[]; refunds: LedgerRefund[]; reviewOpen?: boolean; reviews?: LedgerReview[] };
 
 /**
  * A billed attempt's OWN refund columns (0078 full only, 0240 full amount only) are Stripe's cumulative statement of the whole payment. When they say more
@@ -73,18 +73,28 @@ export type VisitBalance = {
   totalCents: number; confirmedCents: number; pendingCents: number; cardCents: number; refundedCents: number;
   /** Still collectable: what a new tender may take. Pending transfers are NOT in it (they are reserved). */
   collectableCents: number;
+  /** What a NEW CARD may take: the card wall (0394) judges a live card as if the studio had gone live, so on a live deployment this can exceed collectableCents (cash and transfers use the database's own position). */
+  cardCollectableCents: number;
   /** Still owed in the sense of "not yet received": collectable plus the pending transfers. */
   owedCents: number;
 };
 
 /** Mirrors the database's visit_payment_position (0394). The database is the authority; a test keeps this honest. */
 export function visitBalance(l: VisitLedger): VisitBalance | null {
+  const own = positionOf(l, l.studioLive === true);
+  if (!own) return null;
+  // The card path mirrors the trigger: a live deployment's card is a live row, so the position is computed as if the studio had gone live. Cash and transfers do NOT assume it.
+  const card = l.cardAssumesLive === true ? positionOf(l, true) : own;
+  return { ...own, cardCollectableCents: card ? card.collectableCents : own.collectableCents };
+}
+
+function positionOf(l: VisitLedger, studioLive: boolean): Omit<VisitBalance, "cardCollectableCents"> | null {
   if (!l.bill) return null;
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   const confirmedCents = sum(l.externals.filter((e) => e.state === "confirmed").map((e) => e.amountCents));
   const pendingCents = sum(l.externals.filter((e) => e.state === "pending_confirmation").map((e) => e.amountCents));
   // card_counts_toward_capacity (0394): once the studio has gone live, a card payment that is not live is not subtracted. Before that every card counts, as it always did.
-  const countsCard = (c: { test?: boolean }) => !(l.studioLive === true && c.test === true);
+  const countsCard = (c: { test?: boolean }) => !(studioLive && c.test === true);
   const cardCents = sum(l.cards.filter((c) => ["ready", "pending_stripe", "succeeded"].includes(c.status) && countsCard(c)).map((c) => c.amountCents));
   // Only a SUCCEEDED refund counts (0394): one still with Stripe may yet fail, so it frees no capacity.
   const refundedCents = sum(l.refunds.filter((r) => r.status === "succeeded").map((r) => r.amountCents));
@@ -108,6 +118,7 @@ export type HistoryLine = {
 };
 export const TEST_PAYMENT_LABEL = "Test payment";
 export const TEST_REFUND_LABEL = "Test refund";
+export const TEST_CARD_HOLDS_NOTE = "A test card payment still counts until the studio's first real card payment.";
 export const TEST_EXCLUDED_NOTE = "Excluded from statements and analytics.";
 
 const METHOD_LABEL: Record<ExternalMethod, string> = { paid_cash: "Cash", paid_e_transfer: "E-transfer", paid_other_external: "Transfer or other" };

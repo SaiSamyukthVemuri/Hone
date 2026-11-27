@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "
 import { BALANCE_DUE_LABEL, moneyRows, refundStatusLabel, visitMoneySummary } from "@/lib/billing/visit-money";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
-  canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
+  canStartCharge, cardReduce, TEST_CARD_HOLDS_NOTE, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
   STATUS_LABEL, TEST_EXCLUDED_NOTE, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, idDisposition, awaitRefund, awaitFromAnswer, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
@@ -65,7 +65,11 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const [phase, dispatch] = useReducer(cardReduce, { phase: "idle" } as CardPhase);
   const pollRef = useRef(0);
   const fmt = (c: number) => formatMoney(c, currency);
-  const collectable = balance?.collectableCents ?? 0;
+  const ownCollectable = balance?.collectableCents ?? 0;
+  const cardCollectable = balance?.cardCollectableCents ?? 0;
+  // A card is judged by the card wall as a live row (a live deployment); cash and transfers by the database's own position, so the screen never offers what the database would refuse.
+  const collectable = tender === "card" ? cardCollectable : ownCollectable;
+  const testCardHolds = tender !== "card" && cardCollectable > ownCollectable;
 
   useEffect(() => { setAmount((a) => (a === "" && collectable > 0 ? (collectable / 100).toFixed(2) : a)); }, [collectable]);
 
@@ -284,7 +288,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         )}
       </ul>
 
-      {!unknown && collectable > 0 && (
+      {!unknown && (ownCollectable > 0 || cardCollectable > 0) && (
         <fieldset className="flex flex-col gap-3" disabled={busy}>
           <legend className="text-sm font-semibold">Add a payment</legend>
           <div role="radiogroup" aria-label="How was it paid?" className="flex flex-wrap gap-2">
@@ -298,7 +302,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
             Amount ({currency.toUpperCase()})
             <input inputMode="decimal" autoComplete="off" className={input} value={amount} onChange={(e) => setAmount(e.target.value)} aria-describedby="split-amount-help" />
           </label>
-          <p id="split-amount-help" className="text-sm text-neutral-600 dark:text-neutral-400">Up to {fmt(collectable)} can be collected now.</p>
+          <p id="split-amount-help" className="text-sm text-neutral-600 dark:text-neutral-400">Up to {fmt(collectable)} can be collected now.{testCardHolds && <span data-testid="split-test-card-holds"> {TEST_CARD_HOLDS_NOTE}</span>}</p>
           <button type="button" className={primary} disabled={cents === null || cents > collectable || busy}
             onClick={() => (tender === "card" ? void chargeCard() : void recordExternal())}>
             {submitLabel}

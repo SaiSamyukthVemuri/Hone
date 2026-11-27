@@ -45,7 +45,7 @@ describe("loadVisitLedger marks TEST-mode card entries with the statement's sign
 });
 
 describe("studioLive when the studio has no live charge yet (0394 card wall)", () => {
-  it("is false in a test deployment and TRUE in a live deployment, so the page never blocks the first real card before the trigger runs", async () => {
+  it("is the database position only (false here in both deployments); cardAssumesLive follows the deployment, so only the card path mirrors the trigger", async () => {
     h.noLiveAttempts = true;
     try {
       seed(false);
@@ -56,7 +56,9 @@ describe("studioLive when the studio has no live charge yet (0394 card wall)", (
       const live = await loadVisitLedger("s", "ap");
       if (prev === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = prev;
       expect(test.ok && test.ledger.studioLive).toBe(false);
-      expect(live.ok && live.ledger.studioLive).toBe(true);
+      expect(live.ok && live.ledger.studioLive).toBe(false);
+      expect(test.ok && test.ledger.cardAssumesLive).toBe(false);
+      expect(live.ok && live.ledger.cardAssumesLive).toBe(true);
     } finally { h.noLiveAttempts = false; }
   });
 });
