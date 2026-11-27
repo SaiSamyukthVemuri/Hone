@@ -306,12 +306,13 @@ describe("the step that emits the matrix actually RUNS", () => {
     };
     // Evaluates exactly the expression shapes these two conditions use; anything
     // else is left unrewritten and refused, so the evaluator cannot silently pass.
-    const evalIf = (expr: string, o: Record<string, string>) => {
+    const evalIf = (expr: string, o: Record<string, string>, event = "push") => {
       const js = expr
         .replace(/^\$\{\{\s*|\s*\}\}$/g, "")
         // CI-COST-03: the validate gate, taken as passed (records-preflight.test.ts pins it).
         .replace("!cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success')", "true")
         .replace(/github\.event\.pull_request\.draft != true/g, "true")
+        .replace(/github\.event_name != '(\w+)'/g, (_, v) => String(event !== v))
         .replace(/needs\.changes\.outputs\.(\w+) == '(\w+)'/g, (_, k, v) => String(o[k] === v))
         .replace(/contains\(needs\.changes\.outputs\.(\w+), '([^']+)'\)/g, (_, k, v) => String((o[k] ?? "").includes(v)));
       expect(js, "only booleans and operators remain").toMatch(/^[\s()|&!truefals]*$/);
@@ -336,7 +337,8 @@ describe("the step that emits the matrix actually RUNS", () => {
         rmSync(dir, { recursive: true, force: true });
       }
     };
-    const SHARDS_EXTENDED = "(needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true')";
+    // CI-COST-04: the extended term holds on a production push only.
+    const SHARDS_EXTENDED = "(github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true')";
     const DATABASE = "needs.changes.outputs.database == 'true'";
     // [name, files, storage-photos runs, webkit runs]
     const cases: Array<[string, string[], boolean, boolean]> = [
@@ -369,7 +371,35 @@ describe("the step that emits the matrix actually RUNS", () => {
         }
       }
     }
-  });
+    // CI-COST-04. The cases above are the production push. On a pull request the
+    // extended term alone starts neither lane; every other reason still does.
+    // null: not asserted. A spec's browser group may select the other lane's specs too.
+    const prCases: Array<[string, string[], boolean | null, boolean | null]> = [
+      ["docs-only", ["docs/README.md"], false, false],
+      ["migration-only (database lane, no browser)", ["supabase/migrations/0999_x.sql"], true, false],
+      ["extended via unattributed app code", ["app/(app)/dashboard/page.tsx"], false, false],
+      ["full matrix", ["vitest.config.ts"], true, true],
+      ["a storage photo spec", ["e2e/fett-client-portrait.spec.ts"], true, null],
+      ["a webkit spec", ["e2e/availability-hours-editor.spec.ts"], null, true],
+      ["a payment spec", ["e2e-payment/quick-checkout-payment.spec.ts"], false, true],
+    ];
+    for (const job of ["storage-photos", "webkit-hon-62"]) {
+      const cond = ifOf(job);
+      for (const [name, files, wantStorage, wantWebkit] of prCases) {
+        const want = job === "storage-photos" ? wantStorage : wantWebkit;
+        if (want === null) continue;
+        const o = outputsFor(files);
+        expect(evalIf(cond, o, "pull_request"), `${job} on a PR: ${name}`).toBe(want);
+        if (name.startsWith("extended via")) {
+          // Non-vacuity: the shards really run extended here, and the same diff
+          // still starts the lane on the production push.
+          expect(o.browser_run, name).toBe("true");
+          expect(o.browser_extended, name).toBe("true");
+          expect(evalIf(cond, o, "push"), `${job} on the push: ${name}`).toBe(true);
+        }
+      }
+    }
+  }, 30_000); // drives the real emit step through several classifications: ~4 s alone, over the 5 s default under load
 });
 
 describe("the split covers the same specs, once and only once", () => {

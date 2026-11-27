@@ -64,12 +64,14 @@ describe("CI-DRAFT-01 triggers", () => {
 // lanes' extended term also needs browser_run, because `changes` emits
 // browser_extended=true for an empty (no-browser) selection too. Named here so
 // every other byte of those conditions is still proved unchanged against the base.
+// CI-COST-04: that same term also needs a non-pull_request event, so on a PR these
+// two lanes run only for their own spec, database, payment or full-matrix terms.
 const EXTENDED_TERM = "needs.changes.outputs.browser_extended == 'true'";
 const LATER_EDITS: Record<string, (inner: string) => string> = {
   // storage-photos also runs on any database change (CI's db lane has no storage-api).
   // The photo label spec (uploads, so it needs storage) is the other deliberate later edit: a diff touching only that spec starts this job.
-  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM}) || needs.changes.outputs.database == 'true'`) + " || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts')",
-  "webkit-hon-62": (s) => s.replace(EXTENDED_TERM, `(needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM})`),
+  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM}) || needs.changes.outputs.database == 'true'`) + " || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts')",
+  "webkit-hon-62": (s) => s.replace(EXTENDED_TERM, `(github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM})`),
 };
 
 describe("CI-DRAFT-01 job conditions", () => {
