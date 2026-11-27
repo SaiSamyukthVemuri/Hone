@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { installWebkitLocalhostFix, isWebKit } from "./helpers/webkit-localhost";
 
 // HON-124 item 13: a keyboard-operable "Back to top" on the long public pages. Public, static pages: no seed and no sign-in.
 //   - it is not there at the top of the page, and it appears once the visitor has scrolled well down;
@@ -11,6 +12,11 @@ test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true
 
 const PAGES = ["/pricing", "/privacy", "/resources/electrolysis-treatment-record-checklist"];
 const BUTTON = "[data-back-to-top]";
+
+// WebKit only: strip the https upgrade the app sends for http://localhost (e2e/helpers/webkit-localhost.ts). A no-op in Chromium.
+test.beforeEach(async ({ page }) => {
+  if (isWebKit(page)) await installWebkitLocalhostFix(page.context());
+});
 
 const scrollY = (page: Page) => page.evaluate(() => Math.round(window.scrollY));
 
