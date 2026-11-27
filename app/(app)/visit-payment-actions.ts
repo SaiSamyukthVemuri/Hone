@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { callCommand, loadVisitLedger, splitPaymentsEnabled } from "@/lib/billing/visit-payments";
+import { callCommand, loadVisitLedger, readRefundRow, splitPaymentsEnabled } from "@/lib/billing/visit-payments";
 import {
   commandNote, parseDollarsToCents, visitBalance, type CommandNote, type ExternalMethod, type VisitBalance, type VisitLedger,
 } from "@/lib/billing/visit-payments-core";
@@ -288,7 +288,9 @@ export async function refundCardPaymentAction(formData: FormData): Promise<CardR
   if ((row.result !== "requested" && row.result !== "already_requested") || !row.id) return finish(who.studioId, appointmentId, row.result, row.id);
 
   // The ledger row decides whether Stripe still needs asking: a repeated request returns the first row, and a settled row is not sent again.
-  const sent = await refundCardPaymentPartial({ refundId: row.id, studioId: who.studioId, feeReturnedCents: null });
+  const pending = await readRefundRow(who.studioId, row.id);
+  if (!pending) return { ...(await finish(who.studioId, appointmentId, "unavailable", row.id)), ok: false, refundId: row.id, checking: true, note: { tone: "info", message: "Checking refund status" } };
+  const sent = await refundCardPaymentPartial({ row: pending, feeReturnedCents: null });
   const out = await finish(who.studioId, appointmentId, sent.outcome === "failed" ? "refund_failed" : row.result, row.id);
   if (sent.outcome === "unknown") return { ...out, ok: true, checking: true, refundId: row.id, note: { tone: "info", message: "Checking refund status" } };
   if (sent.outcome === "failed" || sent.outcome === "blocked") return { ...out, ok: false, refundId: row.id, note: { tone: "blocked", message: sent.message } };

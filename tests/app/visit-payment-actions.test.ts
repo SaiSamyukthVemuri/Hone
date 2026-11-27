@@ -27,6 +27,7 @@ vi.mock("@/lib/supabase/queries", () => ({
 vi.mock("@/lib/billing/visit-payments", () => ({
   splitPaymentsEnabled: async () => S.enabled,
   loadVisitLedger: async () => ({ ok: true, ledger: S.ledger }),
+  readRefundRow: async (studioId: string, id: string) => ({ id, studioId, attemptId: "44444444-4444-4444-8444-444444444444", amountCents: 4000, status: "pending_stripe", source: "hone" }),
   callCommand: async (fn: string, args: Record<string, unknown>) => { S.commandCalls.push([fn, args]); return S.command; },
 }));
 vi.mock("@/lib/billing/payment-partial-refund", () => ({
@@ -223,7 +224,7 @@ describe("partial card refund", () => {
     expect(S.commandCalls[0][0]).toBe("request_payment_refund");
     expect(S.commandCalls[0][1]).toMatchObject({ p_attempt_id: PAY, p_external_payment_id: null, p_amount_cents: 4000, p_kind: "payment_reversal" });
     expect(S.refundCalls).toHaveLength(1);
-    expect(S.refundCalls[0]).toMatchObject({ refundId: "refund-row-1", studioId: "11111111-1111-4111-8111-111111111111" });
+    expect(S.refundCalls[0]).toMatchObject({ row: { id: "refund-row-1", studioId: "11111111-1111-4111-8111-111111111111", amountCents: 4000 } });
   });
   it("a lost Stripe answer says Checking refund status, is not an error, and offers no second refund", async () => {
     S.command = { result: "requested", id: "refund-row-1", state: "pending_stripe" };
@@ -240,7 +241,7 @@ describe("partial card refund", () => {
   it("a repeated request (same submission) re-checks the SAME row", async () => {
     S.command = { result: "already_requested", id: "refund-row-1", state: "pending_stripe" };
     await refundCardPaymentAction(f());
-    expect(S.refundCalls[0]).toMatchObject({ refundId: "refund-row-1" });
+    expect(S.refundCalls[0]).toMatchObject({ row: { id: "refund-row-1" } });
   });
   it("kinds and amounts are validated before anything runs", async () => {
     for (const bad of [{ kind: "discount" }, { amount_dollars: "0" }, { reason: "" }, { attempt_id: "x" }] as Record<string, string>[]) {

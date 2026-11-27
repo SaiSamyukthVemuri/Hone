@@ -102,3 +102,15 @@ export async function callCommand(fn: string, args: Record<string, unknown>): Pr
     return { result: "unavailable", id: null, state: null };
   }
 }
+
+/** One refund row as the signed-in owner (the table is owner-readable under RLS; no service-role grant). null = not readable here. */
+export async function readRefundRow(studioId: string, refundId: string): Promise<import("@/lib/billing/payment-partial-refund").PendingRefundRow | null> {
+  try {
+    const { data, error } = await (await createClient()).from("payment_refunds")
+      .select("id, studio_id, attempt_id, amount_cents, status, source").eq("id", refundId).eq("studio_id", studioId).maybeSingle();
+    if (error || !data || typeof data.attempt_id !== "string") return null;
+    return { id: data.id as string, studioId: data.studio_id as string, attemptId: data.attempt_id, amountCents: data.amount_cents as number, status: String(data.status), source: String(data.source) };
+  } catch {
+    return null;
+  }
+}

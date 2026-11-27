@@ -42,21 +42,31 @@ export type PartialCardRefundOutcome =
  * and finish_payment_refund records an outcome once. A connection or server error is "unknown": the row stays pending_stripe and nothing is
  * recorded as failed (a retry gets the same Stripe refund back). `feeReturnedCents` is decided by the caller from the charge's platform fee.
  */
-export async function refundCardPaymentPartial(args: { refundId: string; studioId: string; feeReturnedCents: number | null }): Promise<PartialCardRefundOutcome> {
+export type PendingRefundRow = { id: string; studioId: string; attemptId: string; amountCents: number; status: string; source: string };
+
+export async function refundCardPaymentPartial(args: { row: PendingRefundRow; feeReturnedCents: number | null }): Promise<PartialCardRefundOutcome> {
+  // The service role has no grant on payment_refunds (0393 gives the table to owners under RLS only), so the CALLER reads the row as the signed-in
+  // owner and passes it in. Everything Stripe is told comes from that row and from the attempt, never from the browser.
   const admin = createAdminClient();
   const livemode = inferStripeLivemode();
-  const { data: row, error } = await admin
-    .from("payment_refunds")
-    .select("id, studio_id, attempt_id, amount_cents, status, source")
-    .eq("id", args.refundId).eq("studio_id", args.studioId).maybeSingle();
-  if (error || !row || !row.attempt_id || row.source !== "hone") return { outcome: "blocked", message: "This refund could not be found." };
+  const row = args.row;
+  if (row.source !== "hone") {
+    logInternal("payment_partial_refund_blocked", { refundId: row.id, why: "not_hone_source" });
+    return { outcome: "blocked", message: "This refund could not be found." };
+  }
   if (row.status !== "pending_stripe") return { outcome: "already_settled", message: "This refund was already settled." };
   const { data: attempt } = await admin
     .from("payment_charge_attempts")
     .select("id, studio_id, client_id, status, stripe_charge_id, stripe_account_id, stripe_livemode, charge_reason")
-    .eq("id", row.attempt_id).eq("studio_id", args.studioId).maybeSingle();
-  if (!attempt || attempt.status !== "succeeded" || !attempt.stripe_charge_id) return { outcome: "blocked", message: "Only a succeeded card payment can be refunded." };
-  if (attempt.stripe_livemode !== livemode) return { outcome: "blocked", message: MODE_MISMATCH_MESSAGE };
+    .eq("id", row.attemptId).eq("studio_id", row.studioId).maybeSingle();
+  if (!attempt || attempt.status !== "succeeded" || !attempt.stripe_charge_id) {
+    logInternal("payment_partial_refund_blocked", { refundId: row.id, why: "attempt_not_refundable", status: attempt?.status ?? null, hasChargeId: !!attempt?.stripe_charge_id });
+    return { outcome: "blocked", message: "Only a succeeded card payment can be refunded." };
+  }
+  if (attempt.stripe_livemode !== livemode) {
+    logInternal("payment_partial_refund_blocked", { refundId: row.id, why: "mode_mismatch" });
+    return { outcome: "blocked", message: MODE_MISMATCH_MESSAGE };
+  }
 
   const finish = async (outcome: "succeeded" | "failed", stripeRefundId: string | null, stripeStatus: string | null, code: string | null, fee: number | null) => {
     const { data, error: finErr } = await admin.rpc("finish_payment_refund", {
@@ -71,11 +81,11 @@ export async function refundCardPaymentPartial(args: { refundId: string; studioI
   try {
     refund = await createStripeRefund(getSessionPaymentStripe(), {
       chargeId: attempt.stripe_charge_id as string,
-      amountCents: row.amount_cents as number,
+      amountCents: row.amountCents,
       accountId: (attempt.stripe_account_id as string | null) ?? null,
-      idempotencyKey: buildPartialRefundIdempotencyKey(row.id as string),
+      idempotencyKey: buildPartialRefundIdempotencyKey(row.id),
       metadata: {
-        hone_payment_refund_id: row.id as string,
+        hone_payment_refund_id: row.id,
         hone_payment_charge_attempt_id: attempt.id as string,
         hone_studio_id: attempt.studio_id as string,
         hone_charge_reason: String(attempt.charge_reason),
@@ -88,7 +98,7 @@ export async function refundCardPaymentPartial(args: { refundId: string; studioI
       return f.ok ? { outcome: "failed", message: "Stripe refused this refund. Nothing was returned." } : { outcome: "unknown", message: "Checking refund status" };
     }
     // Connection or server error: Stripe may have refunded. Leave the row pending_stripe; checking again is safe.
-    logInternal("payment_partial_refund_unknown_outcome", { refundId: row.id });
+    logInternal("payment_partial_refund_unknown_outcome", { refundId: row.id, errorName: err instanceof Error ? err.name : typeof err });
     return { outcome: "unknown", message: "Checking refund status" };
   }
 

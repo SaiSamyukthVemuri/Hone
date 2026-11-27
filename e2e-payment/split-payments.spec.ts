@@ -11,6 +11,18 @@ import { openCheckout } from "./helpers/checkout-flow";
 // ambiguous-response spec does it (forwarded to the REAL server, then the browser-facing response is dropped), so the "connection lost after Stripe
 // accepted" cases are real. Every count is read from the database and the fake Stripe ledger, never inferred from the screen.
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import type { TestInfo } from "@playwright/test";
+
+/** An iPhone-sized screenshot, attached to the report and, when HONE_E2E_EVIDENCE_DIR is set, written there (a passing test keeps no attachment files). */
+async function shot(page: Page, testInfo: TestInfo, name: string) {
+  const body = await page.screenshot();
+  await testInfo.attach(name, { body, contentType: "image/png" });
+  const dir = process.env.HONE_E2E_EVIDENCE_DIR;
+  if (dir) { mkdirSync(dir, { recursive: true }); writeFileSync(path.join(dir, `${name}.png`), body); }
+}
+
 const DEV = "$"; // money prefix in copy
 const money = (c: number) => `${DEV}${(c / 100).toFixed(2)} CAD`;
 
@@ -60,8 +72,7 @@ async function loseResponses(page: Page, passFirst: number) {
     if (seen <= passFirst) return route.continue();
     if (seen === passFirst + 1) {
       const res = await route.fetch();
-      const text = await res.text().catch(() => "");
-      console.log(`[split-e2e] dropped action response: ${text.replace(/\s+/g, " ").slice(0, 500)}`);
+      await res.body().catch(() => {});
     }
     await route.abort("failed").catch(() => {});
   };
@@ -84,7 +95,7 @@ test("the $225 example: lost response after Stripe accepts, then cash once, tran
   await expect(panel.getByRole("button", { name: /^Charge card/ })).toHaveCount(0);
   expect(pis()).toHaveLength(1);
   await page.setViewportSize({ width: 390, height: 844 });
-  await testInfo.attach("checking-payment-status-iphone-390x844", { body: await page.screenshot(), contentType: "image/png" });
+  await shot(page, testInfo, "checking-payment-status-iphone-390x844");
   await page.setViewportSize({ width: 1080, height: 810 });
 
   // ---- Reconnect: the same attempt is re-asked, never recharged.
@@ -143,8 +154,9 @@ test("the $225 example: lost response after Stripe accepts, then cash once, tran
   await pick(panel, "Card");
   await amount(panel, "75.00");
   await panel.getByRole("button", { name: `Charge card ${money(7500)}`, exact: true }).click();
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(0), { timeout: 30_000 });
-  expect((await attempts()).map((a) => a.status)).toEqual(["succeeded", "succeeded"]);
+  await expect.poll(async () => (await attempts()).map((a) => a.status), { timeout: 30_000 }).toEqual(["succeeded", "succeeded"]);
+  await page.goto("/dashboard");
+  await expect(page.getByTestId("appointment-payment-paid")).toBeVisible(); // $100 + $50 cash + $75 card = $225: now Paid
   expect(pis()).toHaveLength(2); // $100 and $75: no duplicate anywhere
   await expect.poll(receipts, { timeout: 30_000 }).toBe(2); // one receipt per card payment
   expect(callsForAccount(seed.connectedAccountId).filter((c) => c.replay)).toHaveLength(0);
@@ -160,9 +172,11 @@ test("a transfer confirmed settles the bill and nothing is charged", async ({ pa
   // Reserved in full: still owed, and no way to charge a card for it.
   await expect(panel.getByRole("button", { name: /^Charge card/ })).toHaveCount(0);
   await panel.getByRole("button", { name: `Confirm ${money(22500)} transfer received`, exact: true }).click();
-  await expect(panel.getByTestId("split-pending-transfer")).toHaveCount(0);
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(0));
-  expect((await externals()).map((e) => e.state)).toEqual(["confirmed"]);
+  // Fully paid: the visit leaves Checkout, so read the outcome from the database and the reloaded roster, not from a modal that closes.
+  await expect.poll(async () => (await externals()).map((e) => e.state), { timeout: 30_000 }).toEqual(["confirmed"]);
+  await page.goto("/dashboard");
+  await expect(page.getByTestId("appointment-payment-paid")).toBeVisible();
+  await expect(page.getByTestId("checkout-button")).toHaveCount(0);
   expect(pis()).toHaveLength(0);
   expect(await attempts()).toHaveLength(0);
 });
@@ -184,7 +198,7 @@ test("a $40 partial refund with a lost response: ONE refund at Stripe, $60 still
   await expect(panel.getByTestId("split-note")).toContainText("Checking refund status", { timeout: 30_000 });
   expect(refundsAtStripe()).toHaveLength(1);
   await page.setViewportSize({ width: 390, height: 844 });
-  await testInfo.attach("checking-refund-status-iphone-390x844", { body: await page.screenshot(), contentType: "image/png" });
+  await shot(page, testInfo, "checking-refund-status-iphone-390x844");
   await page.setViewportSize({ width: 1080, height: 810 });
   await restore();
 
@@ -201,4 +215,40 @@ test("a $40 partial refund with a lost response: ONE refund at Stripe, $60 still
   expect(refundsAtStripe()).toHaveLength(1);
   expect(refundsAtStripe()[0].amountCents).toBe(4000);
   expect((await refunds()).map((r) => [r.amount_cents, r.status])).toEqual([[4000, "succeeded"]]);
+});
+
+test("click order 2: a transfer and a card for the same $75 submitted at the same moment never both hold it", async ({ page, browser }) => {
+  const panel = await openSplit(page);
+  await amount(panel, "150.00");
+  await panel.getByRole("button", { name: `Charge card ${money(15000)}`, exact: true }).click();
+  await expect.poll(async () => (await attempts()).map((a) => a.status), { timeout: 30_000 }).toEqual(["succeeded"]);
+  await page.goto("/dashboard");
+  const modalA = await openCheckout(page);
+  const panelA = modalA.getByTestId("split-visit-payments");
+  await expect(panelA.getByTestId("split-collectable")).toHaveText(money(7500));
+
+  const other = await browser.newContext({ storageState: await page.context().storageState(), viewport: { width: 1080, height: 810 } });
+  const pageB = await other.newPage();
+  await pageB.goto("/dashboard");
+  const panelB = (await openCheckout(pageB)).getByTestId("split-visit-payments");
+  await expect(panelB.getByTestId("split-collectable")).toHaveText(money(7500));
+
+  await pick(panelA, "E-transfer");
+  await amount(panelA, "75.00");
+  await pick(panelB, "Card");
+  await amount(panelB, "75.00");
+  const piBefore = pis().length;
+  await Promise.all([
+    panelA.getByRole("button", { name: `Record transfer ${money(7500)}`, exact: true }).click(),
+    panelB.getByRole("button", { name: `Charge card ${money(7500)}`, exact: true }).click(),
+  ]);
+  await expect.poll(async () => (await externals()).length + (await attempts()).length, { timeout: 30_000 }).toBeGreaterThanOrEqual(2);
+  await page.waitForTimeout(3000);
+  const pending = (await externals()).filter((e) => e.state === "pending_confirmation");
+  const liveCards = (await attempts()).filter((a) => a.status !== "failed");
+  // Whoever the database let in first holds the $75; the other is refused. Never both: $150 + $75 + $75 would be $300 against a $225 bill.
+  const holders = pending.length + (liveCards.length - 1);
+  expect(holders).toBe(1);
+  if (pending.length === 1) expect(pis()).toHaveLength(piBefore); // the transfer won: ZERO new Stripe attempts for the reserved amount
+  await other.close();
 });
