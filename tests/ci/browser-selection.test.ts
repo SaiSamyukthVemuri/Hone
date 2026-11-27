@@ -288,7 +288,8 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // above. It is REQUIRED, not opt-in. Cost, to be MEASURED on an owned stack and recorded in the pull request: three cases in the chromium project
     // (desktop, a 390px iPhone-sized emulation, and the rollout-off toggle check), each a seeded studio and a login; the iPhone WebKit case runs only in the
     // non-required `webkit-iphone-visit` project and skips everywhere else.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(72);
+    // Now 73 (was 72): quick-book-feedback.spec.ts (HON-124 item 7: hover, pressed and keyboard focus on the Quick Book drawer's buttons, and the 44px floor under a coarse pointer) joined `calendar`, the group a change to app/(app)/calendar/** selects. RECORDED AS A DECISION per the note above. It is REQUIRED, not opt-in. Cost, MEASURED on an owned stack and recorded in the pull request: three cases in the chromium project (desktop, 390 px, and a touch-emulated height check), each a seeded studio, a login and one drawer walk: about 2 minutes in all.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(73);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
