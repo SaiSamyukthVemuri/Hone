@@ -8,6 +8,7 @@ import { postcareContactEmail } from "@/lib/email/send-appointment";
 import { buildPortalReplyNotificationEmail } from "@/lib/email/templates/portal-reply-notification";
 import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
 
 const REPLY_BODY_MIN = 1;
 const REPLY_BODY_MAX = 5000;
@@ -51,12 +52,13 @@ function shortReplyError(message: string | null | undefined): string {
 // path (DB failure) is rare and benign.
 export async function markPortalMessageReviewedAction(
   formData: FormData,
-): Promise<void> {
+): Promise<ActionResult> {
+  // HON-124 item 20: a refusal is now RETURNED so the visitor is told (it used to return silently and leave an unchanged button).
   const messageId = (formData.get("message_id") ?? "").toString().trim();
-  if (!messageId) return;
+  if (!messageId) return actionFailed("Reload the page and try again.");
 
   const session = await getCurrentPortalSession();
-  if (!session) return;
+  if (!session) return actionFailed("Your session has ended. Reload the page and try again.");
 
   const admin = createAdminClient();
   const { error } = await admin
@@ -76,10 +78,11 @@ export async function markPortalMessageReviewedAction(
         timestamp: new Date().toISOString(),
       }),
     );
-    return;
+    return actionFailed("Could not mark this message as reviewed. Try again.");
   }
 
   revalidatePath("/portal");
+  return ACTION_OK;
 }
 
 // PR #129. Portal-side server action that lets the authenticated

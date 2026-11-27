@@ -8,7 +8,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/queries", () => ({ requirePractitionerWithStudio: async () => ({ practitioner: { id: "p" }, studio: { id: "s", name: "Studio", timezone: "UTC" } }) }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: () => ({ select: () => ({ eq: () => ({}) }) }) }) }));
 vi.mock("@/lib/notifications/owner-only-events", () => ({ scopeNotificationsToViewer: () => ({ order: () => ({ limit: async () => ({ data: [], error: null }) }) }) }));
-vi.mock("@/app/(app)/notifications/actions", () => ({ markAllReadFormAction: async () => {} }));
+vi.mock("@/app/(app)/notifications/actions", () => ({ markAllReadFormAction: async () => {}, markAllNotificationsAsReadAction: async () => ({ ok: true, updated: 0 }) }));
 vi.mock("@/components/pending-button", () => ({ PendingButton: () => null }));
 vi.mock("@/components/formatted-date-time", () => ({ FormattedDateTime: () => null }));
 vi.mock("@/lib/notifications/disinfectant-alerts", async (orig) => ({ ...(await orig<object>()), checkOverdueDisinfectantAlerts: async (...a: Parameters<Awaited<ReturnType<typeof orig<typeof import("@/lib/notifications/disinfectant-alerts")>>>["checkOverdueDisinfectantAlerts"]>) => unavailableState.check ?? (await orig<typeof import("@/lib/notifications/disinfectant-alerts")>()).checkOverdueDisinfectantAlerts(...a) }));

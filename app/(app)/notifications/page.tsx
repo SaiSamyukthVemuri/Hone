@@ -1,4 +1,4 @@
-import { PendingButton } from "@/components/pending-button";
+import { MarkAllReadForm } from "./MarkAllReadForm";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
@@ -14,7 +14,7 @@ import {
   checkOverdueDisinfectantAlerts,
   type OverdueDisinfectantAlert,
 } from "@/lib/notifications/disinfectant-alerts";
-import { markAllReadFormAction } from "./actions";
+import { markAllNotificationsAsReadAction } from "./actions";
 import type { PractitionerNotification } from "@/lib/types/database";
 import { dbErrorCode } from "@/lib/logging/error-class";
 
@@ -79,11 +79,7 @@ export default async function NotificationsPage() {
         title="Notifications"
         description={`Operational alerts, new bookings, cancellations, and reschedules across ${studio.name}.`}
         action={
-          unreadCount > 0 ? (
-            <form action={markAllReadFormAction}>
-              <PendingButton variant="secondary">Mark all read</PendingButton>
-            </form>
-          ) : null
+          <MarkAllReadForm action={markAllNotificationsAsReadAction} unreadCount={unreadCount} />
         }
       />
 
