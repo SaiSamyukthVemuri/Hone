@@ -505,7 +505,7 @@ function evaluateUnknownStripeWrites(files) {
 // charges, checkout.sessions). This is the generic deny coverage: not a per-
 // resource allowlist (harmless reads like `stripe.invoices.retrieve` stay fine),
 // but "any unclassified mutation through the one enforced client name fails".
-const GETSTRIPE_CALL_SHAPE = /getStripe(?:For)?\s*\([^)]*\)/g;
+const GETSTRIPE_CALL_SHAPE = /(?:getStripe(?:For)?|requireStripeForStudio)\s*\([^)]*\)/g;
 function evaluateGetStripeBinding(files) {
   const offenders = []; // [{ path, snippet }]
   for (const abs of files) {
@@ -523,7 +523,7 @@ function evaluateGetStripeBinding(files) {
       // The function DEFINITION (`export function getStripe()`) is not a call.
       if (/function\s+$/.test(before)) continue;
       // Canonical binding: `const stripe = getStripe()` / `let stripe = …`.
-      if (/\b(?:const|let)\s+stripe\s*=\s*$/.test(before)) continue;
+      if (/\b(?:const|let)\s+stripe\s*=\s*(?:await\s+)?$/.test(before)) continue;
       const snippet = (before.slice(-32) + m[0]).replace(/\s+/g, " ").trim();
       offenders.push({ path: relPosix(abs), snippet });
     }
