@@ -1,6 +1,8 @@
 {
   "pr": 1819,
   "runtime": false,
-  "migrations": [],
+  "migrations": [
+    "supabase/migrations/0386_export_treatment_setup_readings.sql"
+  ],
   "release_receipt": "01-ops/1819-release-receipt.json"
 }
