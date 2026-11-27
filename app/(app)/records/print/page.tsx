@@ -244,53 +244,62 @@ export default async function RecordKeepingPrintPage({
   }
   const { filteredClient, body } = loaded.value;
 
+  const showScope = section === "procedures";
+  const clientScope = procedureFilter.clientId
+    ? filteredClient?.name ?? "(not found in this studio)"
+    : "All clients";
+  const dateScope = procedureFilter.from || procedureFilter.to
+    ? `recorded sessions from ${procedureFilter.from ?? "the first record"} to ${procedureFilter.to ?? "today"}`
+    : null;
+  const historyAvailable = section !== "incidents" || isOwner;
+
   return (
-    <div className="flex flex-col gap-5 bg-white text-neutral-900">
-      {/* Screen-only toolbar. */}
-      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <Link
-          href={`/records?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
-          className="text-sm text-neutral-500 hover:text-neutral-900"
-        >
-          ← Record Keeping
-        </Link>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            href={`/records/print?section=${section}${includeHistory ? "" : "&history=1"}${section === "procedures" ? procedureFilterQuery : ""}`}
-            className="rounded-md border border-neutral-300 px-4 py-3 text-sm text-neutral-700 hover:bg-neutral-50"
-          >
-            {includeHistory ? "Hide history" : "Include history"}
-          </Link>
-          <PrintButton />
-        </div>
-      </div>
-
-      {/* Document header: studio, section, generated timestamp. */}
-      <header className="border-b-2 border-neutral-900 pb-3">
-        <h1 className="text-2xl font-semibold">{SECTION_TITLES[section]}</h1>
-        <p className="mt-1 text-sm">
-          {studio.name} · Generated {generatedAt}
-          {includeHistory ? " · Includes edit history" : ""}
-        </p>
-        {section === "procedures" &&
-          (procedureFilter.clientId ||
-            procedureFilter.from ||
-            procedureFilter.to) && (
-            <p className="mt-1 text-sm font-medium">
-              Filtered: client{" "}
-              {filteredClient?.name ?? "(not found in this studio)"}
-              {procedureFilter.from || procedureFilter.to
-                ? ` · recorded sessions from ${procedureFilter.from ?? "the first record"} to ${procedureFilter.to ?? "today"}`
-                : ""}
-            </p>
+    <div className="flex min-w-0 flex-col gap-5 text-neutral-900 dark:text-neutral-100 print:block print:text-black">
+      <Link
+        href={`/records?section=${section}${section === "procedures" ? procedureFilterQuery : ""}`}
+        className="w-fit text-sm font-medium underline underline-offset-4 print:hidden"
+      >
+        ← Record Keeping
+      </Link>
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_15rem] print:block">
+        <aside className="flex min-w-0 flex-col items-start gap-3 rounded-lg border border-neutral-200 p-4 lg:col-start-2 lg:row-start-1 dark:border-neutral-700 print:hidden">
+          <h2 className="font-semibold">Export scope</h2>
+          <p className="text-sm">
+            {SECTION_TITLES[section]}
+            {showScope && <span className="mt-1 block">{clientScope}</span>}
+            {showScope && dateScope && <span className="block capitalize">{dateScope}</span>}
+          </p>
+          {historyAvailable && (
+            <Link
+              href={`/records/print?section=${section}${includeHistory ? "" : "&history=1"}${section === "procedures" ? procedureFilterQuery : ""}`}
+              className="inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4"
+            >
+              {includeHistory ? "Hide history" : "Include history"}
+            </Link>
           )}
-        <p className="text-[11px] text-neutral-500">
-          Record-keeping support generated from Hone records. Missing
-          information is shown as Not recorded.
-        </p>
-      </header>
-
-      {body}
+          <PrintButton />
+        </aside>
+        <article className="min-w-0 rounded-lg border border-neutral-200 bg-white p-5 text-neutral-900 sm:p-8 lg:col-start-1 lg:row-start-1 print:rounded-none print:border-0 print:p-0">
+          <header className="mb-4 border-b border-neutral-300 pb-4">
+            <p className="mb-4 text-xs font-medium text-neutral-500 print:hidden">Print preview</p>
+            <h1 className="text-2xl font-semibold">{SECTION_TITLES[section]}</h1>
+            <p className="mt-1 text-sm">
+              {studio.name} · Generated {generatedAt}
+              {historyAvailable && includeHistory ? " · Includes edit history" : ""}
+            </p>
+            {showScope && (procedureFilter.clientId || dateScope) && (
+              <p className="mt-1 text-sm font-medium">
+                {procedureFilter.clientId ? "Filtered: client " : ""}{clientScope}
+                {dateScope && ` · ${dateScope}`}
+              </p>
+            )}
+            <p className="mt-2 text-xs text-neutral-600">
+              Generated from studio records. Missing information is shown as Not recorded.
+            </p>
+          </header>
+          {body}
+        </article>
+      </div>
     </div>
   );
 }

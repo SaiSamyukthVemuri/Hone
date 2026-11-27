@@ -10,6 +10,7 @@ import {
   getSessionBlockCount,
   getSavedBlockSetup,
   sql,
+  setPlatformRolloutMode,
 } from "./helpers/seed";
 import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 import { sessionPaymentRegion } from "../e2e-payment/helpers/checkout-flow";
@@ -19,18 +20,16 @@ import { E2E_APP_ORIGIN } from "./helpers/local-env";
 // HON-80: the optional charting "New view" switch, in a real browser on the LOCAL stack, with a LOCAL SYNTHETIC studio only (seedE2eStudio makes the
 // studio, the owner and the client; nothing hosted is read, copied or touched).
 //
-// OPT-IN. The switch is shown only for a studio the rollout setting names, and an empty setting hides it for everyone. This spec therefore runs only
-// when the web server is started with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all (the harness passes the shell's environment through to the app server),
-// and is SKIPPED otherwise, so ordinary lanes are unaffected. The setting's value is a local test value; no deployed environment is involved.
-//
-// HOW THE SETTING REACHES THE SERVER. e2e/helpers/local-env.ts (tracked, not edited here) does not name this variable. Playwright applies webServer.env OVER
-// the inherited environment, so a variable exported in the shell that launches Playwright reaches the app server unchanged. The first test below proves it
-// did, and fails loudly if it did not, rather than skipping or passing without the switch.
+// THE ROLLOUT IS A DATABASE ROW, not an environment variable. The switch is shown only for a studio the platform rollout enables, and the app reads that
+// per request. This spec sets the row to "all" on the OWNED LOCAL stack before its tests and back to "off" after them (the files run serially, one worker),
+// so no other spec ever sees the switch and no restart is needed. No deployed environment is involved. The first test below proves the row took effect,
+// and fails loudly if it did not, rather than skipping or passing without the switch.
 //
 // What it proves: the switch is a real control outside any form; a switch sends no charting request and moves no DOM node, so unsaved values stay
 // exactly where they are; the same record saves from either view and opens in the other; the choice is remembered; steps 1-5 and the "This visit"
 // summary exist only in New view; and neither view overflows horizontally. DB rows are ground truth.
-test.skip(process.env.HONE_CHARTING_NEW_VIEW_STUDIO_IDS !== "all", "needs the app server started with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all");
+test.beforeAll(async () => { await setPlatformRolloutMode("all"); });
+test.afterAll(async () => { await setPlatformRolloutMode("off"); });
 
 const T = 20_000;
 const root = (page: Page) => page.getByTestId("charting-view-root");
@@ -98,7 +97,7 @@ test("the switch: Current by default, steps and summary only in New, unsaved val
 
   await test.step("Current is the default: the switch is shown, off, at least 44px tall, and no New view furniture exists", async () => {
     await page.goto(url);
-    await expect(toggle, "the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all in its environment").toBeVisible({ timeout: T });
+    await expect(toggle, "the switch must exist: the platform rollout row must be set to all").toBeVisible({ timeout: T });
     await expect(toggle).toHaveAttribute("role", "switch");
     await expect(toggle).toHaveAttribute("aria-checked", "false");
     expect((await toggle.boundingBox())!.height).toBeGreaterThanOrEqual(44);
@@ -187,7 +186,7 @@ test("multi-block and edit and re-save: two areas saved in New read in Current; 
   await loginAsOwner(page, seed);
   const url = `/clients/${clientId}/sessions/${sessionId}`;
   await page.goto(url);
-  await expect(page.getByTestId("charting-view-toggle"), "the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all").toBeVisible({ timeout: T });
+  await expect(page.getByTestId("charting-view-toggle"), "the switch must exist: the platform rollout row must be set to all").toBeVisible({ timeout: T });
 
   await test.step("save two blocks with different areas and notes from New", async () => {
     await setView(page, "new");
@@ -245,7 +244,7 @@ test("history: sessions saved before the machine-first model, and an older machi
   await loginAsOwner(page, seed);
   const url = `/clients/${clientId}/sessions/${sessionId}`;
   await page.goto(url);
-  await expect(page.getByTestId("charting-view-toggle"), "the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all").toBeVisible({ timeout: T });
+  await expect(page.getByTestId("charting-view-toggle"), "the switch must exist: the platform rollout row must be set to all").toBeVisible({ timeout: T });
   // CONTENT, not counts: the text of every saved block section (area, machine, settings) is read in each view and must be identical.
   const read = async () => {
     // The nearest enclosing section of each Edit button is that block's own section, so view furniture around the list is not compared.
@@ -277,7 +276,7 @@ test("next-visit note: saved in one view, shown and recalled in the other", asyn
   await loginAsOwner(page, seed);
   const url = `/clients/${clientId}/sessions/${sessionId}`;
   await page.goto(url);
-  await expect(page.getByTestId("charting-view-toggle"), "the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all").toBeVisible({ timeout: T });
+  await expect(page.getByTestId("charting-view-toggle"), "the switch must exist: the platform rollout row must be set to all").toBeVisible({ timeout: T });
   const note = async () => (await sql<{ n: string | null }>(`select next_session_note as n from public.sessions where id = $1`, [sessionId]))[0]?.n;
 
   await setView(page, "new");
@@ -308,11 +307,11 @@ test("roles: a practitioner sees no payment or price in either view; a reception
   const member = await seedE2eMember(seed);
   await loginByMagicLink(page, member.email);
   await page.goto(url);
-  await expect(page.getByTestId("charting-view-toggle"), "the switch must exist for a practitioner: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all").toBeVisible({ timeout: T });
+  await expect(page.getByTestId("charting-view-toggle"), "the switch must exist for a practitioner: the platform rollout row must be set to all").toBeVisible({ timeout: T });
   for (const view of ["current", "new"] as const) {
     await setView(page, view);
     await expect(sessionPaymentRegion(page), `${view}: no payment region for a practitioner (the owner positive control is in the payment-lane spec)`).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /prepare session payment|run charge/i }), `${view}: no charge controls`).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /checkout with stripe|run charge/i }), `${view}: no charge controls`).toHaveCount(0);
     expect(await page.getByTestId("charting-view-root").innerText(), `${view}: no price shown`).not.toMatch(/\$\s?\d/);
     await expectTouchFloorAndNoOverflow(page, `${view}, practitioner`);
   }

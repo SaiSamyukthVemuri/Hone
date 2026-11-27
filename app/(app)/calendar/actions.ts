@@ -6,6 +6,7 @@ import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { observePermission } from "@/lib/permissions/observe-permission";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
 import { getAvailableSlots, INTERNAL_SLOT_PACKING } from "@/lib/booking/slots";
 import { captureServerEvent } from "@/lib/analytics/server";
@@ -202,6 +203,10 @@ export async function bookAppointmentForClientAction(
 
   const supabase = await createClient();
 
+  // Permission engine, OBSERVE ONLY: records what the engine would answer for this booking and never changes
+  // the outcome. A booking has no appointment yet, so the own-scope context is the target practitioner.
+  observePermission(supabase, studio.id, practitioner.role, { key: "appt.book", practitionerId: targetPractitionerId });
+
   // Pull service for duration; also confirms it's in this studio.
   const { data: service, error: serviceErr } = await supabase
     .from("services")
@@ -379,6 +384,7 @@ export async function bookAppointmentForClientAction(
   if (!created) {
     // Committed, but the follow-up read failed: the booking still succeeded.
     revalidatePath("/calendar");
+    revalidatePath("/dashboard");
     return { ok: true, appointmentId: createdId };
   }
 

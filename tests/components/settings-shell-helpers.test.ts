@@ -85,7 +85,7 @@ describe("activeSettingsLocation", () => {
 });
 
 import { isRailLinkClick } from "@/lib/settings/nav";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import path from "node:path";
 
 describe("narrow-screen drawer closes on a same-page section link (Codex P2)", () => {
@@ -100,22 +100,18 @@ describe("narrow-screen drawer closes on a same-page section link (Codex P2)", (
     expect(isRailLinkClick(null)).toBe(false);
     expect(isRailLinkClick({})).toBe(false);
   });
-  it("the shell wires the handler on the rail and also closes on hashchange", () => {
-    const src = readFileSync(
-      path.resolve(__dirname, "../../components/settings/settings-shell.tsx"),
-      "utf8",
-    );
-    expect(src).toMatch(
-      /onClick=\{\(e\) => \{\s*const target = e\.target as Element \| null;\s*if \(!isRailLinkClick\(target\)\) return;\s*setDrawerOpen\(false\);/,
-    );
-    expect(src).toMatch(/addEventListener\("hashchange", close\)/);
+  it("ordinary link activations and history fragment changes close the Settings dialog", () => {
+    const shell = readFileSync(path.resolve(__dirname, "../../components/settings/settings-shell.tsx"), "utf8");
+    expect(shell).toContain("onClickCapture={followLink}");
+    expect(shell).toContain('addEventListener("hashchange", update)');
+    expect(shell).toContain("if (popup.current?.open) popup.current.close()");
   });
 });
 
 describe("Insurance #1293 follow-ups (U4, U5)", () => {
   const read = (rel: string) =>
-    require("node:fs").readFileSync(
-      require("node:path").resolve(__dirname, "../..", rel),
+    readFileSync(
+      path.resolve(__dirname, "../..", rel),
       "utf8",
     ) as string;
 
@@ -138,7 +134,7 @@ describe("Insurance #1293 follow-ups (U4, U5)", () => {
 
 describe("Insurance #1297 U3: edit-then-save forms register with the unsaved guard", () => {
   const read = (rel: string) =>
-    require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", rel), "utf8") as string;
+    readFileSync(path.resolve(__dirname, "../..", rel), "utf8") as string;
   it.each([
     ["app/(app)/settings/profile/ProfileForm.tsx", "profile-details"],
     ["app/(app)/settings/payments/FeeAmountsCard.tsx", "payment-fees"],
@@ -153,7 +149,7 @@ describe("Insurance #1297 U3: edit-then-save forms register with the unsaved gua
 
 describe("Settings R2: the remaining edit-then-save forms are guarded (Insurance G1/G2)", () => {
   const read = (rel: string) =>
-    require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", rel), "utf8") as string;
+    readFileSync(path.resolve(__dirname, "../..", rel), "utf8") as string;
   it.each([
     ["app/(app)/settings/consent/ConsentTemplatesEditor.tsx", "consent-template-"],
     ["app/(app)/settings/import/QuickImport.tsx", "quick-import"],
@@ -183,7 +179,7 @@ describe("Settings R2: the remaining edit-then-save forms are guarded (Insurance
 
 describe("Insurance #1297 G1: the tracking form reads clean after a save with stray spaces", () => {
   const read = (rel: string) =>
-    require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", rel), "utf8") as string;
+    readFileSync(path.resolve(__dirname, "../..", rel), "utf8") as string;
   it("a successful save puts the trimmed values back in the inputs", () => {
     const src = read("app/(app)/settings/tracking/TrackingProviderForm.tsx");
     expect(src).toMatch(/setPixelId\(\(cur\) => \(cur === sentRawPixel \? sent\.pixelId : cur\)\)/);
@@ -193,8 +189,8 @@ describe("Insurance #1297 G1: the tracking form reads clean after a save with st
 
 describe("Insurance #1297 / Codex: edits typed while a tracking save is in flight survive it", () => {
   it("normalizes and clears only fields still equal to what was sent, and marks saved what was sent", () => {
-    const src = require("node:fs").readFileSync(
-      require("node:path").resolve(__dirname, "../..", "app/(app)/settings/tracking/TrackingProviderForm.tsx"),
+    const src = readFileSync(
+      path.resolve(__dirname, "../..", "app/(app)/settings/tracking/TrackingProviderForm.tsx"),
       "utf8",
     ) as string;
     expect(src).toMatch(/setPixelId\(\(cur\) => \(cur === sentRawPixel \? sent\.pixelId : cur\)\)/);
@@ -205,8 +201,8 @@ describe("Insurance #1297 / Codex: edits typed while a tracking save is in fligh
 });
 
 describe("Codex P2: FormDirtyGuard re-baselines after a save and rolls back on a refused one", () => {
-  const src = require("node:fs").readFileSync(
-    require("node:path").resolve(__dirname, "../..", "components/settings/form-dirty-guard.tsx"),
+  const src = readFileSync(
+    path.resolve(__dirname, "../..", "components/settings/form-dirty-guard.tsx"),
     "utf8",
   ) as string;
   it("takes a new baseline on submit and restores the old one when the redirect carries an error", () => {
@@ -265,7 +261,7 @@ describe("Codex P2: no in-app entry point still targets the legacy /settings/int
     "app/(app)/settings/payments/PaymentsSettings.tsx",
     "components/appointment/postcare-section.tsx",
   ])("%s links straight to a focused Forms view", (file) => {
-    const src = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../..", file), "utf8") as string;
+    const src = readFileSync(path.resolve(__dirname, "../..", file), "utf8") as string;
     expect(src).not.toMatch(/\/settings\/intake/);
   });
 });
@@ -353,15 +349,14 @@ describe("R2-F1 (Photos, 1 Nov): every rail view's heading carries the focus mar
   const leaves = hrefs.filter((h) => !hrefs.some((o) => o !== h && o.startsWith(h + "/")));
 
   function sourcesFor(href: string): string {
-    const fs = require("node:fs") as typeof import("node:fs");
     const dir = path.join(root, "app/(app)", href);
     // booking/ and payments/ render their views from a shared component in the parent folder.
     const dirs = [dir, ...(/^\/settings\/(booking|payments)\//.test(href) ? [path.dirname(dir)] : [])];
     const dyn = path.join(path.dirname(dir), "[view]");
-    if (fs.existsSync(dyn)) dirs.push(dyn);
+    if (existsSync(dyn)) dirs.push(dyn);
     return dirs
-      .filter((d) => fs.existsSync(d))
-      .flatMap((d) => fs.readdirSync(d).filter((f) => /\.tsx?$/.test(f)).map((f) => readFileSync(path.join(d, f), "utf8")))
+      .filter((d) => existsSync(d))
+      .flatMap((d) => readdirSync(d).filter((f) => /\.tsx?$/.test(f)).map((f) => readFileSync(path.join(d, f), "utf8")))
       .join("\n");
   }
 
@@ -394,7 +389,6 @@ describe("Reference fidelity (1 Nov): names, scope chip, same-route pick and Sta
   });
 
   it("every rail leaf view that uses SettingsViewHeading is titled exactly like its rail item", () => {
-    const fs = require("node:fs") as typeof import("node:fs");
     const reg = read("lib/settings/nav-registry.ts");
     const items = Array.from(reg.matchAll(/label: "([^"]+)", href: "(\/settings\/[a-z0-9/-]+)"/g), (m) => ({ label: m[1], href: m[2] }));
     expect(items.length).toBeGreaterThanOrEqual(15);
@@ -402,8 +396,8 @@ describe("Reference fidelity (1 Nov): names, scope chip, same-route pick and Sta
       const dir = path.join(root, "app/(app)", href);
       const dirs = [dir, ...(/^\/settings\/(booking|payments)\//.test(href) ? [path.dirname(dir)] : [])];
       const src = dirs
-        .filter((d) => fs.existsSync(d))
-        .flatMap((d) => fs.readdirSync(d).filter((f) => /\.tsx?$/.test(f)).map((f) => readFileSync(path.join(d, f), "utf8")))
+        .filter((d) => existsSync(d))
+        .flatMap((d) => readdirSync(d).filter((f) => /\.tsx?$/.test(f)).map((f) => readFileSync(path.join(d, f), "utf8")))
         .join("\n");
       // Team's rail item is a flat link whose view is headed "Practitioners".
       if (label === "Team" || !/SettingsViewHeading/.test(src)) continue;
@@ -436,15 +430,15 @@ describe("Reference fidelity (1 Nov): names, scope chip, same-route pick and Sta
     expect(stayFocusTarget({ drawerWasOpen: true, isDesktop: true })).toBe("anchor");
   });
 
-  it("the shell reads the drawer state when the dialog appears and only closes an open drawer", () => {
+  it("closes an open navigation dialog before the dirty prompt and restores its opener on Stay", () => {
     const shell = read("components/settings/settings-shell.tsx");
     const guard = read("components/settings/unsaved-changes.tsx");
-    expect(shell).toMatch(/<UnsavedChangesProvider onHold=\{rememberDrawer\} onStay=\{stayOnPage\}>/);
-    expect(shell).toMatch(/drawerWasOpen\.current = drawerOpenRef\.current/);
-    expect(shell).toMatch(/if \(target === "menu"\) setDrawerOpen\(false\)/);
-    expect(shell).toMatch(/anchor\.focus\(\{ preventScroll: true \}\)/);
-    expect(guard).toMatch(/onHoldRef\.current\?\.\(anchor\)/);
-    expect(guard).toMatch(/onStay\?\.\(heldAnchor\.current\)/);
+    expect(shell).toContain("heldPopup.current = Boolean(popup.current?.open)");
+    expect(shell).toContain("if (heldPopup.current) popup.current?.close()");
+    expect(shell).toContain("heldPopup.current ? opener.current : anchor");
+    expect(shell).toContain("target?.focus({ preventScroll: true })");
+    expect(guard).toContain("onHoldRef.current?.(anchor)");
+    expect(guard).toContain("onStay?.(heldAnchor.current)");
   });
 
 });
@@ -456,15 +450,11 @@ describe("Sam's decision 5 (1 Nov): PERSONAL / STUDIO category headings in the r
     expect(SETTINGS_NAV_GROUP_LABEL.studio).toBe("Studio");
     expect(SETTINGS_NAV_GROUP_LABEL.setup).toBeNull();
   });
-  it("the shell renders them as non-interactive, uppercase headings tied to their group", () => {
-    const src = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
-    const at = src.indexOf("SETTINGS_NAV_GROUP_LABEL[group] && (");
-    expect(at).toBeGreaterThan(0);
-    const block = src.slice(at, at + 520);
-    expect(block).toMatch(/<p\s+id=\{`\$\{railId\}-cat-\$\{group\}`\}/);
-    expect(block).toMatch(/uppercase/);
-    expect(block).not.toMatch(/<button|<PendingLink|tabIndex|onClick/);
-    expect(src).toMatch(/role="group"/);
+  it("labels each group with its non-interactive section heading", () => {
+    const src = readFileSync(path.resolve(__dirname, "../../components/settings/settings-shell.tsx"), "utf8");
+    expect(src).toContain('["Studio settings", "Personal settings"]');
+    expect(src).toContain('role="group" aria-labelledby=');
+    expect(src).toContain('<p id={dialogId + location');
   });
 });
 
@@ -481,65 +471,20 @@ describe("Studio details shows location and time zone (artifact), without a seco
   });
 });
 
-describe("Photos finding (1 Nov, d5a27f03): the desktop rail fits the viewport, so no rail item needs a window scroll", () => {
+describe("the contained Settings sidebar", () => {
   const src = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
-  it("the rail starts in the first grid row, beside the title (not below it)", () => {
-    expect(src).toMatch(/min-\[700px\]:grid min-\[700px\]:grid-cols-\[245px_minmax\(0,1fr\)\]/);
-    expect(src).toMatch(/min-\[700px\]:col-start-1 min-\[700px\]:row-span-2 min-\[700px\]:row-start-1/);
-    expect(src).toMatch(/min-\[700px\]:col-start-2 min-\[700px\]:row-start-1/); // title row
-    expect(src).toMatch(/min-\[700px\]:col-start-2 min-\[700px\]:row-start-2/); // view
+  it("shares the first row with the editor, with no empty title row", () => {
+    expect(src).toContain("grid-cols-[12rem_minmax(0,1fr)]");
+    expect(src).toMatch(/<aside[\s\S]*?<\/aside>\s*<div ref=\{content\}/);
+    expect(src).not.toContain("row-span-2");
   });
-  it("it is sticky below the app header and scrolls inside itself", () => {
-    // The offset is the MEASURED app-header height (--settings-top), so a taller
-    // header can never clip the rail or the title bar.
-    expect(src).toMatch(/min-\[700px\]:sticky min-\[700px\]:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
-    // Operators in calc() need spaces (underscores in a Tailwind arbitrary value);
-    // without them the cap is invalid CSS and the rail grew to the full viewport
-    // (Photos, 0ab9ce743: 799px tall). The 4rem allowance (the rail's 0.75rem
-    // top offset plus the page's bottom padding) keeps the rail inside its grid
-    // area at the end of the page, so sticky never pushes it above the header.
-    expect(src).toMatch(
-      /min-\[700px\]:max-h-\[calc\(100vh_-_var\(--settings-top,4\.5rem\)_-_var\(--settings-tail,4\.5rem\)_-_1rem\)\]/,
-    );
-    // --settings-tail is the MEASURED space below the grid (main padding + app
-    // footer), so the rail never outgrows its containing block at the page end.
-    expect(src).toMatch(/document\.documentElement\.scrollHeight - \(g\.getBoundingClientRect\(\)\.bottom \+ window\.scrollY\)/);
-    expect(src).toMatch(/sticky top-\[var\(--settings-top,4\.5rem\)\]/);
-    expect(src).toMatch(/new ResizeObserver\(measure\)/);
-    expect(src).toMatch(/min-\[700px\]:overflow-y-auto/);
-  });
-  it("the view row takes the spare height, so no blank gap opens under the title", () => {
-    // The rail spans both rows; without a flexible second row its extra height is
-    // shared into the title row and pushes the content down.
-    expect(src).toMatch(/min-\[700px\]:grid-rows-\[auto_minmax\(0,1fr\)\]/);
-  });
-  it("ordinary items share one colour and weight; only the current page is selected", () => {
-    // A group button uses ITEM_BASE + ITEM_IDLE collapsed, and the quieter ITEM_PARENT_OPEN
-    // (text colour only: no fill, no bar, no weight) while expanded; it carries a chevron.
-    expect(src).toMatch(/className=\{`\$\{ITEM_BASE\} \$\{open \? ITEM_PARENT_OPEN : ITEM_IDLE\} flex w-full items-center justify-between/);
-    expect(src).toMatch(/ITEM_PARENT_OPEN =\s*"text-neutral-900 hover:bg-neutral-50/);
-    expect(src).not.toMatch(/ITEM_PARENT_OPEN =\s*"[^"]*(bg-neutral-100|font-medium|before:)/);
-    expect(src).not.toMatch(/font-semibold tracking-tight text-neutral-900/);
-    expect(src).toMatch(/\? "rotate-90/);
-    // Selected = aria-current only, driven by the single current id.
-    expect(src).toMatch(/currentSettingsRailId\(items, pathname\)/);
-    expect(src).toMatch(/const childActive = currentId === child\.id/);
-    expect(src).toMatch(/const isCurrent = currentId === entry\.id/);
-    // Hover is a lighter wash than the selected fill and has no accent bar.
-    expect(src).toMatch(/ITEM_IDLE =\s*"[^"]*hover:bg-neutral-50/);
-    expect(src).toMatch(/ITEM_ACTIVE =\s*"bg-neutral-100 font-medium[^"]*before:bg-neutral-900/);
-  });
-  it("at 1280x800 and 1280x720 the rail's bottom stays inside the viewport at scroll 0", () => {
-    // App header ~65px + main padding 40px = natural top ~105px; the cap is 100vh - 7.5rem.
-    const naturalTop = 105;
-    for (const vh of [800, 720]) {
-      const bottom = naturalTop + (vh - 7.5 * 16);
-      expect(bottom, `viewport ${vh}`).toBeLessThanOrEqual(vh);
-    }
-  });
-  it("group toggles keep normal mouse focus and no scroll bookkeeping exists", () => {
-    expect(src).not.toMatch(/preventDefault\(\)/);
-    expect(src).not.toMatch(/data-rail-group-toggle|scrollAtGroupPress|scrollTo\(/);
+
+  it("stays within the viewport and scrolls independently below the measured header", () => {
+    expect(src).toContain("var(--settings-top,4.5rem)");
+    expect(src).toContain("max-h-[calc(100dvh_-_var(--settings-top,4.5rem)_-_var(--settings-tail,4.5rem)_-_1rem)]");
+    expect(src).toContain("document.documentElement.scrollHeight - (root.getBoundingClientRect().bottom + window.scrollY)");
+    expect(src).toContain("new ResizeObserver(measure)");
+    expect(src).toContain("min-[911px]:overflow-y-auto");
   });
 });
 
@@ -611,17 +556,6 @@ describe("one heading-to-content rhythm on every view (Photos, 0ab9ce743)", () =
   });
 });
 
-describe("a route outside the viewer's rail (Photos, 0ab9ce743)", () => {
-  const shell = readFileSync(path.resolve(__dirname, "../..", "components/settings/settings-shell.tsx"), "utf8");
-  it("a reachable entry joins the rail only while its own route is open", () => {
-    expect(shell).toMatch(/reachable\.filter\(\s*\(r\) => pathname === r\.href \|\| pathname\.startsWith\(`\$\{r\.href\}\/`\)/);
-    expect(shell).toMatch(/const items = \[\.\.\.railItems, \.\.\.reachableHere\]/);
-  });
-  it("with no location the breadcrumb still says Settings and nothing is selected", () => {
-    expect(shell).toMatch(/\{!activeItem && \(/);
-  });
-});
-
 describe("phone: the scope chip shares the title's row; the drawer starts below the header (Photos, 31a0772ad; Sam, 2 Nov)", () => {
   const read = (f: string) => readFileSync(path.resolve(__dirname, "../..", f), "utf8");
   it("the heading row is a two-column grid below sm, a wrapping flex from sm up", () => {
@@ -629,23 +563,18 @@ describe("phone: the scope chip shares the title's row; the drawer starts below 
       /grid grid-cols-\[minmax\(0,1fr\)_auto\] items-start gap-x-3 sm:flex sm:flex-wrap/,
     );
   });
-  it("the open drawer starts BELOW the sticky app header and runs to the viewport bottom (Sam, 2 Nov)", () => {
+  it("the compact menu has a named native dialog, viewport cap, backdrop and a close control", () => {
     const shell = read("components/settings/settings-shell.tsx");
-    // top = the measured app-header height (--settings-top), bottom-0: it never sits under the header,
-    // however far the page has scrolled (the header is sticky top-0), and it scrolls on its own.
-    expect(shell).toMatch(/fixed bottom-0 left-0 top-\[var\(--settings-top,4\.5rem\)\] z-40 w-72 overflow-y-auto overscroll-contain/);
-    expect(shell).not.toMatch(/fixed inset-y-0/);
-    expect(shell).toContain("pb-[max(1rem,env(safe-area-inset-bottom))]");
-    expect(read("app/(app)/layout.tsx")).toMatch(/<header className="sticky top-0 z-30 /);
+    expect(shell).toContain("<dialog");
+    expect(shell).toContain("max-h-[80dvh]");
+    expect(shell).toContain("overflow-y-auto");
+    expect(shell).toContain("backdrop:bg-black/30");
+    expect(shell).toMatch(/<button[^>]*onClick=\{\(\) => popup.current\?\.close\(\)\}[^>]*>Close<\/button>/);
   });
-  it("the backdrop starts below the header too, and the drawer has its own Close control", () => {
+  it("the breakpoint swaps a compact menu for the sticky desktop sidebar", () => {
     const shell = read("components/settings/settings-shell.tsx");
-    expect(shell).toMatch(/fixed inset-x-0 bottom-0 top-\[var\(--settings-top,4\.5rem\)\] z-30 bg-black\/40 min-\[700px\]:hidden/);
-    expect(shell).toContain("Close menu");
-  });
-  it("the closed state is display:none below 700px, and in-page from 700px up the rail is sticky BELOW the header", () => {
-    const shell = read("components/settings/settings-shell.tsx");
-    expect(shell).toMatch(/: "hidden"\s*\} min-\[700px\]:sticky min-\[700px\]:top-\[calc\(var\(--settings-top,4\.5rem\)\+0\.75rem\)\]/);
+    expect(shell).toMatch(/<aside[^>]*className="hidden [^"]*min-\[911px\]:sticky[^"]*min-\[911px\]:block/);
+    expect(shell).toMatch(/aria-label="Settings menu"[^\n]*min-\[911px\]:hidden/);
   });
   it("the flat entries Photos listed have no children, so a parent can never share a child's selected look", () => {
     const flat = ["team", "waitlist", "availability", "services", "machines", "consent", "import", "data"];

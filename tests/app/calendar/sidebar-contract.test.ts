@@ -115,7 +115,8 @@ describe("full width", () => {
   it("the app shell main uses AppMain, which is full width for the calendar grid only", () => {
     expect(LAYOUT).toContain("<AppMain>{children}</AppMain>");
     expect(LAYOUT).not.toContain('<main className="mx-auto max-w-5xl');
-    expect(APPMAIN).toContain("calendarUsesFullWidth(usePathname())");
+    expect(APPMAIN).toContain("const pathname = usePathname()");
+    expect(APPMAIN).toContain("calendarUsesFullWidth(pathname)");
     expect(APPMAIN).toContain("APP_MAIN_FULL");
     expect(APPMAIN).toContain("APP_MAIN_NORMAL");
   });
@@ -136,7 +137,7 @@ describe("the mini calendar", () => {
   it("a date navigates the current view to it and keeps the selection", () => {
     expect(html("day", "p1,p2")).toContain('href="/calendar?view=day&amp;day=2026-11-18&amp;people=p1%2Cp2"');
     expect(html("week")).toContain('href="/calendar?view=week&amp;day=2026-11-18"');
-    expect(html("month", "none")).toContain('href="/calendar?view=month&amp;month=2026-11-01&amp;people=none"');
+    expect(html("month", "none")).toContain('href="/calendar?view=month&amp;month=2026-11-01&amp;day=2026-11-18&amp;people=none"');
   });
 });
 
@@ -165,7 +166,7 @@ describe("mini calendar: today vs selected, Today action", () => {
       mini({ view, selectionParam }).match(/<a[^>]*data-testid="calendar-mini-today"[^>]*>/)?.[0] ?? "";
     expect(today("day")).toContain('href="/calendar?view=day&amp;day=2026-10-31"');
     expect(today("week", "p1")).toContain('href="/calendar?view=week&amp;day=2026-10-31&amp;people=p1"');
-    expect(today("month")).toContain('href="/calendar?view=month&amp;month=2026-10-01"');
+    expect(today("month")).toContain('href="/calendar?view=month&amp;month=2026-10-01&amp;day=2026-10-31"');
   });
   it("marks come from the server's studio-timezone keys: the mini calendar never builds a Date", () => {
     const src = readFileSync("app/(app)/calendar/CalendarMiniMonth.tsx", "utf8").replace(/^\s*\/\/.*$/gm, "");
@@ -200,7 +201,7 @@ describe("selection and date stay in step on mobile and across navigation (Codex
   it("every URL the mobile day view pushes carries the practitioner selection", () => {
     const pushes = [...MOBILE_VIEW.matchAll(/router\.push\(([^;]*)\);/g)].map((m) => m[1]);
     expect(pushes.length).toBe(3); // prev past the week, next past the week, Today outside the week
-    for (const p of pushes) expect(p, p).toMatch(/^withSelection\(.*selectionParam\)$/);
+    for (const p of pushes) expect(p, p).toMatch(/^withDashboardRebook\(withSelection\(.*selectionParam\), rebook\)$/);
   });
   it("the page hands the mobile view the selection", () => {
     expect(PAGE).toMatch(/<CalendarMobileDayView[\s\S]*?selectionParam=\{sidebar\.param\}/);

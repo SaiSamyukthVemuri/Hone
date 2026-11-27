@@ -1,3 +1,4 @@
+import { WAITLIST_PATH, WAITLIST_RELEASED_PATH } from "@/lib/waitlist/paths";
 import Link from "next/link";
 import { ReplyContactDetails } from "@/components/waitlist/reply-contact";
 import type { ReplyContact } from "@/lib/waitlist/reply-contact-pure";
@@ -65,7 +66,7 @@ export function DeclinedSection({
       </h2>
       <p className="text-sm text-neutral-500" data-testid="declined-outcome-note">
         {DECLINE_OUTCOME_NOTE}{" "}
-        <Link href="/settings/waitlist/released" className="underline">
+        <Link href={WAITLIST_RELEASED_PATH} className="underline">
           Released and expired history
         </Link>
       </p>
@@ -118,7 +119,7 @@ export function DeclinedSection({
                     {canLink ? (
                       <>
                         <Link
-                          href={`/settings/waitlist?section=${p.entryStatus}${entryPage > 1 ? `&page=${entryPage}` : ""}#entry-${p.entryId}`}
+                          href={`${WAITLIST_PATH}?section=${p.entryStatus}${entryPage > 1 ? `&page=${entryPage}` : ""}#entry-${p.entryId}`}
                           className="underline"
                           data-testid="declined-entry-link"
                         >

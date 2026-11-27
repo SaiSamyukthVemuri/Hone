@@ -61,8 +61,8 @@ for (const mode of [
         [tz],
       );
       const serviceId = await getE2eServiceId(seed.studioId);
-      const [service] = await sql<{ minutes: number }>(
-        "select default_duration_minutes as minutes from public.services where studio_id=$1 and id=$2 and active",
+      const [service] = await sql<{ minutes: number; name: string }>(
+        "select name, default_duration_minutes as minutes from public.services where studio_id=$1 and id=$2 and active",
         [seed.studioId, serviceId],
       );
       expect(service.minutes).toBe(30); // The existing synthetic consultation.
@@ -115,8 +115,35 @@ for (const mode of [
         expect(target.origin).toBe(new URL(page.url()).origin);
         expect(target.pathname).toBe("/calendar/" + id);
       };
+      // The owner overview must expose every simultaneous visit without opening a chooser.
+      await page.goto("/calendar?view=week&day=" + day);
+      const board = page.getByTestId("practitioner-week");
+      for (const booking of bookings) {
+        const visit = board.locator(`[data-week-appointment="${booking.id}"]`);
+        await expect(visit).toBeVisible();
+        expect(await visit.getAttribute("aria-label")).toContain(booking.practitionerName);
+        await expect(visit.locator("[data-week-practitioner-dot]")).toBeVisible();
+        await activate(visit);
+        const preview = page.getByRole("dialog", { name: /appointment preview/i });
+        await expect(preview.getByRole("heading", { name: booking.clientName, exact: true })).toBeVisible();
+        await assertOwnHref(preview.getByRole("link", { name: /open full details/i }), booking.id);
+        await page.keyboard.press("Escape");
+      }
+      const firstVisit = board.locator(`[data-week-appointment="${bookings[0].id}"]`);
+      const detailsToggle = page.getByRole("checkbox", { name: "Show service details" });
+      await expect(firstVisit).not.toContainText(service.name);
+      await detailsToggle.check();
+      await expect(firstVisit).toContainText(service.name);
+      await page.goto(`/calendar?view=week&day=${day}&people=${ids.slice(0, 2).join(",")}`);
+      await expect(detailsToggle).toHaveCount(0);
+      await expect(firstVisit).toContainText(service.name);
+      await expect(board.locator("[data-week-appointment]")).toHaveCount(2);
+      await page.goto(`/calendar?view=week&day=${day}&people=${ids[0]}`);
+      await expect(board).toHaveCount(0);
+      const ownTimeGrid = page.getByTestId(mode.width >= 768 ? "week-day-column" : "mobile-day-timeline");
+      await expect(ownTimeGrid.first()).toBeVisible();
       for (const [index, booking] of bookings.entries()) {
-        await page.goto("/calendar?view=week&day=" + day);
+        await page.goto(`/calendar?view=week&layout=grid&day=${day}&people=${ids.join(",")}`);
         expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(mode.coarse);
         expect(await page.evaluate(() => matchMedia("(pointer: fine)").matches)).toBe(!mode.coarse);
         const surface = page.locator('[data-testid="' +

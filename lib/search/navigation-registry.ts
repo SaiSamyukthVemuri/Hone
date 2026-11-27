@@ -1,3 +1,4 @@
+import { LEGACY_WAITLIST_ROUTES, WAITLIST_ARCHIVED_PATH, WAITLIST_OVER_INVITE_PATH, WAITLIST_PATH, WAITLIST_RELEASED_PATH, WAITLIST_REPLIES_PATH, WAITLIST_SEARCH_PATH } from "@/lib/waitlist/paths";
 import "server-only";
 
 // Global Search V2-A, the canonical searchable navigation/settings registry.
@@ -139,7 +140,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     id: "settings",
     title: "Settings",
     category: "Settings",
-    href: "/settings/profile",
+    href: "/settings",
     description: "Everything you can configure in Hone",
     keywords: ["preferences", "configuration", "options", "setup", "config"],
     visibility: "practitioner",
@@ -168,20 +169,6 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     keywords: ["new client", "add client", "create client", "register client", "intake new"],
     visibility: "practitioner",
     priority: 70,
-  },
-  {
-    id: "client-groups",
-    title: "Client groups",
-    category: "Navigation",
-    href: "/clients/groups",
-    description: "Create and rename the groups you use to organise clients",
-    // Owner-only, matching the page itself (it 404s for anyone else), so the
-    // entry is filtered out for non-owners before matching and is never
-    // advertised to them. Keywords name the organising job, never a reason for
-    // treatment: group names are for organising, not for health details.
-    keywords: ["groups", "client group", "organise clients", "organize clients", "segments", "lists", "tags", "labels"],
-    visibility: "owner",
-    priority: 75,
   },
   {
     id: "calendar-upcoming",
@@ -450,7 +437,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     category: "Settings",
     href: "/settings/services",
     description: "Treatments you offer, with duration, price, and colour",
-    keywords: ["services", "service", "treatments", "price", "prices", "pricing", "cost", "duration", "consultation", "menu", "offerings"],
+    keywords: ["services", "service", "treatments", "price", "prices", "pricing", "cost", "duration", "consultation", "menu", "offerings", "service colour", "service color", "calendar colour", "calendar color", "palette", "colour picker", "color picker"],
     visibility: "owner",
     priority: 360,
   },
@@ -942,6 +929,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   reason: string;
 }> = [
   {
+    route: "/clients/groups",
+    reason: "A removed feature: the route only redirects to the Clients directory, so it is never offered as a destination.",
+  },
+  {
     route: "/financials/analytics",
     reason: "Owner-only Analytics is reached from the Business menu. Global Search discovery is outside this menu change.",
   },
@@ -962,9 +953,9 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason: "The Clients statements screens are new and are not yet reachable from the menu or Global Search; the search entry ships with the menu entry in the navigation change, so a destination is never searchable before it is linkable.",
   },
   {
-    route: "/settings/waitlist/over-invite",
+    route: WAITLIST_OVER_INVITE_PATH,
     reason:
-      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
+      "Owner-only invite-beyond-the-estimate page, reached from a link on the waitlist page. It follows its parent: the waitlist navigation entry is visible only to eligible owners, so listing this page in Global Search would offer a page its studio cannot otherwise reach. Search does not advertise it separately.",
   },
   {
     route: "/calendar/check-practitioner",
@@ -980,11 +971,6 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     route: "/records/print",
     reason:
       "Print/export view of whichever Records section you are already in. Not a destination on its own; reached from /records.",
-  },
-  {
-    route: "/settings",
-    reason:
-      "Index route with no content of its own: it only redirects to /settings/profile. Each settings page is registered individually.",
   },
   {
     route: "/settings/booking",
@@ -1021,28 +1007,32 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
     reason:
       "Doorway or legacy URL that only redirects to a focused settings view. Each view is registered individually.",
   },
+  ...LEGACY_WAITLIST_ROUTES.map(({ source }) => ({
+    route: source,
+    reason: "Former settings URL that permanently redirects to the owner waitlist workspace.",
+  })),
   {
-    route: "/settings/waitlist",
+    route: WAITLIST_PATH,
     reason:
-      "WAIT-02 operator queue for the new-client waitlist. Its Settings tab appears only for a studio whose durable waitlist is switched on, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
+      "WAIT-02 operator queue for the new-client waitlist. Its navigation entry appears only for owners of studios with a live waitlist or existing entries, so advertising it in search would resolve to an empty surface for every studio that has not been enabled. Revisit when the capability is generally available rather than pilot-gated.",
   },
   {
-    route: "/settings/waitlist/replies",
+    route: WAITLIST_REPLIES_PATH,
     reason:
       "Owner-only list of the replies people left when the offered times did not suit them (0319). It holds clients' own words, appears only when the reply feature is switched on, and is reached from the count on the waitlist page, so listing it in Global Search would offer an empty or refused page to everyone else.",
   },
   {
-    route: "/settings/waitlist/search",
+    route: WAITLIST_SEARCH_PATH,
     reason:
-      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist Settings tab appears only for a studio whose durable waitlist is switched on, so listing it in Global Search would offer an empty or refused page to everyone else.",
+      "Owner-only name search over the waitlist, reached from a link on the waitlist page. It follows its parent: the waitlist navigation entry is visible only to eligible owners, so listing it in Global Search would offer an empty or refused page to everyone else.",
   },
   {
-    route: "/settings/waitlist/archived",
+    route: WAITLIST_ARCHIVED_PATH,
     reason:
       "Owner-only read-only view of waitlist entries an owner removed, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
   },
   {
-    route: "/settings/waitlist/released",
+    route: WAITLIST_RELEASED_PATH,
     reason:
       "Owner-only read-only history of released and expired waitlist entries, reached from a link on the waitlist page. It follows its parent: listing it in Global Search would offer an empty or refused page to every studio that has not enabled the waitlist and to non-owners.",
   },
@@ -1077,6 +1067,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
   {
     route: "/admin/payments/manual-review",
     reason: "Platform payment review surface, cross-studio.",
+  },
+  {
+    route: "/admin/rollouts",
+    reason: "Platform rollout control, cross-studio.",
   },
   {
     route: "/admin/studios/new",
@@ -1118,7 +1112,7 @@ export function normalizeNavText(value: string): string {
     .trim();
 }
 
-function isVisible(entry: NavEntry, ctx: NavSearchContext): boolean {
+export function isNavEntryVisible(entry: NavEntry, ctx: NavSearchContext): boolean {
   if (entry.visibility === "owner" && !ctx.isOwner) return false;
   if (entry.requiresFlag === "googleCalendar" && !ctx.googleCalendarEnabled) {
     return false;
@@ -1180,7 +1174,7 @@ export function matchNavEntries(
   ctx: NavSearchContext,
 ): NavMatch[] {
   const query = normalizeNavText(rawQuery);
-  const visible = NAV_ENTRIES.filter((e) => isVisible(e, ctx));
+  const visible = NAV_ENTRIES.filter((e) => isNavEntryVisible(e, ctx));
 
   if (query.length === 0) {
     return visible

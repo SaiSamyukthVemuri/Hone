@@ -24,6 +24,10 @@ import {
 import { reactionLabelsFromChips } from "@/lib/sessions/reaction-unified";
 import { sessionBlockSideLabel } from "@/lib/sessions/side-labels";
 import { ElectrolysisEntryRow } from "@/components/entry-row";
+import { MachineRecordedSetups } from "@/components/machines/machine-recorded-setups";
+import { MACHINE_CATALOGUE } from "@/lib/machines/catalogue";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
+import type { RecordedReading } from "@/lib/machines/machine-queries";
 import { BlockSetupForm } from "./block-setup-form";
 import { SimplifiedEntryForm } from "./simplified-entry-form";
 import { RemovePassButton } from "@/components/remove-pass-button";
@@ -89,6 +93,10 @@ type Props = {
   sessionId: string;
   clientId: string;
   blocks: SessionBlockWithEntries[];
+  // What each NATIVE block (machine_profile_id set) recorded, by block id, and the studio's own names for the units. The card renders these
+  // instead of the legacy entry's readings, which for a native block hold only the database default (pulse_count 1).
+  nativeReadings?: Record<string, { readings: RecordedReading[]; unavailable: boolean }>;
+  nativeUnitNames?: Record<string, string>;
   orphanEntries: ElectrolysisEntry[];
   clientTagLabels?: ReadonlyArray<string>;
   // UI defaulting only: when creating a NEW treatment area, seed the area
@@ -99,6 +107,8 @@ type Props = {
   // treatment-area drafts from the practitioner's last-used value;
   // editable per area; the block row still stores the actual value.
   defaultMachineFrequency?: string | null;
+  /** MultiPlex is offered to this studio (read with the page). Null = not offered. */
+  multiplexOffer?: { deviceId: string } | null;
   // PR #279 (Chloe charting feedback): latest lot/batch per probe (probe_key) from the
   // studio's session blocks, auto-populated per selected probe (never auto-confirmed).
   probeLotSuggestions?: ProbeLotSuggestions;
@@ -115,10 +125,13 @@ export function SessionBlocksView({
   sessionId,
   clientId,
   blocks,
+  nativeReadings = {},
+  nativeUnitNames = {},
   orphanEntries,
   clientTagLabels = [],
   defaultPrimaryArea = null,
   defaultMachineFrequency = null,
+  multiplexOffer = null,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   autoEditBlockId = null,
@@ -160,6 +173,8 @@ export function SessionBlocksView({
           probeLotSuggestions={probeLotSuggestions}
           probeLotInventory={probeLotInventory}
           autoEdit={block.id === autoEditBlockId}
+          nativeReadings={nativeReadings}
+          nativeUnitNames={nativeUnitNames}
         />
       ))}
 
@@ -199,6 +214,7 @@ export function SessionBlocksView({
           // PR #203: unlike the plan-area seed, the frequency seed
           // applies to EVERY new area; the machine rarely changes.
           defaultMachineFrequency={defaultMachineFrequency ?? null}
+          multiplexOffer={multiplexOffer}
           onCancel={() => setAdding(false)}
         />
       ) : (
@@ -225,7 +241,11 @@ function BlockSection({
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   autoEdit = false,
+  nativeReadings = {},
+  nativeUnitNames = {},
 }: {
+  nativeReadings?: Record<string, { readings: RecordedReading[]; unavailable: boolean }>;
+  nativeUnitNames?: Record<string, string>;
   block: SessionBlockWithEntries;
   sessionId: string;
   clientId: string;
@@ -468,9 +488,20 @@ function BlockSection({
             </p>
           )}
 
+          {/* WHAT A NATIVE AREA RECORDED belongs to the area, not to a pass: it stays on the card when the last pass is removed. */}
+          {isNativeMachineBlock(block) && nativeReadings[block.id] ? (
+            <MachineRecordedSetups
+              readings={nativeReadings[block.id]!.readings}
+              unavailable={nativeReadings[block.id]!.unavailable}
+              catalogue={MACHINE_CATALOGUE}
+              unitNames={nativeUnitNames}
+            />
+          ) : null}
+
           {entriesSorted.length === 0 ? (
             <p className="text-xs text-neutral-500">No entries yet.</p>
           ) : (
+            <>
             <ul className="flex flex-col gap-2">
               {entriesSorted.map((e, idx) => {
                 // Flatten: for structured-area (new-flow) blocks, the card
@@ -523,6 +554,7 @@ function BlockSection({
                 );
               })}
             </ul>
+            </>
           )}
 
           {addingPass ? (

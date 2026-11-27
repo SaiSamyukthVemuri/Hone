@@ -205,7 +205,7 @@ its owner cannot switch to OPEN or CLOSED.** The command answers
 through an external provider and no check can make an owner transition and an
 in-flight join mutually exclusive. Writing `waitlist` is the way out.
 
-**G. Leave Willow in WAITLIST, and verify a DURABLE join.** Willow is in the
+**G. Leave the pilot studio in WAITLIST, and verify a DURABLE join.** The pilot studio is in the
 listed set and must remain WAITLIST through and after cutover. After its step-F
 write, confirm the public form still offers the waitlist AND that a join writes a
 `new_client_waitlist_entries` row — the row, not the email, is the check. Its

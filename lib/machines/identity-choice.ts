@@ -1,8 +1,10 @@
+import { XCELL_PUR_PROFILE_ID } from "@/lib/machines/xcell-pur";
 import { LEGACY_MACHINE_PROFILE_ID } from "@/lib/machines/legacy-machine";
 import type { MachineDb } from "@/lib/machines/machine-queries";
 import { catalogueForRuntime } from "@/lib/machines/synthetic-profile";
 import { checkDeviceChoice, type SelectionScope } from "@/lib/machines/selection";
 import { listStudioDevices } from "@/lib/machines/studio-devices";
+import { listUnspecifiedMachines } from "@/lib/machines/unspecified-machine";
 
 const UNREADABLE_INVENTORY =
   "We could not check that machine choice just now. Try again in a moment; nothing has been lost.";
@@ -28,7 +30,7 @@ export type IdentityChoice = { deviceId: string | null; modeKey: string | null; 
  *  - "unreadable": the inventory could not be read. Says nothing about the choice: the outcome is unknown, the key is kept.
  */
 export type IdentityRefusalReason = "contract" | "availability" | "unreadable";
-export type IdentityCheck = { ok: true } | { ok: false; error: string; reason: IdentityRefusalReason };
+export type IdentityCheck = { ok: true; unitProfileId: string | null } | { ok: false; error: string; reason: IdentityRefusalReason };
 
 /**
  * A MACHINE IDENTITY BEING SAVED ON A TREATMENT AREA MUST PASS THE CONTRACT A REMEMBERED CHOICE PASSES.
@@ -42,6 +44,12 @@ export async function checkIdentityChoice(
   db: MachineDb,
   scope: SelectionScope,
   choice: IdentityChoice,
+  /**
+   * ONLY the area-create save passes this, to let a NEW MultiPlex area store the studio's "Machine not specified" placeholder.
+   * Every other caller (a remembered choice, a machine change on a saved area) leaves it off, so the placeholder is an unknown unit to
+   * them and can never be remembered or picked.
+   */
+  opts: { allowUnspecified?: boolean } = {},
 ): Promise<IdentityCheck> {
   if (choice.deviceId === null) {
     // The existing xCell workflow: a model with no unit and no mode.
@@ -49,7 +57,7 @@ export async function checkIdentityChoice(
       return { ok: false, error: "That machine could not be checked.", reason: "contract" };
     }
     if (choice.modeKey !== null) return { ok: false, error: MACHINE_MODE_NOT_OFFERED, reason: "contract" };
-    return { ok: true };
+    return { ok: true, unitProfileId: null };
   }
   let devices: Awaited<ReturnType<typeof listStudioDevices>>["devices"];
   let inventorySource: string | undefined;
@@ -57,6 +65,10 @@ export async function checkIdentityChoice(
     const inventory = await listStudioDevices(db, scope.studioId);
     devices = inventory.devices;
     inventorySource = inventory.source;
+    if (opts.allowUnspecified) {
+      const placeholders = await listUnspecifiedMachines(db, scope.studioId);
+      if (placeholders.ok) devices = [...devices, ...placeholders.value];
+    }
   } catch {
     return { ok: false, error: UNREADABLE_INVENTORY, reason: "unreadable" };
   }
@@ -78,7 +90,7 @@ export async function checkIdentityChoice(
   if (choice.profileId !== null && unit && choice.profileId !== unit.profileId) {
     return { ok: false, error: MACHINE_MODE_NOT_OFFERED, reason: "contract" };
   }
-  return { ok: true };
+  return { ok: true, unitProfileId: unit?.profileId ?? null };
 }
 
 /**
@@ -109,6 +121,35 @@ export async function storedIdentityMatches(
       ? norm(row.machine_profile_id) === choice.profileId
       : choice.profileId === null || norm(row.machine_profile_id) === choice.profileId;
     return choice.deviceId !== null || choice.profileId !== null ? unitMatches && modeMatches && profileMatches : false;
+  } catch {
+    return false;
+  }
+}
+
+/** The unit an existing area stores (route-bound), or null. A failed or odd read is null: the route then falls back to its normal rule. */
+export async function blockStoredUnitId(db: MachineDb, blockId: string, sessionId: string): Promise<string | null> {
+  try {
+    const blk = await db.from("session_blocks").select("studio_machine_id").eq("id", blockId).eq("session_id", sessionId).limit(1);
+    if (blk.error || !Array.isArray(blk.data) || blk.data.length !== 1) return null;
+    const v = (blk.data[0] as { studio_machine_id?: unknown }).studio_machine_id;
+    return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether this block ALREADY stores an xCell Pur unit: re-saving it must keep its identity whatever the platform rollout says.
+ * Reads the block's unit, then the unit's model. A failed or odd read is false (the rollout then decides, and an error refuses): never a guess.
+ */
+export async function blockUsesXcellPur(db: MachineDb, blockId: string, sessionId: string): Promise<boolean> {
+  try {
+    const blk = await db.from("session_blocks").select("studio_machine_id").eq("id", blockId).eq("session_id", sessionId).limit(1);
+    if (blk.error || !Array.isArray(blk.data) || blk.data.length !== 1) return false;
+    const unit = (blk.data[0] as { studio_machine_id?: unknown }).studio_machine_id;
+    if (typeof unit !== "string" || unit.trim() === "") return false;
+    const m = await db.from("studio_machines").select("id").eq("id", unit.trim()).eq("machine_profile_id", XCELL_PUR_PROFILE_ID).limit(1);
+    return !m.error && Array.isArray(m.data) && m.data.length === 1;
   } catch {
     return false;
   }

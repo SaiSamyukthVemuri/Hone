@@ -197,6 +197,27 @@ describe("B8 manual — the governed happy path", () => {
     });
   });
 
+  it("RECIPIENT — the email goes to the appointment's own client, and a retry after a failed send goes to that client's CURRENT address", async () => {
+    state.providerResult = { ok: false, retryable: true, error: "provider down" };
+    const first = await sendPostcareEmailAction(fd());
+    expect(first.ok).toBe(false);
+    expect(state.provider).toHaveLength(1);
+    expect(state.provider[0]).toMatchObject({ clientEmail: "c@example.com", appointmentId: APPT });
+
+    // The client's address is corrected before the retry. The retry reads it again and sends to it, never to the old one.
+    state.row = { ...appointmentRow(), client: { id: "client-1", name: "Client", email: "corrected@example.com" } } as typeof state.row;
+    state.providerResult = { ok: true };
+    const second = await sendPostcareEmailAction(fd());
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    expect(state.provider).toHaveLength(2);
+    expect(state.provider[1]).toMatchObject({ clientEmail: "corrected@example.com", appointmentId: APPT });
+    // Every attempt claimed first, for this appointment and studio, so a send never happens without the database's claim.
+    expect(claims()).toHaveLength(2);
+    for (const c of claims()) expect(c.args).toMatchObject({ p_appointment_id: APPT, p_studio_id: STUDIO });
+    // Nobody else's address was ever used.
+    expect(state.provider.map((p) => p.clientEmail)).toEqual(["c@example.com", "corrected@example.com"]);
+  });
+
   it("TOKEN IDENTITY — settle receives the claim's value with strict equality", async () => {
     await sendPostcareEmailAction(fd());
     // Not "a date equal to it" — the SAME string. A Date round trip here would

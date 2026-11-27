@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { seedE2eStudio, seedE2eDashboardMemoryClient, sql } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { ensureLastVisitDetailsOpen } from "./helpers/last-visit-details";
 
 // UI-06 — the flattened memory cards, proved at three widths.
 //
@@ -82,25 +83,29 @@ async function openDashboardMemory(page: Page) {
   await loginAsOwner(page, seed);
   await page.goto("/dashboard");
   const toggle = page.getByTestId("dashboard-memory-toggle").first();
-  if (await toggle.count()) await toggle.click();
+  if (await toggle.count()) await ensureLastVisitDetailsOpen(toggle);
   return seed;
 }
 
 /**
- * The section labels this slice's grouping claim actually depends on.
+ * WHAT GROUPS THE OPENED CARD NOW.
  *
- * WHY EXACT TEXT AND NOT A CLASS MATCH. The previous version asserted that
- * every element matching `[class*="uppercase"][class*="tracking-wider"]` was
- * visible — which proves nothing about PRESENCE. Five unrelated elements in
- * this card share that signature ("Last treatment" twice, "Watch today",
- * "Show", and the unmigrated h2/h4 headings), so "Areas treated" could vanish
- * entirely and the assertion would still pass on the distractors. Codex was
- * right; the operator was right to reject the head.
+ * "Last visit details" opens ONE card per treated area: the area name is the heading and the settings, outcome and
+ * notes for that area sit under it (components/dashboard-prior-treatment.tsx). The old three section captions
+ * ("Areas treated", "Last session notes", "What happened") no longer exist on this surface, so the grouping claim now
+ * rests on the area headings. They are read from the card itself rather than named here, so the proof follows the
+ * seeded areas and cannot be satisfied by a fixed string that the card no longer needs.
  *
- * "Areas treated" is additionally rendered by last-treatment-memory-card, so
- * the report is scoped to the prep card rather than the page.
+ * The paint oracle below is unchanged: a heading counts only when it is displayed, painted (opacity on it or any
+ * ancestor), boxed, and has non-transparent text. The page's other heading-like text ("Last treatment" summary line,
+ * the toggle) is deliberately NOT a heading in this report, so it can never stand in for an area.
  */
-const REQUIRED_LABELS = ["Areas treated", "Last session notes", "What happened"] as const;
+const AREA_HEADING = '[data-testid="prep-area-label"]';
+
+/** The exact texts of the area headings in the opened card, in order. */
+async function areaHeadings(card: Locator): Promise<string[]> {
+  return card.locator(AREA_HEADING).evaluateAll((els) => els.map((e) => (e.textContent ?? "").trim()));
+}
 
 /**
  * Every label-signature element in the card, with exact text and real visibility.
@@ -164,7 +169,7 @@ async function labelReport(
     };
 
     return Array.from(
-      root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
+      root.querySelectorAll('[data-testid="prep-area-label"]'),
     ).map((el) => {
       const e = el as HTMLElement;
       const cs = getComputedStyle(e);
@@ -205,9 +210,10 @@ async function labelReport(
 /** Which required labels are absent or invisible. Empty array = the claim holds. */
 function missingRequired(
   report: Array<{ text: string; visible: boolean; reason?: string }>,
+  required: readonly string[],
 ): string[] {
   const out: string[] = [];
-  for (const want of REQUIRED_LABELS) {
+  for (const want of required) {
     const exact = report.filter(
       (r) => r.text.toLowerCase() === want.toLowerCase(),
     );
@@ -346,67 +352,47 @@ for (const vp of WIDTHS) {
       expect(colour).not.toBe("transparent");
     });
 
-    test("sections stay distinguishable — labels visible, rows not collapsed", async ({
+    test("sections stay distinguishable — each area has its own painted heading, with its settings and the notes under it", async ({
       page,
     }) => {
       await openDashboardMemory(page);
       const card = page.getByTestId("appointment-prep-memory").first();
       await expect(card).toBeVisible({ timeout: 20_000 });
 
-      // EACH REQUIRED LABEL, INDEPENDENTLY, BY EXACT TEXT.
-      //
-      // The claim is that typography still carries the grouping now the boxes
-      // are gone, so the three shared labels have to be present AND visible —
-      // not merely that something label-shaped is visible somewhere.
+      // Opened ONCE: the card is on screen after a single activation of "Last visit details".
+      await expect(page.getByTestId("dashboard-memory-toggle").first()).toHaveAttribute("aria-expanded", "true");
+
+      // EACH AREA HEADING, INDEPENDENTLY, BY EXACT TEXT, AND PAINTED.
+      const headings = await areaHeadings(card);
+      expect(headings.length, "fixture seeds two areas, so the card must show two headings").toBeGreaterThanOrEqual(2);
+      expect(new Set(headings).size, "each area has its own distinct heading").toBe(headings.length);
       const report = await labelReport(card);
-      const missing = missingRequired(report);
+      const missing = missingRequired(report, headings);
       expect(
         missing,
-        `required labels not satisfied: ${missing.join(" | ")} — saw: ${report.map((r) => `"${r.text}"${r.visible ? "" : "(hidden)"}`).join(", ")}`,
+        `area headings not satisfied: ${missing.join(" | ")} — saw: ${report.map((r) => `"${r.text}"${r.visible ? "" : "(hidden)"}`).join(", ")}`,
       ).toEqual([]);
 
-      // AND THE DISTRACTORS MUST NOT BE ABLE TO STAND IN. These share the class
-      // signature and are deliberately NOT in the required set; proving they
-      // are present alongside shows the exact-text match is doing real work
-      // rather than the locator happening to match only what I wanted.
-      //
-      // The distractor names here are MEASURED, not guessed. My first version
-      // asserted a distractor called "show"; the real element is a <summary>
-      // whose textContent concatenates its heading and both toggle spans into
-      // "setup usedshowhide". Guessing a string instead of reading one is the
-      // same habit this whole slice keeps tripping over, so the brittle
-      // concatenation is not pinned — only the two stable distractors are named,
-      // plus a count that survives that summary's text changing.
-      const seen = report.map((r) => r.text.toLowerCase());
-      const requiredLower = REQUIRED_LABELS.map((l) => l.toLowerCase());
-
-      for (const distractor of ["last treatment", "watch today"]) {
-        expect(
-          seen,
-          `expected distractor "${distractor}" present but NOT counted as required — saw: ${seen.join(", ")}`,
-        ).toContain(distractor);
-      }
-
-      const nonRequired = seen.filter((t) => !requiredLower.includes(t));
-      expect(
-        nonRequired.length,
-        `the locator must match unrelated labels too, or this proof is not discriminating — saw: ${seen.join(", ")}`,
-      ).toBeGreaterThanOrEqual(3);
-
-      for (const want of REQUIRED_LABELS) {
-        expect(
-          seen.filter((t) => t === want.toLowerCase()).length,
-          `"${want}" must be matched by exact text in this card`,
-        ).toBeGreaterThan(0);
-      }
-
-      // Rows must retain real height — flattening should not have produced
-      // zero-height or overlapping rows.
+      // Every area row carries its own settings or outcome text under the heading, not a bare title.
       const rows = page.getByTestId("prep-setup-area");
-      if (await rows.count()) {
-        const h = await rows.first().evaluate((el) => (el as HTMLElement).offsetHeight);
-        expect(h, "flattened row collapsed").toBeGreaterThan(16);
+      expect(await rows.count()).toBe(headings.length);
+      for (let i = 0; i < headings.length; i++) {
+        const row = rows.nth(i);
+        await expect(row.getByTestId("prep-area-label")).toHaveText(headings[i]);
+        const text = (await row.innerText()).replace(headings[i], "").trim();
+        expect(text.length, `"${headings[i]}" must show its settings or outcome under the heading`).toBeGreaterThan(0);
       }
+
+      // The caution the practitioner left sits under its area, in the same card. (The plan for the NEXT visit is
+      // deliberately not in this card; it is the "For this visit" line on the row.)
+      await expect(card.getByTestId("prep-note-item").first()).toContainText("watch the upper lip for reactive erythema");
+
+      // The one-line summary is not a heading and must not be counted as one.
+      expect(report.map((r) => r.text.toLowerCase())).not.toContain("last treatment");
+
+      // Rows must retain real height — flattening should not have produced zero-height or overlapping rows.
+      const h = await rows.first().evaluate((el) => (el as HTMLElement).offsetHeight);
+      expect(h, "flattened row collapsed").toBeGreaterThan(16);
     });
   });
 }
@@ -507,24 +493,28 @@ test.describe("UI-06 label proof: negative control", () => {
     const card = page.getByTestId("appointment-prep-memory").first();
     await expect(card).toBeVisible({ timeout: 20_000 });
 
-    const TARGET = "areas treated";
+    // The control unpaints the FIRST area heading and proves the proof goes red for it alone; the other areas stay green.
+    const headings = await areaHeadings(card);
+    expect(headings.length).toBeGreaterThanOrEqual(2);
+    const TARGET_TEXT = headings[0];
+    const TARGET = TARGET_TEXT.toLowerCase();
+    const OTHERS = headings.slice(1);
 
     for (const mutation of MUTATIONS) {
       // Baseline holds before every mutation — which also proves the PREVIOUS
       // iteration's restore actually reverted, rather than leaving the card
       // progressively dismantled and the later cases passing for free.
       expect(
-        missingRequired(await labelReport(card)),
+        missingRequired(await labelReport(card), headings),
         `baseline must hold before "${mutation.name}"`,
       ).toEqual([]);
 
       const applied = await card.evaluate(
-        (root: Element, kind: string) => {
-          const el = Array.from(
-            root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
-          ).find((e) => (e.textContent ?? "").trim().toLowerCase() === "areas treated") as
-            | HTMLElement
-            | undefined;
+        (root: Element, args: { kind: string; text: string }) => {
+          const kind = args.kind;
+          const el = Array.from(root.querySelectorAll('[data-testid="prep-area-label"]')).find(
+            (e) => (e.textContent ?? "").trim() === args.text,
+          ) as HTMLElement | undefined;
           if (!el) return null;
           if (kind === "display") el.style.display = "none";
           else if (kind === "self-opacity") el.style.opacity = "0";
@@ -545,10 +535,10 @@ test.describe("UI-06 label proof: negative control", () => {
             ownColour: cs.color,
           };
         },
-        mutation.kind,
+        { kind: mutation.kind, text: TARGET_TEXT },
       );
       expect(applied, `fixture: the label to unpaint must exist (${mutation.name})`).toBeTruthy();
-      expect(applied!.text).toBe("Areas treated");
+      expect(applied!.text).toBe(TARGET_TEXT);
 
       if (mutation.kind === "ancestor-opacity") {
         // The distinguishing fact. If this ever reads "0" the mutation stopped
@@ -568,17 +558,16 @@ test.describe("UI-06 label proof: negative control", () => {
         ).toBe("rgba(0, 0, 0, 0)");
       }
 
-      const after = missingRequired(await labelReport(card));
+      const after = missingRequired(await labelReport(card), headings);
 
       // RED, and specifically about the label that was unpainted...
       expect(
-        after.some((m) => m.startsWith("Areas treated")),
+        after.some((m) => m.startsWith(TARGET_TEXT)),
         `"${mutation.name}" must be detected — saw: ${JSON.stringify(after)}`,
       ).toBe(true);
       // ...and NOT about the ones left alone, so the control is specific
       // rather than merely failing.
-      expect(after.some((m) => m.startsWith("Last session notes"))).toBe(false);
-      expect(after.some((m) => m.startsWith("What happened"))).toBe(false);
+      for (const other of OTHERS) expect(after.some((m) => m.startsWith(other))).toBe(false);
 
       // PRESENCE AND VISIBILITY ARE DIFFERENT THINGS, which is the whole
       // subject of this repair and which I conflated once inside it: none of
@@ -611,23 +600,18 @@ test.describe("UI-06 label proof: negative control", () => {
         ).not.toContain(phrase);
       }
 
-      expect(byText("last session notes")?.visible, "untouched label stays visible").toBe(true);
-      expect(byText("what happened")?.visible, "untouched label stays visible").toBe(true);
-
-      // The distractors are still on screen, which is the whole point: their
-      // presence must not rescue the assertion. Names MEASURED, not guessed —
-      // my first version asserted a distractor called "show"; the real element
-      // is a <summary> whose text concatenates to "setup usedshowhide".
-      expect(byText("last treatment")?.visible).toBe(true);
-      expect(byText("watch today")?.visible).toBe(true);
+      for (const other of OTHERS) {
+        expect(byText(other.toLowerCase())?.visible, `untouched heading "${other}" stays visible`).toBe(true);
+      }
+      // The summary line "Last treatment" is still on screen and must not rescue the unpainted heading.
+      await expect(page.getByText("Last treatment", { exact: true }).first()).toBeVisible();
 
       // Restore, and let the next iteration's baseline assertion prove it.
-      await card.evaluate((root: Element, kind: string) => {
-        const el = Array.from(
-          root.querySelectorAll('[class*="uppercase"][class*="tracking-wider"]'),
-        ).find((e) => (e.textContent ?? "").trim().toLowerCase() === "areas treated") as
-          | HTMLElement
-          | undefined;
+      await card.evaluate((root: Element, args: { kind: string; text: string }) => {
+        const kind = args.kind;
+        const el = Array.from(root.querySelectorAll('[data-testid="prep-area-label"]')).find(
+          (e) => (e.textContent ?? "").trim() === args.text,
+        ) as HTMLElement | undefined;
         if (!el) return;
         if (kind === "display") el.style.display = "";
         else if (kind === "self-opacity") el.style.opacity = "";
@@ -639,12 +623,12 @@ test.describe("UI-06 label proof: negative control", () => {
             wrap.remove();
           }
         }
-      }, mutation.kind);
+      }, { kind: mutation.kind, text: TARGET_TEXT });
     }
 
     // And the card is intact at the end, so the loop left nothing behind.
     expect(
-      missingRequired(await labelReport(card)),
+      missingRequired(await labelReport(card), headings),
       "all mutations must be reverted",
     ).toEqual([]);
   });

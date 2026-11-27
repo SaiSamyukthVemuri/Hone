@@ -20,7 +20,7 @@
 // actions already accept every field used here, no action behavior
 // change.
 
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SaveStatus } from "@/components/sessions/save-status";
@@ -131,6 +131,13 @@ import {
 } from "./machine-setup-actions";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import {
+  MULTIPLEX_LOAD_FAILED_MESSAGE,
+  MULTIPLEX_LOAD_INITIAL,
+  MULTIPLEX_LOADING_MESSAGE,
+  multiplexLoadStep,
+  multiplexSaveGate,
+} from "@/lib/machines/multiplex-load";
+import {
   createTreatmentAreaWithEntryAction,
   updateTreatmentAreaWithEntryAction,
 } from "./block-actions";
@@ -149,6 +156,9 @@ export function blockNothingToSave(s: { dirty: boolean; identityDirty: boolean; 
 export function leaveGuardArmed(dirty: boolean, saveConfirmed: boolean): boolean {
   return dirty && !saveConfirmed;
 }
+
+// The stored modality label that names MultiPlex under Thermolysis (APILUS_MODALITIES_BY_MODE.thermo).
+const MULTIPLEX_MODALITY = "Multiplex";
 
 const EDIT_SAVE_UNCONFIRMED =
   "The connection failed, so whether your changes were saved is not known. Your edits are still here: press Save to try again, or reload the page to see what is saved.";
@@ -213,6 +223,8 @@ type Props = {
   // frequency seeded from the practitioner's last-used value. UI
   // defaulting only; fully editable per treatment area.
   defaultMachineFrequency?: string | null;
+  /** MultiPlex is offered to this studio, read with the page. Null = not offered. */
+  multiplexOffer?: { deviceId: string } | null;
   // Feature A (reliability): most recent lot/batch per probe in this studio,
   // keyed by probe_key AND by normalized probe_label (free-text fallback), each
   // carrying its confirmed flag. The form auto-populates the lot field for the
@@ -458,6 +470,7 @@ export function BlockSetupForm({
   firstEntry,
   defaultPrimaryArea,
   defaultMachineFrequency,
+  multiplexOffer = null,
   probeLotSuggestions = { byKey: {}, byLabel: {} },
   probeLotInventory = [],
   initialAreas,
@@ -515,13 +528,23 @@ export function BlockSetupForm({
   // The FROZEN setter, reached through a ref because it is declared further
   // down and this callback has to keep one identity.
   const setDraftRef = useRef<(u: (d: Draft) => Draft) => void>(() => undefined);
+  const parkedLegacyRef = useRef<Pick<Draft, "mode" | "apilusModality" | "energyLevel" | "machineFrequency" | "thermolysisIntensityPercent" | "thermolysisDurationSeconds" | "galvanicMa" | "galvanicDurationSeconds" | "unitsOfLye" | "pulseCount" | "pulseDelay"> | null>(null);
   const onKindChange = useCallback(
     (kind: "none" | "legacy" | "native") => {
       if (kind === "native" && legacyDataLocked) return;
       setMachineKind(kind);
+      // WHENEVER THE LEGACY FIELDS BECOME EDITABLE AGAIN, by ANY route (the existing xCell, or no machine chosen), the parked snapshot is CONSUMED into
+      // the draft and dropped. Left parked it would be restored later OVER whatever she typed in between (Codex, #1790).
+      if (kind !== "native" && parkedLegacyRef.current) {
+        const back = parkedLegacyRef.current;
+        parkedLegacyRef.current = null;
+        setDraftRef.current((d) => ({ ...d, ...back }));
+      }
       if (kind === "native") {
         // Switching never mixes settings: the overlapping legacy fields are
         // cleared with the switch, and the area saves them as NOT RECORDED.
+        // PARKED, NOT DESTROYED: what she had typed under the existing workflow (mode, frequency, readings) is kept in memory and
+        // comes back exactly if she returns to the existing workflow in this open area. Never stored, never saved under a native machine.
         const cleared = (d: Draft): Draft => ({
           ...d,
           mode: "",
@@ -536,7 +559,17 @@ export function BlockSetupForm({
           pulseCount: String(PULSE_COUNT_DEFAULT),
           pulseDelay: String(PULSE_DELAY_DEFAULT),
         });
-        setDraftRef.current(cleared);
+        setDraftRef.current((d) => {
+          if (d.mode !== "" || d.machineFrequency !== "" || d.energyLevel !== "" || d.thermolysisIntensityPercent !== "" || d.thermolysisDurationSeconds !== "" || d.galvanicMa !== "" || d.galvanicDurationSeconds !== "" || d.unitsOfLye !== "" || d.apilusModality !== "") {
+            parkedLegacyRef.current = {
+              mode: d.mode, apilusModality: d.apilusModality, energyLevel: d.energyLevel, machineFrequency: d.machineFrequency,
+              thermolysisIntensityPercent: d.thermolysisIntensityPercent, thermolysisDurationSeconds: d.thermolysisDurationSeconds,
+              galvanicMa: d.galvanicMa, galvanicDurationSeconds: d.galvanicDurationSeconds, unitsOfLye: d.unitsOfLye,
+              pulseCount: d.pulseCount, pulseDelay: d.pulseDelay,
+            };
+          }
+          return cleared(d);
+        });
         // REBASE THE DIRTY BASELINE: the switch is not the practitioner's edit. An automatically resolved
         // machine clears a prefilled studio-default frequency, and comparing against the pre-switch draft showed "Unsaved"
         // (and a leave prompt) on an untouched form.
@@ -570,8 +603,42 @@ export function BlockSetupForm({
   // MULTIPLEX IN THE ONE MODE CONTROL. The panel reports the xCell Pur unit only when the contract row is published and a unit exists.
   // Picking MultiPlex under the existing xCell choice binds a NEW area to that unit when it is saved; the mode is then frozen with the
   // area. A saved area is recognised by its stored unit, never by a control.
-  const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(null);
-  const [multiplexRequest, setMultiplexRequest] = useState<{ seq: number; want: boolean } | null>(null);
+  const [multiplexReadingsHost, setMultiplexReadingsHost] = useState<HTMLDivElement | null>(null);
+  const [multiplexRoute, setMultiplexRoute] = useState<{ deviceId: string } | null>(multiplexOffer);
+  // THE ONE OWNER of the MultiPlex load/apply state (lib/machines/multiplex-load.ts). The panel executes and reports back under a token; nothing
+  // else keeps a copy. Save and Save visit read the same derived `multiplexLoad`.
+  const [multiplexState, dispatchMultiplex] = useReducer(multiplexLoadStep, MULTIPLEX_LOAD_INITIAL);
+  const multiplexStateRef = useRef(multiplexState);
+  multiplexStateRef.current = multiplexState;
+  const multiplexRequest = useMemo(
+    () => (multiplexState.seq > 0 ? { seq: multiplexState.seq, want: multiplexState.want } : null),
+    [multiplexState.seq, multiplexState.want],
+  );
+  const multiplexLoad: "loading" | "failed" | null =
+    multiplexSaveGate(multiplexState) === "held" ? "loading" : multiplexSaveGate(multiplexState) === "refused" ? "failed" : null;
+  // The token a load answer must carry while loading, else null.
+  const multiplexLoadToken = multiplexState.phase === "loading" ? multiplexState.seq : null;
+  // A Save visit pressed while MultiPlex was loading or failed leaves its reason on the section for THAT token only (derived, never cleared by hand).
+  const [visitNoticeSeq, setVisitNoticeSeq] = useState<number | null>(null);
+  const multiplexNotice =
+    visitNoticeSeq !== null && visitNoticeSeq === multiplexState.seq
+      ? multiplexState.phase === "loading"
+        ? MULTIPLEX_LOADING_MESSAGE
+        : multiplexState.phase === "failed"
+          ? MULTIPLEX_LOAD_FAILED_MESSAGE
+          : null
+      : null;
+  // THE PANEL IS PRESENT, observed here so an unmount mid-load ends in `failed`, never in `loading` forever. React StrictMode runs an effect cleanup and its
+  // setup back to back in one commit, so absence is judged one microtask later: a remount in the same commit never reports it.
+  const multiplexPanelPresentRef = useRef(true);
+  const onMultiplexPanelPresence = useCallback((present: boolean) => {
+    multiplexPanelPresentRef.current = present;
+    if (present) return;
+    queueMicrotask(() => {
+      const st = multiplexStateRef.current;
+      if (!multiplexPanelPresentRef.current && st.phase === "loading") dispatchMultiplex({ t: "panelGone", token: st.seq });
+    });
+  }, []);
   // THE SAVED MACHINE FOLLOWS THE PANEL'S WRITES (Codex P2): once a machine change is written, the panel's own written identity is the
   // record, not the block prop this form first rendered with. `undefined` = nothing written yet, so the prop still stands.
   const [writtenDeviceId, setWrittenDeviceId] = useState<string | null | undefined>(undefined);
@@ -581,7 +648,7 @@ export function BlockSetupForm({
     multiplexSaved || (!block && machineKind === "native" && multiplexRoute !== null && draftDeviceId === multiplexRoute.deviceId);
   // Offered on a NEW area under the existing xCell choice. An area holding legacy values never switches (today's refusal stays).
   const multiplexOffered =
-    multiplexSaved || (multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || multiplexSelected));
+    multiplexSaved || (multiplexRoute !== null && !legacyDataLocked && !block && (machineKind === "legacy" || machineKind === "none" || multiplexSelected));
   const showModeControl = machineKind !== "native" || multiplexSelected;
   // The Mode controls are held with every other identity control (Codex P1): while this form's save or the panel's identity write is
   // pending or unresolved, no click may start or undo a MultiPlex choice. `draftFrozen` and `identityWritePending` are declared below.
@@ -993,6 +1060,7 @@ export function BlockSetupForm({
         // destination from the address bar and preserve any newer operation.
         const settledHref = settledAreaOperationHref(resumedSaveKey);
         if (settledHref !== null) router.replace(settledHref, { scroll: false });
+        parkedLegacyRef.current = null; // the area is saved: nothing parked outlives it
         setResume({ state: "saved", blockId: res.blockId });
         return;
       }
@@ -1452,6 +1520,7 @@ export function BlockSetupForm({
   const blockVersion = block ? heldVersion : null;
   const saveBlocked =
     pending ||
+    multiplexLoad === "loading" ||
     resume.state === "checking" ||
     resume.state === "saved" ||
     resumeChoicePending ||
@@ -1470,15 +1539,20 @@ export function BlockSetupForm({
     // commit first, the identity write would then be refused as stale, and the choice would be lost silently.
     identityWritePending;
 
+  // WHAT A HELD SAVE SAYS: the same words on the button's path and on Save visit's.
+  const heldMessage = multiplexLoad === "loading" ? MULTIPLEX_LOADING_MESSAGE : "This area is not ready to save.";
+
   // THE ONE SAVE. The Save button and Save visit both run it, so there is ONE path (same gates, same retry key). It returns what happened on
   // EVERY exit: a validation refusal, a hold, a refusal, a lost answer or a save, never a promise that stays pending.
   function runSave(): Promise<SaveOutcome> {
-    if (saveBlocked) return Promise.resolve({ status: "held", message: "This area is not ready to save." });
+    if (saveBlocked) return Promise.resolve({ status: "held", message: heldMessage });
     const fail = (message: string): Promise<SaveOutcome> => {
       setError(message);
       return Promise.resolve({ status: "failed", message });
     };
     setError(null);
+    // A MULTIPLEX CHOICE THAT COULD NOT LOAD: saving now would write the previous machine's (legacy) area. Refuse, keep the draft.
+    if (multiplexLoad === "failed") return fail(MULTIPLEX_LOAD_FAILED_MESSAGE);
     // THE MACHINE DRAFT BLOCKS THE SAVE WHEN IT IS HALF-FINISHED, and says
     // which group and why. Skipping it would discard numbers she typed;
     // sending it would be refused by the command after a round trip.
@@ -1673,6 +1747,7 @@ export function BlockSetupForm({
       // Create: one save → treatment area + first entry. block_name omitted
       // (null), the section title falls back to the area, then a muted
       // placeholder.
+      const nativeCreate = machineKind === "native";
       const bareKey = attachedSetup ? null : (bareCreateKeyRef.current ??= crypto.randomUUID());
       createAttemptRef.current ??= { identity: identityDraftRef.current, unresolved: false };
       const attemptIdentity = createAttemptRef.current.identity;
@@ -1680,24 +1755,28 @@ export function BlockSetupForm({
         clientId,
         sessionId,
         createKey: bareKey,
-        mode: (draft.mode || null) as ElectrolysisMode | null,
-        apilusModality: (draft.apilusModality || null) as ApilusModality | null,
-        energyLevel: elNum,
+        // A NEW AREA ON A NATIVE MACHINE (MultiPlex) carries NO legacy mode or legacy readings: whatever she typed under Thermolysis, Blend or
+        // Galvanic before switching is parked in memory (and comes back if she switches back), never saved under the native machine. The shared
+        // entries (areas, minutes, probe, lot, hairs, notes, observations, tolerance, numbing) are not mode readings and are always sent.
+        mode: nativeCreate ? null : ((draft.mode || null) as ElectrolysisMode | null),
+        apilusModality: nativeCreate ? null : ((draft.apilusModality || null) as ApilusModality | null),
+        energyLevel: nativeCreate ? null : elNum,
         minutesPerformed: minutesNum,
         probeOptionKey: draft.probeKey || null,
         probeLotNumber: draft.probeLotNumber.trim() || null,
         probeLotConfirmed: draft.probeLotConfirmed,
           probeInventoryItemId: draft.probeInventoryItemId,
-        machineFrequency: (draft.machineFrequency || null) as
-          | MachineFrequency
-          | null,
+        // Frequency is a legacy-only field too (parked with the others): a native create never sends it.
+        machineFrequency: nativeCreate ? null : ((draft.machineFrequency || null) as MachineFrequency | null),
         primaryArea: trimmedArea || null,
         side: draft.side || null,
         customAreaDetail: trimmedDetail || null,
         areaIsCustom,
         // Multi-area (0128): authoritative when non-empty.
         areas: draft.areas,
-        readings,
+        readings: nativeCreate
+          ? { ...readings, thermolysisIntensityPercent: null, thermolysisDurationSeconds: null, galvanicMa: null, galvanicDurationSeconds: null, unitsOfLye: null, pulseCount: null, pulseDelaySeconds: null }
+          : readings,
         ...clinicalResponse,
         // THE SETTINGS, WHEN THERE ARE ANY. `prepareHandoff` mints the retry
         // key ONCE and copies the groups, so a keystroke after the save began
@@ -1778,7 +1857,16 @@ export function BlockSetupForm({
   // retry after a lost create answer carries the same key, exactly as the button does. Nothing unsaved and no error: no call is made.
   const saveRootRef = useRef<HTMLDivElement>(null);
   useRegisterVisitSaver(`block:${block?.id ?? "new"}`, block ? "Treatment area" : "New treatment area", saveRootRef, () => {
-    if (saveBlocked) return Promise.resolve<SaveOutcome>({ status: "held", message: "This area is not ready to save." });
+    if (saveBlocked) {
+      // shown on this section (derived from the load state), where the result line sends the practitioner
+      if (multiplexLoad === "loading") setVisitNoticeSeq(multiplexState.seq);
+      return Promise.resolve<SaveOutcome>({ status: "held", message: heldMessage });
+    }
+    // A FAILED MultiPlex load has nothing dirty to save, so the generic "nothing to save" answer below would let Save visit pass silently: refuse it.
+    if (multiplexLoad === "failed") {
+      setVisitNoticeSeq(multiplexState.seq);
+      return Promise.resolve<SaveOutcome>({ status: "held", message: MULTIPLEX_LOAD_FAILED_MESSAGE });
+    }
     // AN EXISTING AREA WITH UNSAVED MACHINE SETTINGS IS HELD: saving the area closes its form, which would unmount the readings entry and
     // lose what was typed there, and Save visit never drives that entry's own save. The practitioner saves or discards it with its own button first.
     if (block && draftRegistry.view.anyDraft) {
@@ -2038,8 +2126,16 @@ export function BlockSetupForm({
         }
         onKindChange={onKindChange}
         multiplexRequest={multiplexRequest}
+        multiplexLoadToken={multiplexLoadToken}
         onMultiplexRoute={setMultiplexRoute}
-        onSavedDeviceChange={setWrittenDeviceId}
+        onMultiplexSettled={(token, result) => dispatchMultiplex({ t: "settled", token, result })}
+        onMultiplexOutcome={(token, outcome) => dispatchMultiplex({ t: outcome === "applied" ? "applied" : "notApplied", token })}
+        onPanelPresence={onMultiplexPanelPresence}
+        multiplexReadingsHost={multiplexReadingsHost}
+        onSavedDeviceChange={(id) => {
+          setWrittenDeviceId(id);
+          dispatchMultiplex({ t: "identityWritten" });
+        }}
         onIdentityDraft={block ? undefined : onIdentityDraft}
         onChosenModel={setChosenModel}
         blockVersion={blockVersion}
@@ -2285,16 +2381,34 @@ export function BlockSetupForm({
         <span className="text-sm font-medium">Mode</span>
         <div className="flex flex-wrap gap-2">
           {ELECTROLYSIS_MODES.map((m) => {
-            const selected = draft.mode === m.value;
+            // Pressing Blend or Galvanic while MultiPlex is chosen SELECTS it (the parked Thermolysis readings go back first), never toggles it off.
+            // MULTIPLEX LIVES UNDER THERMOLYSIS (practitioner feedback): while it is chosen the Thermolysis pill stays pressed, and the Modality choice below
+            // names MultiPlex. Blend and Galvanic never show as pressed under it.
+            const selected = multiplexSelected ? m.value === "thermo" : draft.mode === m.value;
             return (
               <button
                 key={m.value}
                 type="button"
                 disabled={multiplexSaved || draftFrozen || identityWritePending}
                 onClick={() => {
-                  update("mode", selected ? "" : m.value);
-                  // Leaving MultiPlex returns the area to the existing xCell workflow.
-                  if (multiplexSelected) setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: false }));
+                  // Thermolysis is already the mode while MultiPlex is chosen: pressing it again changes nothing. The way out is another modality
+                  // (below) or Blend/Galvanic.
+                  if (!(multiplexSelected && m.value === "thermo")) {
+                    // LEAVING MULTIPLEX BY CHOOSING A LEGACY MODE: the readings parked when they picked MultiPlex go back FIRST, under the mode they were typed
+                    // in; then the mode they clicked is selected. Restoring them AFTER the click (the leave-MultiPlex request does) would put the parked mode
+                    // back over their choice and save the wrong mode.
+                    let base: Draft = draft;
+                    if (multiplexSelected && parkedLegacyRef.current) {
+                      base = { ...draft, ...parkedLegacyRef.current };
+                      parkedLegacyRef.current = null;
+                    }
+                    if (base !== draft) setDraft({ ...base, mode: selected ? "" : m.value });
+                    else update("mode", selected ? "" : m.value);
+                    // Leaving MultiPlex returns the area to the existing xCell workflow.
+                    // ALWAYS a new token, even before MultiPlex is selected: a MultiPlex click whose load is pending is replaced here, so its late answer
+                    // matches nothing and can neither select MultiPlex over this mode nor refuse the Save.
+                    dispatchMultiplex({ t: "legacy" });
+                  }
                 }}
                 className={`rounded-full border px-4 py-2 text-sm transition ${
                   selected
@@ -2306,51 +2420,56 @@ export function BlockSetupForm({
               </button>
             );
           })}
-          {multiplexOffered && (
-            <button
-              type="button"
-              data-testid="mode-multiplex"
-              aria-pressed={multiplexSelected}
-              disabled={multiplexSaved || draftFrozen || identityWritePending}
-              onClick={() => setMultiplexRequest((r) => ({ seq: (r?.seq ?? 0) + 1, want: !multiplexSelected }))}
-              className={`rounded-full border px-4 py-2 text-sm transition ${
-                multiplexSelected
-                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                  : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-500 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300"
-              }`}
-            >
-              MultiPlex
-            </button>
-          )}
         </div>
       </div>
       )}
 
-      {showLegacyFields && showModality && (
+      {((showLegacyFields && showModality) || multiplexSelected) && (
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">Modality</span>
           <select
-            value={draft.apilusModality}
+            data-testid="modality-select"
+            value={multiplexSelected ? MULTIPLEX_MODALITY : draft.apilusModality}
+            disabled={multiplexSaved || draftFrozen || identityWritePending}
             onChange={(e) => {
               const next = e.target.value;
-              setDraft((d) => ({
-                ...d,
-                apilusModality: next,
-                // PR #279: OmniBlend has no thermolysis duration. Clear any value
-                // typed under a different modality so a NEW OmniBlend record can't
-                // persist a now-hidden reading. (Editing an existing OmniBlend
-                // record seeds from the saved entry and fires no onChange, so its
-                // history is preserved.) Galvanic intensity is retired everywhere,
-                // so there is nothing to clear for it here.
-                ...(next === "Omniblend"
-                  ? { thermolysisDurationSeconds: "" }
-                  : {}),
-              }));
+              // MULTIPLEX UNDER THERMOLYSIS: where the route is offered (a NEW area), choosing MultiPlex starts the native xCell Pur load. The stored
+              // modality label is NOT set; the native area carries no legacy modality. Where it is not offered (an existing legacy entry, no route)
+              // it stays the plain label it has always been. Offer is decided by route and identity, never by the label's text.
+              if (next === MULTIPLEX_MODALITY && multiplexOffered && !multiplexSelected) {
+                dispatchMultiplex({ t: "select" });
+              } else if (multiplexSelected) {
+                // LEAVING MULTIPLEX BY CHOOSING ANOTHER MODALITY: the parked readings come back first under the mode they were typed in (Thermolysis),
+                // then the modality they picked is applied over them. Choosing MultiPlex again changes nothing.
+                if (next !== MULTIPLEX_MODALITY) {
+                  const back = parkedLegacyRef.current;
+                  parkedLegacyRef.current = null;
+                  setDraft({ ...draft, ...(back ?? {}), mode: "thermo", apilusModality: next });
+                  dispatchMultiplex({ t: "legacy" });
+                }
+              } else {
+                // ANY OTHER MODALITY while MultiPlex is not selected or saved REPLACES the request, as a mode pill does: a new token, so a pending
+                // load's late answer matches nothing and a failed load's refusal is cleared.
+                dispatchMultiplex({ t: "legacy" });
+                setDraft((d) => ({
+                  ...d,
+                  apilusModality: next,
+                  // PR #279: OmniBlend has no thermolysis duration. Clear any value
+                  // typed under a different modality so a NEW OmniBlend record can't
+                  // persist a now-hidden reading. (Editing an existing OmniBlend
+                  // record seeds from the saved entry and fires no onChange, so its
+                  // history is preserved.) Galvanic intensity is retired everywhere,
+                  // so there is nothing to clear for it here.
+                  ...(next === "Omniblend"
+                    ? { thermolysisDurationSeconds: "" }
+                    : {}),
+                }));
+              }
             }}
             className="max-w-sm rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950"
           >
             <option value="">Select…</option>
-            {modalityOptions.map((opt) => (
+            {(multiplexSelected ? APILUS_MODALITIES_BY_MODE.thermo : modalityOptions).map((opt) => (
               <option key={opt} value={opt}>
                 {apilusModalityLabel(opt)}
               </option>
@@ -2364,8 +2483,9 @@ export function BlockSetupForm({
           fields for thermolysis/blend, galvanic fields for galvanic/blend.
           All optional (pulse defaults to 1). Saved as the treatment area's
           first entry, keyed to the chosen area. */}
-      <div className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+      <section aria-label="Treatment readings" className="flex flex-col gap-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <span className="text-sm font-medium">Treatment readings</span>
+        <div ref={setMultiplexReadingsHost} className="flex flex-col gap-3 empty:hidden" />
 
         {/* PR #279 (Chloe): energy level lives UNDER Treatment readings now (it
             used to sit near modality). Same energy_level column; UI move only. */}
@@ -2404,7 +2524,7 @@ export function BlockSetupForm({
             className={READING_INPUT_CLS}
           />
         </label>
-      </div>
+      </section>
 
       <label className="flex flex-col gap-1.5">
         <span className="text-sm font-medium">Minutes performed (optional)</span>
@@ -2693,9 +2813,9 @@ export function BlockSetupForm({
         </p>
       )}
 
-      {error && (
+      {(error ?? multiplexNotice) && (
         <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-          {error}
+          {error ?? multiplexNotice}
         </p>
       )}
 
@@ -2730,12 +2850,14 @@ export function BlockSetupForm({
             // here: there, pressing Save again unchanged IS the recovery.
             revisionUnresolved ||
             // And while a saved area's machine choice is being written.
-            identityWritePending
+            identityWritePending ||
+            // And while the MultiPlex choice is still loading (a Save now would save the previous machine).
+            multiplexLoad === "loading"
           }
           data-testid="save-treatment-area"
           className="rounded-md bg-neutral-900 px-5 py-3 text-sm font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
-          {pending ? "Saving…" : "Save settings block"}
+          {pending ? "Saving…" : multiplexLoad === "loading" ? "Loading MultiPlex…" : "Save settings block"}
         </button>
         {/*
           CANCEL IS FROZEN WHILE THE SAVE'S OUTCOME IS UNKNOWN

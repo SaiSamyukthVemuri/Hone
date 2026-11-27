@@ -2,6 +2,7 @@
 
 import { Fragment, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { PendingLink } from "@/components/pending-link";
 import type { RecordActionResult } from "./actions";
 import { PROBE_OPTIONS } from "@/lib/probes";
 
@@ -74,15 +75,25 @@ export const MANUFACTURER_OPTIONS = ["Protec", "Ballet", "Sterex"] as const;
 const OTHER_MANUFACTURER = "__other__";
 
 const INPUT_CLS =
-  "rounded-md border border-neutral-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950";
+  "min-h-11 w-full min-w-0 rounded-md border border-neutral-300 bg-white px-3 py-2 text-base focus-visible:outline-2 focus-visible:outline-offset-1 sm:text-sm dark:border-neutral-700 dark:bg-neutral-950";
 const LABEL_CLS =
-  "text-[11px] uppercase tracking-wider text-neutral-500";
+  "text-sm font-medium text-neutral-700 dark:text-neutral-300";
+
+function RecordFields({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <fieldset className="min-w-0 rounded-xl border border-neutral-200 px-4 pb-5 pt-3 sm:px-5 dark:border-neutral-800">
+      <legend className="px-1 text-base font-semibold">{title}</legend>
+      <div className="grid min-w-0 gap-4 sm:grid-cols-2">{children}</div>
+    </fieldset>
+  );
+}
 
 function AddRecordForm({
   action,
   submitLabel,
   children,
   onAfterSuccess,
+  backHref,
 }: {
   action: Action;
   submitLabel: string;
@@ -90,6 +101,7 @@ function AddRecordForm({
   // PR #316: optional hook so a form can clear its own copy-last prefill after
   // a successful add (the generic reset only clears uncontrolled DOM inputs).
   onAfterSuccess?: () => void;
+  backHref?: string;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -122,7 +134,7 @@ function AddRecordForm({
           }
         });
       }}
-      className="flex flex-col gap-3"
+      className="flex min-w-0 flex-col gap-5"
     >
       <Fragment key={resetKey}>{children}</Fragment>
       <div className="flex flex-wrap items-center gap-3">
@@ -133,6 +145,11 @@ function AddRecordForm({
         >
           {pending ? "Saving…" : submitLabel}
         </button>
+        {backHref && !pending && (
+          <PendingLink href={backHref} className="inline-flex min-h-11 items-center rounded-md px-3 text-sm font-medium underline-offset-4 hover:underline" pendingLabel="Opening logbook…">
+            {saved ? "Back to logbook" : "Cancel"}
+          </PendingLink>
+        )}
         {saved && (
           <span className="text-sm text-green-700 dark:text-green-400" role="status">
             Record saved.
@@ -503,10 +520,11 @@ export function AddSterileItemForm({
     <AddRecordForm
       action={action}
       submitLabel="Add sterile item record"
+      backHref="/records?section=sterile"
       onAfterSuccess={clear}
     >
       {lastRecord && (
-        <div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <button
             type="button"
             onClick={() => {
@@ -519,51 +537,55 @@ export function AddSterileItemForm({
           >
             Copy last entry
           </button>
-          <span className="ml-2 text-xs text-neutral-500">
-            Fills everything except the lot number.
+          <span className="text-xs text-fg-muted">
+            Enter the new lot number from the packaging. The discard date starts blank.
           </span>
         </div>
       )}
-      <div className="grid gap-3 sm:grid-cols-2" key={copyKey}>
-        <Field
-          label="Date purchased"
-          name="date_purchased"
-          type="date"
-          required
-          defaultValue={prefill?.date_purchased?.slice(0, 10)}
-        />
-        <Field
-          label="Item description"
-          name="item_description"
-          required
-          placeholder="e.g. Ballet F3 stainless probes"
-          defaultValue={prefill?.item_description}
-        />
-        <ProbeClassificationField defaultValue={prefill?.probe_key} />
-        <ManufacturerPicker defaultValue={prefill?.manufacturer_name} />
-        <Field
-          label="Amount purchased"
-          name="amount_purchased"
-          placeholder="e.g. 50"
-          defaultValue={prefill?.amount_purchased}
-        />
-        {/* Lot # is NEVER prefilled from copy-last, always starts blank. */}
-        <Field label="Lot #" name="lot_number" placeholder="e.g. 460941" />
-        <Field
-          label="Expiry date"
-          name="expiry_date"
-          type="date"
-          defaultValue={prefill?.expiry_date?.slice(0, 10)}
-        />
-        {/* 0182: never prefilled from copy-last, always starts blank. */}
-        <Field
-          label="Date discarded"
-          name="date_discarded"
-          type="date"
-          hint="Leave blank unless this stock has been thrown away. Setting it removes the item from current inventory; its history is kept."
-        />
-        <NotesField defaultValue={prefill?.notes ?? undefined} />
-      </div>
+      <Fragment key={copyKey}>
+        <RecordFields title="Purchase details">
+          <Field
+            label="Date purchased"
+            name="date_purchased"
+            type="date"
+            required
+            defaultValue={prefill?.date_purchased?.slice(0, 10)}
+          />
+          <Field
+            label="Item description"
+            name="item_description"
+            required
+            placeholder="e.g. Ballet F3 stainless probes"
+            defaultValue={prefill?.item_description}
+          />
+          <ProbeClassificationField defaultValue={prefill?.probe_key} />
+          <ManufacturerPicker defaultValue={prefill?.manufacturer_name} />
+        </RecordFields>
+        <RecordFields title="Lot and stock">
+          <Field
+            label="Amount purchased"
+            name="amount_purchased"
+            placeholder="e.g. 50"
+            defaultValue={prefill?.amount_purchased}
+          />
+          {/* Lot # is NEVER prefilled from copy-last, always starts blank. */}
+          <Field label="Lot #" name="lot_number" placeholder="e.g. 460941" />
+          <Field
+            label="Expiry date"
+            name="expiry_date"
+            type="date"
+            defaultValue={prefill?.expiry_date?.slice(0, 10)}
+          />
+          {/* 0182: never prefilled from copy-last, always starts blank. */}
+          <Field
+            label="Date discarded"
+            name="date_discarded"
+            type="date"
+            hint="Leave blank unless this stock has been thrown away. Setting it removes the item from current inventory; its history is kept."
+          />
+          <NotesField defaultValue={prefill?.notes ?? undefined} />
+        </RecordFields>
+      </Fragment>
     </AddRecordForm>
   );
 }
@@ -578,8 +600,8 @@ export function AddDisinfectantForm({
   currentPractitionerId: string;
 }) {
   return (
-    <AddRecordForm action={action} submitLabel="Add disinfectant record">
-      <div className="grid gap-3 sm:grid-cols-2">
+    <AddRecordForm action={action} submitLabel="Add disinfectant record" backHref="/records?section=disinfectants">
+      <RecordFields title="Batch preparation">
         <Field label="Date prepared" name="date_prepared" type="date" required />
         <Field
           label="Disinfectant name"
@@ -588,13 +610,15 @@ export function AddDisinfectantForm({
           placeholder="e.g. CaviCide"
         />
         <Field label="Concentration" name="concentration" placeholder="e.g. ready to use / 1:10" />
+        <OperatorPicker staff={staff} currentPractitionerId={currentPractitionerId} />
+      </RecordFields>
+      <RecordFields title="Replacement and disposal">
         {/* PR #280: three distinct dates: prepared (made), discard/replace-by
             (drives the read-time due alert), and actual date discarded. */}
         <Field label="Discard / replace by" name="discard_due_date" type="date" />
         <Field label="Actual date discarded" name="date_discarded" type="date" />
-        <OperatorPicker staff={staff} currentPractitionerId={currentPractitionerId} />
         <NotesField />
-      </div>
+      </RecordFields>
     </AddRecordForm>
   );
 }
@@ -609,10 +633,12 @@ export function AddExposureIncidentForm({
   staff: OperatorOption[];
 }) {
   return (
-    <AddRecordForm action={action} submitLabel="Add exposure incident">
-      <div className="grid gap-3 sm:grid-cols-2">
+    <AddRecordForm action={action} submitLabel="Add exposure incident" backHref="/records?section=incidents">
+      <RecordFields title="Incident date and exposed person">
         <Field label="Incident date" name="incident_date" type="date" required />
         <ExposedPersonPicker clients={clients} staff={staff} />
+      </RecordFields>
+      <RecordFields title="Incident details">
         <Field label="Staff involved" name="staff_involved_name" />
         <label className="flex flex-col gap-1 sm:col-span-2">
           <span className={LABEL_CLS}>How the exposure occurred</span>
@@ -623,7 +649,7 @@ export function AddExposureIncidentForm({
           <textarea name="action_taken" rows={3} className={INPUT_CLS} />
         </label>
         <NotesField />
-      </div>
+      </RecordFields>
     </AddRecordForm>
   );
 }

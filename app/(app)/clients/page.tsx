@@ -1,8 +1,6 @@
-import { readGroups, readGroupMembers, readClientGroups } from "@/lib/client-groups/queries";
-import { groupFilter, scopeToGroup, unavailable } from "@/lib/client-groups/model";
 import { directoryHref } from "@/lib/clients/directory-query";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { PendingLink } from "@/components/pending-link";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createClient } from "@/lib/supabase/server";
@@ -66,15 +64,13 @@ export default async function ClientsPage({
   // Default deny: only an owner or a practitioner may use this directory.
   if (!isStaffRole(practitioner.role)) notFound();
 
-  const owner = practitioner.role === "owner";
-  const selectedGroup = groupFilter(params.group);
+  // The custom groups feature was removed. An old link that still carries ?group= lands on the standard directory, keeping only
+  // the standard view, search, filters and sort (parseDirectoryParams already whitelists them); the group value is
+  // never echoed and no other parameter is passed through.
+  if (params.group !== undefined) {
+    redirect(directoryHref({ view, q: query.q, filters: query.filters, sort: query.sort, lastVisit: query.lastVisit }));
+  }
   const supabase = await createClient();
-  const catalogue = owner ? await readGroups(supabase, studio.id, true) : unavailable;
-  const groupExists = catalogue.available && catalogue.value.some((g) => g.id === selectedGroup);
-  const members = selectedGroup && owner && groupExists
-    ? await readGroupMembers(supabase, studio.id, true, selectedGroup)
-    : unavailable;
-  const groupBlocked = Boolean(selectedGroup) && (!owner || !groupExists || !members.available);
   const db = supabase as unknown as DirectorySupabase;
   const domain = startPerfSpan("clients.domain");
   const nowIso = new Date().toISOString();
@@ -103,8 +99,7 @@ export default async function ClientsPage({
   ]);
   // undefined: not needed this request; null: needed and unavailable; a map: the whole set.
   const wholeLastVisitMap = wholeLastVisits === null ? undefined : wholeLastVisits.ok ? wholeLastVisits.value : null;
-  const allIdentityRows = source.map(projectStaffRow);
-  const identityRows = scopeToGroup(allIdentityRows, selectedGroup, members);
+  const identityRows = source.map(projectStaffRow);
   let aggregates: DirectoryAggregates = {
     nextAppointments: wholeNext,
     intake: wholeIntake,
@@ -128,8 +123,7 @@ export default async function ClientsPage({
     data = queryDirectory(identityRows, aggregates, query, clock);
   }
 
-  // Group membership narrows matches, not the underlying directory-empty state.
-  data = { ...data, directoryEmpty: allIdentityRows.length === 0 };
+  data = { ...data, directoryEmpty: identityRows.length === 0 };
 
   // The overview's client comes from the same authorized set: an id that is not in
   // this view's set shows nothing and reveals nothing.
@@ -148,7 +142,6 @@ export default async function ClientsPage({
       ? wholeLastVisits
       : await readLastVisits(supabase as unknown as LastVisitSupabase, studio.id, ids, nowIso);
   const lastVisitMap = lastVisits && lastVisits.ok ? lastVisits.value : null;
-  const visibleGroups = owner ? await readClientGroups(supabase, studio.id, true, ids, catalogue) : undefined;
   domain.end();
 
   const state: DirectoryState = {
@@ -158,7 +151,6 @@ export default async function ClientsPage({
     sort: query.sort,
     lastVisit: query.lastVisit,
     page: data.page,
-    group: selectedGroup,
   };
 
   // The overview opens under its own row (nothing above it moves). A selected client
@@ -175,27 +167,27 @@ export default async function ClientsPage({
   ) : null;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Clients</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            {archived
-              ? "Archived clients are hidden from active lists and booking pickers. Historical records are preserved."
-              : "Find, review and open your clients."}
-          </p>
+          {archived && (
+            <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+              Archived clients are hidden from active lists and booking pickers. Historical records are preserved.
+            </p>
+          )}
         </div>
         <Link
           href="/clients/new"
-          className="rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className="inline-flex min-h-11 items-center rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
         >
           + Add client
         </Link>
       </div>
 
-      <ViewTabs current={view} group={selectedGroup} />
+      <ViewTabs current={view} />
 
-      <DirectoryControls state={state} groups={owner ? catalogue : undefined} />
+      <DirectoryControls state={state} />
 
       {clientParam && !selected && (
         <p role="status" className="text-sm text-neutral-500">
@@ -211,24 +203,22 @@ export default async function ClientsPage({
         selectedId={selected?.id ?? null}
         overview={onThisPage ? overview : null}
         timeZone={studio.timezone}
-        groups={visibleGroups}
-        groupBlocked={groupBlocked}
       />
     </div>
   );
 }
 
-// Two-link segmented control. Plain anchor links so the active state
+// Two standard directory views. Plain anchor links so the active state
 // survives a full page navigation; this control just toggles the ?view= param.
-function ViewTabs({ current, group }: { current: View; group?: string }) {
+function ViewTabs({ current }: { current: View }) {
   const tabs = CLIENT_LIST_VIEWS.map((v) => ({
     ...v,
-    href: group ? directoryHref({ view: v.value, group }) : clientListViewHref(v.value),
+    href: clientListViewHref(v.value),
   }));
   return (
     <nav
       aria-label="Client list view"
-      className="flex w-fit gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1 text-sm dark:border-neutral-800 dark:bg-neutral-900"
+      className="flex gap-5 border-b border-neutral-200 text-sm dark:border-neutral-800"
     >
       {tabs.map((tab) => {
         const active = tab.value === current;
@@ -240,8 +230,8 @@ function ViewTabs({ current, group }: { current: View; group?: string }) {
             aria-current={active ? "page" : undefined}
             className={
               active
-                ? "rounded-md bg-white px-3 py-1.5 font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
-                : "rounded-md px-3 py-1.5 text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                ? "inline-flex min-h-11 items-center border-b-2 border-current font-semibold text-neutral-900 dark:text-neutral-100"
+                : "inline-flex min-h-11 items-center border-b-2 border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
             }
           >
             {tab.label}

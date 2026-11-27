@@ -62,9 +62,9 @@ test("every pinned note renders on the dashboard roster", async ({ page }) => {
     expect(iOld).toBeGreaterThan(iMid);
   });
 
-  await test.step("Before Today preparation renders alongside the notes", async () => {
-    await expect(page.getByText(/Before today/i).first()).toBeVisible({ timeout: T });
-    await expect(page.getByText("Lower the energy one step").first()).toBeVisible();
+  await test.step("the one-visit plan is readable alongside the pinned notes", async () => {
+    await expect(page.getByTestId("dashboard-prep-remember")).toHaveText("From last visit, for today Lower the energy one step", { timeout: T });
+    await expect(page.getByRole("button", { name: /^Last visit details for / })).toBeVisible();
   });
 });
 

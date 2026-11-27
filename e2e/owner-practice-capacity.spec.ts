@@ -1176,7 +1176,7 @@ for (const viewport of [{ width: 1440, height: 900 }, PHONE]) {
     const engagement = page.getByRole("heading", { name: "Delivery and engagement" }).locator("..");
     await expect(engagement.getByText("Invitation-page views", { exact: true }).locator("..").getByText("Not tracked", { exact: true })).toBeVisible();
     await expect(engagement.getByText("Email opens", { exact: true }).locator("..").getByText("Not tracked", { exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Review waitlist", exact: true })).toHaveAttribute("href", "/settings/waitlist");
+    await expect(page.getByRole("link", { name: "Review waitlist", exact: true })).toHaveAttribute("href", "/waitlist");
     const planner = page.getByRole("form", { name: "Consultation capacity" });
     await planner.getByLabel("Look ahead").selectOption("14");
     await planner.getByRole("button", { name: "Show capacity", exact: true }).click();

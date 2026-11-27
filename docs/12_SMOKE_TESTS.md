@@ -532,6 +532,12 @@ Expected end state:
    - "Follow-up okay" badge.
    - "Cancelled N minutes after booking" if `cancelled_at - created_at <= 15 minutes`.
 
+## Find time in a team calendar
+
+In a test studio with practitioner capacity enabled, open Calendar as the owner. Search Find time for a service that two practitioners offer. Select an opening on another day and confirm that the calendar shows its practitioner and local start time. Open the booking drawer and compare its service, practitioner and time with the result. Close the drawer and confirm no appointment was created. From an existing appointment, choose Rebook this client and repeat, checking the client prefill. Repeat as a practitioner member and verify the available times belong to that member.
+
+On an enabled **test** receptionist desk, open Month and compare the count for one practitioner with the selected date’s agenda. Open a visit and check the displayed name, service, phone and email against the test client. Switch to Week and Day, then search the same date range for a service the selected practitioners offer. Try a noon-or-later preference and select an existing test client. Verify the picker shows the preferred name for a client who supplied one, the regular name for a client without one, and a masked contact hint. Search by surname and confirm that the same display name appears on the booking and in the agenda. Previewing an opening must leave the schedule unchanged. Confirm once and check the appointment time and practitioner on the schedule. Use a second tab to check that a taken opening cannot be booked again.
+
 ## 7. Calendar block smoke (PR #139 + #140)
 
 1. As an active non-owner practitioner (if available; otherwise the owner), open `/calendar`.
@@ -1483,34 +1489,6 @@ When opening a PR, the report MUST explicitly call out which smoke steps were no
 - Anything requiring the Vercel production env dashboard.
 
 The DB/RLS integration lane (PR #220) removed several items from this list: cross-studio RLS isolation, audit-trail immutability and trigger behavior, the clinical delete posture, the double-booking constraint, and the claim RPCs are now exercised on a real local database in CI instead of requiring manual SQL against production. What the DB lane still cannot verify: production-specific state (data drift, policies edited outside migrations: the prod catalog audit recipe in docs/09 remains the check for that), Stripe/Resend/Twilio behavior, and the browser.
-
-## Custom client groups — checks before it is turned on
-
-Use synthetic data on the owned local stack after the reviewed
-[client-groups proposal](proposals/client-groups/README.md) is installed there.
-
-1. As owner, Clients → Manage groups: create Active and Follow up; case/space
-   variants resolve to the existing group; empty/control/overlong names refuse.
-2. Rename Follow up. In a stale second tab, attempt another rename: refusal retains
-   the draft and asks to reload rather than overwriting the first change.
-3. On a client Overview, assign both groups, remove only one, reload and verify.
-4. Filter directory by the remaining group; combine search/intake/last-visit/sort,
-   cross page boundaries and open/close overview. Counts and URL state agree.
-5. Empty valid group: No clients match. Empty studio: No clients yet. Unknown,
-   foreign or unavailable group: explicit retry/remove-filter guidance, no all-row fallback.
-6. Archive and restore a fixture using the existing flow; memberships survive both.
-7. As practitioner/nonowner, directory/profile have no group controls or names;
-   direct management route and commands deny. SQL qualification includes anon/service.
-8. Without proposal relations/RPCs, ordinary directory works, groups say unavailable,
-   selected filter refuses. Network/uncertain command failure never claims saved.
-9. Check keyboard focus, pending/double-submit prevention, and phone/tablet layout
-   with long names. Existing neutral theme and 44px controls remain consistent.
-
-Automated browser journey: `e2e/client-groups.spec.ts`; when the database support is
-missing it records a skip, which is not a pass. Database checks are in
-`tests/db/client-groups.db.test.ts` (rolled-back transactions) and
-`tests/db/client-groups-applied.db.test.ts` (the support installed for real, then removed).
-Both run on a local test database only.
 
 ## Waitlist Analytics
 

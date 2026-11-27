@@ -1100,6 +1100,18 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "A single global row holding the calendar worker kill-switch. No studio_id, no studio meaning.",
   },
+  platform_rollouts: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone operator rollout switch (one row per platform feature: off, pilot or all). Hone's own release configuration; it holds no studio data.",
+  },
+  platform_rollout_studios: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone operator pilot list (which studios a platform feature is piloted for). Hone's own release configuration, keyed by studio id only; it holds no studio-authored content.",
+  },
   admin_action_events: {
     kind: "excluded",
     category: "platform",
@@ -1866,12 +1878,72 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   // -------------------------------------------------------------------------
   // STORAGE
   // -------------------------------------------------------------------------
+  "storage:client-identification-photos": {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "The private bucket holding client identification photos (0375), apart from treatment photography. Consent-bound and deleted on withdrawal; an export of it needs its own consent and deletion decision. PENDING grants no export authority.",
+  },
   "storage:treatment-images": {
     kind: "pending",
     ticket: "TRUTH-01C",
     tier: 1,
     reason:
       "The private bucket holding every treatment photo a studio has taken. It is the single largest studio-owned asset the export does not carry, and it CANNOT ship on the current path: the exporter returns one base64 string from a server action, which is not a mechanism for an image corpus. A later export slice is the asynchronous, object-storage-backed export that makes binaries possible; deferring it here is a capability statement, not a decision that photos do not matter. Terms section 6 defines Your Data to include photos, so the settings page must say plainly that this export does not contain them.",
+  },
+
+  // 0375 client identification photo. Held, OFF by default; no export surface ships with it.
+  client_id_photos: {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 1,
+    fieldReviewRequired: true,
+    reason:
+      "The client's optional identification photo (0375). Consent-bound and deleted on withdrawal, removal or client archive, so it must never travel in an export without its own decision about consent and deletion. PENDING grants no export authority.",
+  },
+  client_id_photo_consents: {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 1,
+    reason:
+      "Append-only consent evidence for the identification photo: who provided, who recorded, channel, time, wording version and hash. Studio-held evidence, decided with the photo itself. No export surface ships in 0375.",
+  },
+  client_id_photo_audit: {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 2,
+    reason:
+      "Image-free audit facts for identification photos (actor, client reference, event, time). Operational history, decided with the consent evidence.",
+  },
+  studio_client_id_photo_settings: {
+    kind: "pending",
+    ticket: "TRUTH-01C",
+    tier: 2,
+    reason:
+      "The per-studio OFF-by-default switch for identification photos, operator-controlled. Configuration the studio does not author.",
+  },
+  studio_client_id_photo_switch_log: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Append-only log of operator changes to the identification-photo switch. Platform operations record, not studio content.",
+  },
+  client_id_photo_wording_versions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "The platform's versioned consent wording. The text a client agreed to is identified by version and hash on the consent rows.",
+  },
+  client_id_photo_pending_object_deletions: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    reason:
+      "Transient queue of storage objects awaiting deletion through the Storage API. Holds only paths already removed from the record; never studio content.",
   },
 
   // Existing finite-prefix owner decisions; pending entries grant no export authority.
@@ -1919,7 +1991,7 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     ticket: "TRUTH-01B",
     tier: 1,
     reason:
-      "Introduced by migration 0223 (MPX-02, #829). The studio's own list of physical electrolysis machines: a display name, the catalogue profile and version it was registered against, the options physically fitted, and a retirement instant. It holds NO client or clinical data and no provider identifier. It is plainly studio-owned content and a studio export should probably carry it, but that is a product decision this lane was not asked to make, so nothing is claimed here. Whoever takes it should note that treatment_setup_readings references this table, so exporting the readings without the machines would leave an unresolvable identifier in the archive.",
+      "Introduced by migration 0223 (MPX-02, #829). The studio's own list of physical electrolysis machines: a display name, the catalogue profile and version it was registered against, the options physically fitted, and a retirement instant. It holds NO client or clinical data and no provider identifier. It is plainly studio-owned content and a studio export should probably carry it, but that is a product decision this lane was not asked to make, so nothing is claimed here. Whoever takes it should note that treatment_setup_readings references this table, so exporting the readings without the machines would leave an unresolvable identifier in the archive. Migration 0385 adds is_unspecified: an inert, internal placeholder row per studio and xCell Pur version, named 'Machine not specified', created by a practitioner's first MultiPlex save in a studio with no registered machine. It is not a machine the studio owns, so an export of this table must exclude rows where is_unspecified, and any file that emits studio_machine_id (treatment_setup_readings) must leave it blank for such a row.",
   },
   studio_cancellation_fee_rule_changes: {
     kind: "pending",

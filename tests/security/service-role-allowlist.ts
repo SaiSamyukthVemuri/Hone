@@ -322,6 +322,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/settings/team/receptionist-actions.ts",
+    purpose: "Owner team management: deactivate or reactivate a front-desk receptionist through the set_studio_receptionist_active command.",
+    why: "setReceptionistActiveAction resolves the signed-in practitioner and studio on the server (getCurrentPractitionerWithStudio), refuses anyone who is not the owner BEFORE any database call, then calls the service-role-only command with the server-derived studio id and owner id (only the receptionist id and the wanted state come from the form). The command re-verifies the active owner in the database and answers not_found for a receptionist of another studio, so a forged id cannot reach across studios. It writes the one row's active flag; it reads no client data.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
     path: "app/(app)/settings/payments/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",
@@ -356,6 +362,24 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     purpose: "Operator-only admin console surface.",
     why: "No practitioner session; gated by the ADMIN_EMAILS/isAdmin operator check. Cross-studio access is intentional for support/ops, so service-role is required.",
     scopeGuard: "isAdmin",
+  },
+  {
+    path: "app/admin/rollouts/page.tsx",
+    purpose: "Operator-only rollout control page: reads the platform rollout mode and pilot studio NAMES, and operator display labels.",
+    why: "No practitioner session; the platform tables have no client grant at all, and pilot studios are cross-studio by nature. Gated by the platform-admin check on the page (and the layout); it shows names only, never an id, owner email or clinical data.",
+    scopeGuard: "requirePlatformAdmin",
+  },
+  {
+    path: "lib/rollouts/admin-commands.ts",
+    purpose: "Operator-only platform rollout commands (set mode, add or remove a pilot studio, log a blocked attempt).",
+    why: "The commands are service-role-only database functions that audit every change in the same transaction. The only callers are the admin server actions, which re-check isAdmin and pass the actor taken from the authenticated session.",
+    scopeGuard: "p_actor_user_id",
+  },
+  {
+    path: "lib/rollouts/charting-rollout.ts",
+    purpose: "The server's per-request read of whether a studio is enabled for xCell MultiPlex and New view.",
+    why: "The platform rollout tables have no client grant, so the read is a service-role-only command that answers one boolean for the studio the CALLER derived from its own authenticated scope. It is read-only, never cached, and fails closed.",
+    scopeGuard: "platform_rollout_enabled_for",
   },
   {
     path: "app/admin/ops-alerts/page.tsx",

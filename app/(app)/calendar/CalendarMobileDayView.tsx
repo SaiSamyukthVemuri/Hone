@@ -1,5 +1,8 @@
 "use client";
 
+import { withDashboardRebook } from "@/lib/calendar/dashboard-rebook";
+import { useDashboardRebook } from "./dashboard-rebook-context";
+
 import { useEffect, useRef, useState } from "react";
 import { withSelection } from "@/lib/calendar/practitioner-selection";
 import { useRouter } from "next/navigation";
@@ -55,6 +58,7 @@ type Props = {
   // The sidebar's practitioner selection (`people` param value, undefined = everyone). Carried on
   // every URL this component pushes so stepping past the loaded week never resets the filter.
   selectionParam?: string;
+  timeGrid?: boolean;
 };
 
 // Current minute-of-day in the studio timezone (same technique as NowLine).
@@ -85,8 +89,10 @@ export function CalendarMobileDayView({
   returnTo,
   blockScopeNames,
   selectionParam,
+  timeGrid = false,
 }: Props) {
   const router = useRouter();
+  const rebook = useDashboardRebook();
   const [selectedDate, setSelectedDate] = useState(initialDate);
   // The server's date changed (a mini-calendar pick, a toolbar step or a link keeps this component
   // mounted): follow it. Local strip taps do not change `initialDate`, so they are never overridden.
@@ -142,18 +148,19 @@ export function CalendarMobileDayView({
   const day = days[idx];
   if (!day) return null;
 
+  const gridParam = timeGrid ? "&layout=grid" : "";
   function goPrev() {
     if (idx > 0) setSelectedDate(days[idx - 1].date);
-    else router.push(withSelection(`/calendar?day=${addDays(days[0].date, -1)}`, selectionParam));
+    else router.push(withDashboardRebook(withSelection(`/calendar?day=${addDays(days[0].date, -1)}${gridParam}`, selectionParam), rebook));
   }
   function goNext() {
     if (idx < days.length - 1) setSelectedDate(days[idx + 1].date);
-    else router.push(withSelection(`/calendar?day=${addDays(days[days.length - 1].date, 1)}`, selectionParam));
+    else router.push(withDashboardRebook(withSelection(`/calendar?day=${addDays(days[days.length - 1].date, 1)}${gridParam}`, selectionParam), rebook));
   }
   function goToday() {
     const ti = days.findIndex((d) => d.date === today);
     if (ti >= 0) setSelectedDate(today);
-    else router.push(withSelection("/calendar?view=week", selectionParam));
+    else router.push(withDashboardRebook(withSelection(`/calendar?view=week${gridParam}`, selectionParam), rebook));
   }
 
   // Floating "+" default time: on today within working hours, the next rounded

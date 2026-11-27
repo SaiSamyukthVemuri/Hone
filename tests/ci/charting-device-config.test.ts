@@ -21,29 +21,33 @@ describe("playwright.charting.config.ts", () => {
     for (const n of ["desktop-chromium", "iphone-portrait", "android-portrait", "ipad-portrait", "ipad-landscape", "webkit-charting"]) expect(cfg).toContain(`name: "${n}"`);
     expect(cfg).toMatch(/HONE_E2E_WEBKIT === "1"[\s\S]*webkit-charting/);
   });
-  it("never sets the rollout setting itself", () => {
-    expect(cfg.replace(/\/\/.*$/gm, "")).not.toMatch(/HONE_CHARTING_NEW_VIEW_STUDIO_IDS/);
+  it("never sets the rollout itself (the spec does, on the owned local stack)", () => {
+    expect(cfg.replace(/\/\/.*$/gm, "")).not.toMatch(/HONE_CHARTING_NEW_VIEW_STUDIO_IDS|platform_rollouts|setPlatformRolloutMode/);
   });
 });
 
 describe("e2e/charting-new-view.spec.ts", () => {
-  it("is skipped unless the local server was started with the rollout setting set to all", () => {
-    expect(spec).toMatch(/test\.skip\(process\.env\.HONE_CHARTING_NEW_VIEW_STUDIO_IDS !== "all"/);
+  it("sets the platform rollout row to all before its tests and back to off after them, and reads no environment variable for it", () => {
+    expect(spec).toMatch(/test\.beforeAll\(async \(\) => \{ await setPlatformRolloutMode\("all"\); \}\);/);
+    expect(spec).toMatch(/test\.afterAll\(async \(\) => \{ await setPlatformRolloutMode\("off"\); \}\);/);
+    expect(spec).not.toMatch(/HONE_CHARTING_NEW_VIEW_STUDIO_IDS|test\.skip\(process\.env/);
   });
   it("uses only the local synthetic seed and reaches no hosted or provider endpoint", () => {
     expect(spec).toMatch(/seedE2eStudio\(\)/);
     expect(spec).not.toMatch(/https?:\/\/(?!localhost|127\.0\.0\.1)/);
     expect(spec).not.toMatch(/supabase\.co|stripe\.com|vercel\.app/);
   });
-  it("the payment-lane spec is opt-in the same way and reaches no real provider", () => {
+  it("the payment-lane spec seeds the row the same way and reaches no real provider", () => {
     const pay = readFileSync("e2e-payment/charting-new-view-payment.spec.ts", "utf8");
-    expect(pay).toMatch(/test\.skip\(process\.env\.HONE_CHARTING_NEW_VIEW_STUDIO_IDS !== "all"/);
+    expect(pay).toMatch(/test\.beforeAll\(async \(\) => \{ await setPlatformRolloutMode\("all"\); \}\);/);
+    expect(pay).toMatch(/test\.afterAll\(async \(\) => \{ await setPlatformRolloutMode\("off"\); \}\);/);
+    expect(pay).not.toMatch(/HONE_CHARTING_NEW_VIEW_STUDIO_IDS/);
     expect(pay).toMatch(/api\\\.stripe\\\.com/);
     expect(pay).toMatch(/configureFakeStripeOutcome/);
     expect(pay).not.toMatch(/supabase\.co|vercel\.app|sk_live|pk_live/);
   });
-  it("proves the rollout setting reached the server instead of skipping silently", () => {
-    expect(spec).toMatch(/the switch must exist: start the app server with HONE_CHARTING_NEW_VIEW_STUDIO_IDS=all/);
+  it("proves the rollout row took effect instead of skipping silently", () => {
+    expect(spec).toMatch(/the switch must exist: the platform rollout row must be set to all/);
   });
 });
 

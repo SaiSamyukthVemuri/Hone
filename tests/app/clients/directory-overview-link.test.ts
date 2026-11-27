@@ -81,13 +81,14 @@ describe("directory interaction contract (HON-58)", () => {
     expect(read("OverviewFrame.tsx")).toContain("scroll={false}");
   });
 
-  it("controls: client navigation without scroll, group selector, no search term echoed, 44px targets", () => {
+  it("controls: client navigation without scroll, no group selector, no search term echoed, 44px targets", () => {
     const src = read("DirectoryControls.tsx");
     expect(src).toContain('"use client"');
     expect(src).toContain("scroll: false");
-    // Existing sort/intake/last-visit controls stay exposed; the reusable group catalogue uses a select.
-    expect(src).toContain('<select name="group"');
-    expect(src).toContain('<legend className="sr-only">Sort by</legend>');
+    // Existing sort/intake/last-visit controls stay exposed; custom client groups were removed, so no group control exists.
+    expect(src).not.toMatch(/name="group"|Client group/);
+    expect(src).toContain('aria-label="Sort by"');
+    expect(src).toContain('aria-label="Last visit"');
     expect(src).not.toMatch(/\$\{state\.q\}|\$\{q\}/);
     expect(src).toContain("min-h-11");
     // Sort and filters apply on change; the typed search text is local state and survives them.

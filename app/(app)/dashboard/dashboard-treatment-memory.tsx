@@ -1,12 +1,10 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { compactSummary } from "@/lib/dashboard/today-treatment-summary";
 import { AppointmentPrepMemoryCard } from "@/components/appointment-prep-memory-card";
 import type { DashboardTreatmentDisclosureSummary } from "@/lib/dashboard/dashboard-prep-summary";
-import {
-  loadAppointmentPrepMemory,
-  type PrepMemoryResult,
-} from "./prep-memory-actions";
+import type { PrepMemoryResult } from "./prep-memory-read";
 
 // ===========================================================================
 // The previous treatment, in place, on a Dashboard appointment row.
@@ -42,11 +40,24 @@ import {
 // (components/signed-consent-viewer.tsx); this follows it so keyboard and
 // screen-reader behaviour stays uniform.
 
+/** 200 carries the answer; 404 is "no such appointment here" (the same as none); anything else is "could not be loaded". */
+async function readPrepMemoryResponse(response: Response): Promise<PrepMemoryResult> {
+  if (response.status === 404) return { status: "none" };
+  if (!response.ok) return { status: "unavailable" };
+  const body = (await response.json()) as { status?: unknown; memory?: unknown } | null;
+  if (body?.status === "none") return { status: "none" };
+  if (body?.status === "loaded" && body.memory && typeof body.memory === "object") {
+    return { status: "loaded", memory: body.memory as Extract<PrepMemoryResult, { status: "loaded" }>["memory"] };
+  }
+  return { status: "unavailable" };
+}
+
 export function DashboardTreatmentMemory({
   appointmentId,
   clientId,
   clientName,
   summary,
+  timeZone,
 }: {
   appointmentId: string;
   /** For the card's own links only. Never used as authorization. */
@@ -60,11 +71,54 @@ export function DashboardTreatmentMemory({
    * that note across the boundary on Today, where it is not visible at all.
    */
   summary: DashboardTreatmentDisclosureSummary;
+  timeZone: string;
 }) {
-  const [open, setOpen] = useState(false);
+  // practitioner feedback (26 Nov): the last visit's details are ON the card by default, no click needed. The button is now only a
+  // secondary "hide / show"; it starts open. The details are still read by the server on request, after it re-checks
+  // the appointment belongs to this studio, and never travel in the page payload.
+  const [open, setOpen] = useState(true);
   const [result, setResult] = useState<PrepMemoryResult | null>(null);
-  const [pending, startTransition] = useTransition();
+  // The in-flight read, so it can be cancelled on unmount and never started twice.
+  const inflight = useRef<AbortController | null>(null);
   const regionId = useId();
+  const showable = !summary.unavailable && summary.hasTreatment;
+
+  // A plain GET fetch (not a server action): server actions run one at a time on the client, so a read started on mount would
+  // hold a pinned-note save behind it. The route re-checks the session and studio server-side (prep-memory/route.ts).
+  async function load() {
+    // A loaded or empty answer is kept; a FAILED one is retried the next time the row is opened.
+    if ((result !== null && result.status !== "unavailable") || inflight.current) return;
+    const controller = new AbortController();
+    inflight.current = controller;
+    try {
+      const response = await fetch(`/dashboard/prep-memory?appointment_id=${encodeURIComponent(appointmentId)}`, {
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      setResult(await readPrepMemoryResponse(response));
+    } catch {
+      // A dropped connection or a malformed body fails to THIS row's own line and never escapes to the route error
+      // boundary, which would replace the whole Dashboard. The thrown value is deliberately not read, rendered or logged.
+      if (!controller.signal.aborted) setResult({ status: "unavailable" });
+    } finally {
+      if (inflight.current === controller) inflight.current = null;
+    }
+  }
+
+  useEffect(() => {
+    if (showable && open) void load();
+    // Cancel the read if the row unmounts (a day change, a navigation). Clearing the ref lets a remounted effect start fresh.
+    return () => {
+      inflight.current?.abort();
+      inflight.current = null;
+    };
+    // Runs on mount AND when the row first becomes showable while open (a first read that was unavailable, then a later
+    // revalidation that succeeds). load() skips a kept answer and an in-flight call, so a re-render never refetches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showable]);
 
   // Truthful ordering of the three genuinely different states. "We could not
   // read it" must never render as "this client has no treatment history": that
@@ -82,45 +136,23 @@ export function DashboardTreatmentMemory({
   }
   if (!summary.hasTreatment) return null;
 
-  // NO PREFETCH. Not on hover, not on mount, not on intersection — only here,
-  // after a deliberate activation. Once fetched, the result is kept for the
-  // life of the row so closing and reopening costs nothing.
   function toggle() {
     const next = !open;
     setOpen(next);
-    if (!next || result !== null || pending) return;
-    startTransition(async () => {
-      // The action RETURNS its own refusals, so a server-side failure already
-      // arrives as `{ status: "unavailable" }` below. This catch is for the
-      // OTHER class: a rejected INVOCATION — a dropped connection, a response
-      // that cannot be decoded, a deployment-id mismatch on a tab left open
-      // across a deploy. The action's internal try/catch runs on the server
-      // and cannot see any of those.
-      //
-      // Without it React re-throws the rejection out of the transition and it
-      // escapes to the route error boundary, replacing the ENTIRE Dashboard
-      // because one OPTIONAL per-row disclosure failed. A per-row read must
-      // fail to its own line. Same shape as TodayPortalLinkButton and
-      // StartAssistedIntakeButton, which document the identical hazard.
-      //
-      // The thrown value is deliberately not read, not rendered and not
-      // logged: it can carry framework and transport internals, and the row
-      // already has truthful copy that says the only thing worth saying.
-      try {
-        setResult(await loadAppointmentPrepMemory(appointmentId));
-      } catch {
-        setResult({ status: "unavailable" });
-      }
-    });
+    if (next) load();
   }
 
   return (
-    <div className="mt-1 flex flex-col gap-1">
+    <div
+      data-prior-visible={open && result?.status === "loaded" ? "true" : undefined}
+      className="mt-1 flex flex-col gap-1"
+    >
       {/* The one-line "Last treatment" summary is painted on the CLOSED row by RowSafetyLines (HON-65), so
           it is not repeated here; this control only opens the full chart. */}
       <button
         type="button"
         onClick={toggle}
+        aria-label={`Last visit details for ${clientName}`}
         aria-expanded={open}
         aria-controls={regionId}
         data-testid="dashboard-memory-toggle"
@@ -129,11 +161,11 @@ export function DashboardTreatmentMemory({
            but the hit area matches every other control on the row. It was the
            height of its own text, which this PR made worse by putting it on
            the future-day path, where preparing on a phone is the whole point. */
-        className="inline-flex min-h-[44px] items-center self-start py-2 text-[11px] font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 dark:text-blue-300"
+        className="inline-flex min-h-[44px] min-w-0 max-w-full items-center self-start py-2 text-left text-[11px] font-medium text-blue-700 underline underline-offset-2 [overflow-wrap:anywhere] hover:text-blue-900 dark:text-blue-300"
       >
         {open
-          ? `Hide full last treatment for ${clientName}`
-          : `View full last treatment for ${clientName}`}
+          ? "Hide last visit details"
+          : "Last visit details"}
       </button>
 
       {/* The region is always in the DOM as a labelled container so
@@ -156,12 +188,18 @@ export function DashboardTreatmentMemory({
               /* showFullChartLink={false} is the Dashboard half of the
                  stay-inline contract. Expanding a row is a READ; the
                  disclosure must not contain a control that leaves the page. */
-              <AppointmentPrepMemoryCard
-                clientId={clientId}
-                memory={result.memory}
-                embedded
-                showFullChartLink={false}
-              />
+              <>
+                <p className="mb-2 text-xs text-fg-muted">
+                  <span className="font-medium">Last treatment</span>{" · "}
+                  {compactSummary({ ...result.memory, areaHeadline: null, totalMinutes: null }, timeZone)}
+                </p>
+                <AppointmentPrepMemoryCard
+                  clientId={clientId}
+                  memory={result.memory}
+                  embedded
+                  showFullChartLink={false}
+                />
+              </>
             ) : result.status === "none" ? (
               <p className="text-xs text-neutral-500">
                 No previous treatment to show.

@@ -139,12 +139,9 @@ describe("3. charting: obvious finish, no new write path", () => {
 describe("4. procedure records filter copy", () => {
   it("friendlier labels and helper", () => {
     expect(RECORDS).toMatch(/label: "Procedure records"/);
-    expect(RECORDS).toMatch(/>Procedure records<\/h2>/);
+    expect(RECORDS).toMatch(/>Session register<\/h2>/);
     expect(RECORDS).toMatch(/Choose a client/);
-    expect(RECORDS).toMatch(
-      /Use this when you need a procedure record for one client/,
-    );
-    expect(RECORDS).toMatch(/this client&apos;s\s*\n?\s*procedure record/);
+    expect(RECORDS).toMatch(/Choose a client and dates to print a filtered procedure record/);
   });
 
   it("filter and print behavior untouched", () => {
@@ -190,7 +187,7 @@ describe("5. dashboard: worklist first", () => {
     // Onboarding v2 (migration 0140) supersedes this when its per-studio flag
     // is on, so the legacy card stays gated behind !onboardingV2On. On the
     // default OFF path an INCOMPLETE studio still gets its card, unchanged.
-    expect(DASH).toMatch(/\{!onboardingV2On && !setupComplete && \(/);
+    expect(DASH).toMatch(/\{isOwner && !onboardingV2On && !setupComplete && \(/);
     // ...and a COMPLETE one gets no footer, no card, no congratulation.
     // Comment-stripped: the page explains WHY the footer went away, and that
     // explanation quotes the retired copy. A whole-file grep would be satisfied
@@ -213,7 +210,7 @@ describe("5. dashboard: worklist first", () => {
   it("the legacy incomplete card sits below Today; the onboarding-v2 surface sits above it", () => {
     const today = DASH.indexOf("{dayHeading(selectedDayLocal, todayLocal)}");
     // Legacy (flag-off) getting-started card is unchanged: still below Today.
-    const card = DASH.indexOf("{!onboardingV2On && !setupComplete && (");
+    const card = DASH.indexOf("{isOwner && !onboardingV2On && !setupComplete && (");
     expect(card).toBeGreaterThan(today);
     // The onboarding-v2 pinned surface is above the fold (above Today).
     const v2 = DASH.indexOf("{onboarding && (");
@@ -223,7 +220,9 @@ describe("5. dashboard: worklist first", () => {
 
   it("PR #236 Today actions are untouched, and the snapshot still renders the same metrics", () => {
     expect(DASH).toMatch(/resolveDayNextAction\(\{/);
-    expect(DASH).toMatch(/\{nextAction\.label\}/);
+    // The action row moved to visit-actions.tsx: the page still resolves the action and hands it to the row, which renders its label.
+    expect(DASH).toMatch(/nextAction=\{nextAction\.href !== chartHref/);
+    expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8")).toMatch(/\{nextAction\.label\}/);
     // Part 1 split "Action needed" out of the snapshot; Part 2B retired that
     // component entirely and folded its data into the ONE To-do model. The
     // snapshot keeps its metrics and its livemode gate; the SAME

@@ -9,6 +9,7 @@ import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import { appointmentDisplayStatus, appointmentStatusTag } from "./appointment-display-status";
 import { timeRangeLabel } from "./calendar-format";
 import { calendarBlockScopeLabel, type BlockScopeNames } from "@/lib/calendar/block-scope";
+import { resolvePractitionerColor } from "@/lib/practitioner-colors";
 import { chooserSummaryRows } from "@/lib/calendar/appointment-lanes";
 
 // The one place this surface reads the stored client name (the name census records one read per file).
@@ -16,11 +17,17 @@ function overlapClientName(a: AppointmentWithPractitionerColor): string {
   return a.client?.name?.trim() || "Client";
 }
 
+function WeekPractitionerDot({ appointment }: { appointment: AppointmentWithPractitionerColor }) {
+  const name = appointment.practitioner?.display_name?.trim() || (appointment.practitioner_id ? "Practitioner" : "Unassigned");
+  return <span role="img" aria-label={name} title={name}
+    className={`inline-block h-2 w-2 shrink-0 rounded-full ${resolvePractitionerColor(appointment.practitioner?.color).bg}`} />;
+}
+
 // What a chooser button shows for SEVERAL appointments: each client and start time inside the span the button covers,
 // "+N more" when the span is short, and the count alone when the height is unknown or too small. In a narrow column the
 // start time is hidden (container query on the button) so the name keeps the room. Display only.
-export function OverlapSummaryRows({ members, height, tz, timeFormat }: {
-  members: ReadonlyArray<AppointmentWithPractitionerColor>; height: number; tz: string; timeFormat: TimeFormat;
+export function OverlapSummaryRows({ members, height, tz, timeFormat, showPractitioner = false }: {
+  members: ReadonlyArray<AppointmentWithPractitionerColor>; height: number; tz: string; timeFormat: TimeFormat; showPractitioner?: boolean;
 }) {
   const rows = chooserSummaryRows(members.length, height);
   if (rows.shown === 0) return <>
@@ -32,6 +39,7 @@ export function OverlapSummaryRows({ members, height, tz, timeFormat }: {
       const name = overlapClientName(m);
       return (
         <span key={m.id} data-chooser-row="" className="flex h-[14px] items-center gap-1 text-[11px] leading-[14px]">
+          {showPractitioner && <WeekPractitionerDot appointment={m} />}
           <span className="hidden shrink-0 tabular-nums opacity-80 @min-[7rem]:inline">{formatTimeForStudio(new Date(m.starts_at), tz, timeFormat)}</span>
           <span className="truncate font-semibold" title={name}>{name}</span>
         </span>
@@ -41,8 +49,8 @@ export function OverlapSummaryRows({ members, height, tz, timeFormat }: {
   </>;
 }
 
-export function OverlapAppointmentSummary({ appointment: a, tz, timeFormat }: {
-  appointment: AppointmentWithPractitionerColor; tz: string; timeFormat: TimeFormat;
+export function OverlapAppointmentSummary({ appointment: a, tz, timeFormat, showPractitioner = false }: {
+  appointment: AppointmentWithPractitionerColor; tz: string; timeFormat: TimeFormat; showPractitioner?: boolean;
 }) {
   const range = timeRangeLabel(
     formatTimeForStudio(new Date(a.starts_at), tz, timeFormat),
@@ -54,7 +62,7 @@ export function OverlapAppointmentSummary({ appointment: a, tz, timeFormat }: {
   const noShow = status === "no_show";
   return <>
     {noShow ? <span className="block text-xs font-semibold">No-show</span> : null}
-    <span className="block whitespace-normal font-semibold">{overlapClientName(a)}</span>
+    <span className="block whitespace-normal font-semibold">{showPractitioner && <><WeekPractitionerDot appointment={a} />{" "}</>}{overlapClientName(a)}</span>
     <span className="block text-xs tabular-nums">{range}{tag && !noShow ? ` · ${tag}` : ""}</span>
     {a.practitioner?.display_name?.trim() ? <span className="block text-xs">{a.practitioner.display_name.trim()}</span> : null}
     {a.service?.name?.trim() ? <span className="block text-xs opacity-70">{a.service.name.trim()}</span> : null}

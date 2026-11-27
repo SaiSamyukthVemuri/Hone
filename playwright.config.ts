@@ -33,7 +33,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }], ["junit", { outputFile: `junit-results/playwright-${process.pid}.xml`, includeProjectInTestName: true }]] : "list",
   use: {
     baseURL: E2E_APP_ORIGIN,
     trace: "retain-on-failure",
@@ -59,6 +59,12 @@ export default defineConfig({
             // exercising it.
             use: { ...devices["Desktop Safari"], bypassCSP: true },
           },
+          // one complete MultiPlex visit on an emulated iPhone in WebKit (the engine behind iPhone Safari; NOT real Safari, NOT a real device).
+          {
+            name: "webkit-iphone-visit",
+            testMatch: /(xcell-multiplex-visit|multiplex-no-machine)\.spec\.ts$/,
+            use: { ...devices["iPhone 13"], bypassCSP: true },
+          },
           // CLN-006 mounted-keyboard and focus cases in WebKit (non-required
           // job only). Scoped by file AND by title so the rest of these two
           // specs, which Chromium already runs in full, is not repeated here.
@@ -67,6 +73,13 @@ export default defineConfig({
             testMatch: /(finish-appointment-mobile|fett-photos-touch-floor)\.spec\.ts$/,
             grep: /aftercare warning keyboard stays contained|every photo control measures at least 44px/,
             use: { ...devices["Desktop Safari"], bypassCSP: true },
+          },
+          // The receptionist desk on an emulated iPhone in WebKit. Its sign-in goes through e2e/helpers/desk.ts, which applies the shared WebKit localhost
+          // workaround (webkit-localhost.ts) to the magic link and the redirects after it. Not wired into a CI job here; run it with HONE_E2E_WEBKIT=1.
+          {
+            name: "webkit-receptionist",
+            testMatch: /(desk-calendar|desk-finder-and-isolation|receptionist-onboarding-flow)\.spec\.ts$/,
+            use: { ...devices["iPhone 13"], bypassCSP: true },
           },
         ]
       : []),

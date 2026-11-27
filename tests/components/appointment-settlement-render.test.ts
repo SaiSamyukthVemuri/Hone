@@ -62,9 +62,11 @@ describe("an UNSETTLED visit offers the outcomes", () => {
     expect(html).toContain("settlement-open-waived");
   });
 
-  it("says out loud that Hone did not verify this", () => {
-    const html = render({ settledMethod: null });
-    expect(html).toContain("does not take a payment and Hone");
+  it("explains external collection before the practitioner records a payment", () => {
+    const html = render({ initialMethod: "paid_e_transfer" });
+    expect(html).toContain("External payments are recorded by the studio. Hone does not collect or verify them.");
+    expect(html).toContain('data-testid="settlement-confirm-paid_e_transfer"');
+    expect(html).not.toContain("appointment-settlement-recorded");
   });
 });
 

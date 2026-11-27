@@ -43,7 +43,7 @@ describe("the owner follow-up commands", () => {
   ] as const;
   for (const [name, action, cmd, fields, args] of all) {
     it(`${name}: studio and actor come from the session, and success redirects to the anchor`, async () => {
-      expect(await target(action(form({ ...fields, studioId: "x", actorUserId: "y", p_actor_user_id: "z" })))).toBe("REDIRECT:/settings/waitlist?fu=done#follow-up");
+      expect(await target(action(form({ ...fields, studioId: "x", actorUserId: "y", p_actor_user_id: "z" })))).toBe("REDIRECT:/waitlist?fu=done#follow-up");
       expect(cmd).toHaveBeenCalledWith(...args);
     });
     it(`${name}: a non-owner, a missing session user or a bad id calls nothing`, async () => {

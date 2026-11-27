@@ -61,7 +61,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     ]);
   });
 
-  it("the manifest still maps every spec, and the targeted lane still selects 30", () => {
+  it("maps every spec and preserves the expected targeted selection", () => {
     const mapped = Object.values(BROWSER_GROUPS as Record<string, { specs: string[] }>).flatMap(
       (g) => g.specs,
     );
@@ -238,6 +238,7 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 48: #1308's dashboard-phone-overflow.spec.ts joined `sessions` with the other Today-roster specs.
     // RECORDED AS A DECISION per the note above. Cost: FIVE executed cases (320 and 390 x owner and practitioner, plus one
     // five-tap navigation case), each a seeded studio, a magic-link login and a page load or a few.
+    // Now 72 (was 71): dashboard-visit-card-actions.spec.ts (practitioner feedback, 26 Nov) joined `sessions` with the other Today-roster specs. RECORDED AS A DECISION per the note above. Cost: ONE case, a few seconds.
     // Now 51 after the merge of production: HON-8's machine-real-3g.spec.ts joined `sessions` beside machine-create-mode-journey (same surface; it proves the REAL
     // contracts, which the synthetic-id sibling cannot). CI cost: four journeys (flash and blend per model) at about 25 s each.
     // Before that, 49: the merge of production joined one more spec to this selection (production's own pin was 47 before #1308's two). The
@@ -260,6 +261,8 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // Now 56: machine-mode-then-save.spec.ts (HON-8: a mode click then a block save must not conflict with the user's own write; a genuine
     // second-tab edit still does) joined `sessions`. RECORDED AS A DECISION per the note above. Cost: FOUR executed cases (two models x two), each a
     // seeded studio, a magic-link login and a few page loads: about 2 minutes.
+    // Now 64: HON-106's notifications-live-bell.spec.ts joined `calendar` (the shell's bell). RECORDED AS A DECISION per the note above. Cost: EIGHT
+    // executed cases, each a seeded studio and a magic-link login: about 5 minutes in the targeted lane.
     // Now 62 after merging production (production alone: 56): HON-48's six five-user proof specs (hon48-five-user-booking, -moves-blocks, -denial, hon48-tablet-phone-selection,
     // hon48-returning-client-lookup, hon48-commit-visibility-timing) joined `calendar`. RECORDED AS A DECISION per the note above. Five of the six
     // are REQUIRED in the calendar lane and no longer self-skip (the self-skip was removed from those five). Only hon48-commit-visibility-timing
@@ -269,7 +272,23 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // The five HON-48 five-user specs above are NO LONGER opt-in: they run in the required calendar lane (18 declarations, 23 cases after the device and size loops
     // in the tablet and phone spec; about 3 minutes measured on an owned stack). RECORDED AS A DECISION per the note above. The count is unchanged because the files were already listed; only the self-skip went.
     // hon48-commit-visibility-timing stays opt-in (HON48_TIMING_E2E=1), as do the two day-layout matrices and calendar-own-first.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(63);
+    // Now 65 after merging production (production alone: 64): hon48-week-month-per-user.spec.ts joined `calendar` (HON-48: per-practitioner Week and Month, desktop and iPhone width). RECORDED AS A
+    // DECISION per the note above. It is REQUIRED, not opt-in: it runs whenever the calendar group is selected. Its added run time is measured on an
+    // owned stack and recorded in the pull request, not assumed here.
+    // Three required dashboard journeys exercise checkout, rebooking and charting whenever the sessions group runs.
+    expect(specsForGroups(["sessions"])).toContain("dashboard-rebook-chart.spec.ts");
+    // Now 68 after merging production (production alone: 67; dashboard-rebook-chart.spec.ts, above, adds one). The last addition to production was: service-discard-while-saving.spec.ts joined `calendar` (Discard edits is disabled while a service save is in flight; desktop and emulated phone). RECORDED AS A
+    // DECISION per the note above. It is REQUIRED, not opt-in: two cases, each a seeded studio and a login, about 2 minutes on an owned stack.
+    // The receptionist calendar journey runs in the calendar group using the local desk flag.
+    // Now 69 after merging production again (production alone: 68; dashboard-rebook-chart.spec.ts adds one). The last addition to production was: xcell-multiplex-visit.spec.ts, which joined `sessions` (the machine panel inside the settings-block form). RECORDED AS A DECISION per the
+    // note above. It is REQUIRED, not opt-in. Cost, MEASURED on an owned stack: three cases in the chromium project (desktop, a 390px iPhone-sized
+    // emulation, and Save pressed while the pick is pending), each a seeded studio, a magic-link login and one or two saves: about 15-20s each, a minute
+    // in all. The iPhone WebKit case runs only in the non-required `webkit-iphone-visit` project and skips everywhere else.
+    // Now 70 after merging production again (production alone: 69): multiplex-no-machine.spec.ts joined `sessions` (MultiPlex in a studio with ZERO registered machines). RECORDED AS A DECISION per the note
+    // above. It is REQUIRED, not opt-in. Cost, to be MEASURED on an owned stack and recorded in the pull request: three cases in the chromium project
+    // (desktop, a 390px iPhone-sized emulation, and the rollout-off toggle check), each a seeded studio and a login; the iPhone WebKit case runs only in the
+    // non-required `webkit-iphone-visit` project and skips everywhere else.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(72);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {

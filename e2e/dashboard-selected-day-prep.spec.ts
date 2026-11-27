@@ -14,6 +14,7 @@ import {
   type E2eSeed,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
+import { ensureLastVisitDetailsOpen, closeLastVisitDetails } from "./helpers/last-visit-details";
 
 // Chloe, on production, after day navigation shipped:
 //
@@ -111,17 +112,19 @@ test.describe("preparing a future day", () => {
       await expect(returning.getByTestId("dashboard-memory-toggle")).toBeVisible();
     });
 
-    await test.step("4. the plan note reaches her as Remember", async () => {
-      await expect(
-        returning.getByTestId("dashboard-prep-remember"),
-      ).toContainText("Lower the energy one step");
+    await test.step("4. the plan belongs to the earlier appointment and is absent from this one", async () => {
+      await expect(returning.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      await expect(returning).not.toContainText("Lower the energy one step");
     });
 
-    await test.step("5. the full treatment expands WITHOUT leaving the Dashboard", async () => {
-      await returning.getByTestId("dashboard-memory-toggle").click();
+    await test.step("5. one click opens the full recorded settings in the same row", async () => {
+      await ensureLastVisitDetailsOpen(returning.getByRole("button", { name: /^Last visit details for / }));
       await expect(returning.getByTestId("dashboard-memory-full")).toBeVisible({
         timeout: T,
       });
+      await expect(returning.getByTestId("dashboard-memory-full")).toContainText("27.12 MHz");
+      await expect(returning.getByTestId("dashboard-memory-full")).toContainText("Synchro");
+      await expect(returning.getByTestId("dashboard-memory-full")).not.toContainText("Lower the energy one step");
       expect(new URL(page.url()).pathname).toBe("/dashboard");
     });
 
@@ -154,7 +157,7 @@ test.describe("preparing a future day", () => {
     });
   });
 
-  test("TODAY is unchanged — the full briefing is still there", async ({ page }) => {
+  test("Today shows its own plan, its caution, pinned notes and previous treatment", async ({ page }) => {
     const seed = await seedE2eStudio();
     const { clientId } = await seedE2eDashboardMemoryClient(seed, {
       cautionNote: "Avoid the jawline",
@@ -163,25 +166,22 @@ test.describe("preparing a future day", () => {
     await seedPinnedNote(seed.studioId, clientId, "Prefers the 2pm slot");
     await loginAsOwner(page, seed);
 
-    await test.step("9. Today still shows Before today, Remember, Caution and the memory", async () => {
+    await test.step("9. Today shows the plan for this appointment and the caution", async () => {
       await page.goto("/dashboard");
       await expect(
         page.getByRole("heading", { level: 2, name: "Today", exact: true }),
       ).toBeVisible({ timeout: T });
       const today = row(page, "Memory Client");
-      await expect(today.getByText("Before today", { exact: true })).toBeVisible();
-      await expect(today.getByText("Remember: Lower the energy one step")).toBeVisible();
-      await expect(today.getByText("Avoid the jawline")).toBeVisible();
+      await expect(today.getByTestId("dashboard-prep-remember")).toHaveText("From last visit, for today Lower the energy one step");
+      await expect(today.getByTestId("today-row-caution")).toContainText("Avoid the jawline");
       await expect(today.getByText("Prefers the 2pm slot")).toBeVisible();
       await expect(today.getByTestId("dashboard-memory-compact")).toBeVisible();
       await expect(page.getByText("Review Before Today").first()).toBeVisible();
     });
 
     await test.step("10. the plan note is NOT printed twice on Today", async () => {
-      // It is the same field as the Before-Today "Remember" line; printing it
-      // under two labels is a bug this row has had once already.
       const today = row(page, "Memory Client");
-      await expect(today.getByTestId("dashboard-prep-remember")).toHaveCount(0);
+      await expect(today.getByTestId("dashboard-prep-remember")).toHaveCount(1);
       await expect(today.getByText(/Lower the energy one step/)).toHaveCount(1);
     });
 
@@ -246,10 +246,16 @@ test.describe("preparing a future day — 390px phone", () => {
       // thing a thumb has to find. The disclosure toggle was omitted from this
       // loop once already, and shipped at the height of its own 11px text
       // while every control around it was 44px.
-      const primary = page.getByRole("link", { name: "Open client" }).first();
-      await expect(primary).toBeVisible();
-      const primaryBox = await primary.boundingBox();
-      expect(primaryBox!.height, "primary action height").toBeGreaterThanOrEqual(44);
+      const client = row(page, "Memory Client");
+      for (const action of [
+        client.getByRole("button", { name: "Checkout", exact: true }),
+        client.getByRole("link", { name: "Rebook", exact: true }),
+        client.getByRole("link", { name: "Chart", exact: true }),
+        client.getByRole("link", { name: "Open client", exact: true }),
+      ]) {
+        await expect(action).toBeVisible();
+        expect((await action.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
 
       const toggle = page.getByTestId("dashboard-memory-toggle").first();
       await expect(toggle).toBeVisible();
@@ -269,12 +275,16 @@ test.describe("preparing a future day — 390px phone", () => {
 
     await test.step("14b. and it still opens and closes under a thumb", async () => {
       const toggle = page.getByTestId("dashboard-memory-toggle").first();
-      await toggle.tap();
+      // Open by default (practitioner feedback, 26 Nov): a tap hides it, a second tap shows it again.
       await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({
         timeout: T,
       });
       await toggle.tap();
       await expect(page.getByTestId("dashboard-memory-full")).toHaveCount(0);
+      await toggle.tap();
+      await expect(page.getByTestId("dashboard-memory-full").first()).toBeVisible({
+        timeout: T,
+      });
     });
 
     await test.step("15. no horizontal overflow at 390px", async () => {
@@ -286,8 +296,10 @@ test.describe("preparing a future day — 390px phone", () => {
 
     await test.step("16. the prep the practitioner came for is on screen", async () => {
       await expect(page.getByText("Prefers the 2pm slot")).toBeVisible();
+      // Open by default (practitioner feedback, 26 Nov): close it to see the one-line summary the closed row carries.
+      await closeLastVisitDetails(page.getByTestId("dashboard-memory-toggle").first());
       await expect(page.getByTestId("dashboard-memory-compact")).toBeVisible();
-      await expect(page.getByTestId("dashboard-prep-remember")).toBeVisible();
+      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
     });
   });
 });
@@ -303,7 +315,7 @@ test.describe("preparing a future day — 390px phone", () => {
 // in the DOM changes what is RENDERED, not what is TRANSPORTED, so this asserts
 // the transport boundary directly, with sentinel values that exist nowhere else.
 
-test.describe("the full treatment is not transported before it is asked for", () => {
+test.describe("the full treatment is not in the page payload (each row loads its own through the studio-checked action)", () => {
   const SENTINELS = {
     probeLot: "SENTINELLOT-77Q",
     reactionNote: "SENTINELREACTION-erythema-noted",
@@ -311,7 +323,7 @@ test.describe("the full treatment is not transported before it is asked for", ()
     entryComment: "SENTINELCOMMENT-third-pass-slow",
   };
 
-  test("no full-detail value is in the payload before expansion, and it is after", async ({
+  test("no full-detail value is in the page payload, and it is in the row once loaded", async ({
     page,
   }) => {
     const seed = await seedE2eStudio();
@@ -344,32 +356,19 @@ test.describe("the full treatment is not transported before it is asked for", ()
       }
     });
 
-    await test.step("18. …and it is not in the rendered document either", async () => {
+    await test.step("19. with the details hidden, the compact row still shows what it is meant to", async () => {
+      // The details are open by default and load on page view, so close them: the compact line is the closed row's
+      // content. (Step 17 is what guards the page payload.)
       await page.goto(url);
-      await expect(page.getByTestId("dashboard-memory-compact")).toBeVisible({
-        timeout: T,
-      });
-      const html = await page.content();
-      for (const [name, value] of Object.entries(SENTINELS)) {
-        expect(html.includes(value), `${name} present in the DOM before expansion`).toBe(
-          false,
-        );
-      }
-    });
-
-    await test.step("19. the compact row still shows what it is meant to", async () => {
-      // The point is minimisation, not blindness: the visible projection is
-      // still there.
+      await closeLastVisitDetails(page.getByTestId("dashboard-memory-toggle"));
       await expect(page.getByTestId("dashboard-memory-compact")).toContainText(
         "Last treatment:",
       );
-      await expect(page.getByTestId("dashboard-prep-remember")).toContainText(
-        "Lower the energy one step",
-      );
+      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
     });
 
-    await test.step("20. after an EXPLICIT click, the full detail arrives", async () => {
-      await page.getByTestId("dashboard-memory-toggle").click();
+    await test.step("20. with the details open, the full detail is present", async () => {
+      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle"));
       await expect(page.getByTestId("dashboard-memory-full")).toBeVisible({
         timeout: T,
       });
@@ -432,13 +431,15 @@ test.describe("the full treatment is not transported before it is asked for", ()
     await loginAsOwner(page, seed);
     await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
 
-    await test.step("22. expanding the first row leaves the second unloaded", async () => {
-      await page.getByTestId("dashboard-memory-toggle").first().click();
+    await test.step("22. each row loads its OWN details, never another row's", async () => {
+      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle").first());
       await expect(page.getByTestId("dashboard-memory-full").first()).toContainText(
         SENTINELS.probeLot,
         { timeout: T },
       );
-      const html = await page.content();
+      // Every row now loads ITS OWN details on first render, so the other client's chart is legitimately on the page
+      // under its own row; what must hold is that the first row never receives it.
+      const html = await page.getByTestId("dashboard-memory-full").first().innerHTML();
       expect(
         html.includes("SENTINELLOT-OTHER-ROW"),
         "the unopened row's chart was loaded too",
@@ -490,41 +491,43 @@ test.describe("a rejected disclosure fails to its own line", () => {
       entryComment: "SENTINELCOMMENT-b",
     });
     await sql(`delete from public.appointments where studio_id = $1`, [seed.studioId]);
-    for (const [clientId, offsetMin] of [
-      [a.clientId, OFFSET * 24 * 60 + 60],
-      [b.clientId, OFFSET * 24 * 60 + 180],
-    ] as const) {
-      await seedE2eTodayAppointment(seed, {
-        clientId,
-        startsMinutesFromNow: offsetMin,
-        endsMinutesFromNow: offsetMin + 45,
-      });
-    }
-
-    await loginAsOwner(page, seed);
-    await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
-    await expect(page.getByTestId("dashboard-memory-toggle").first()).toBeVisible({
-      timeout: T,
+    const apptA = await seedE2eTodayAppointment(seed, {
+      clientId: a.clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 60,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 105,
+    });
+    const apptB = await seedE2eTodayAppointment(seed, {
+      clientId: b.clientId,
+      startsMinutesFromNow: OFFSET * 24 * 60 + 180,
+      endsMinutesFromNow: OFFSET * 24 * 60 + 225,
     });
 
-    // Break ONLY the server-action invocation. Server Actions POST back to the
-    // same route, so aborting the POST reproduces a real transport failure —
-    // the action never runs, and the browser-side promise rejects.
+    await loginAsOwner(page, seed);
+
+    // Break BOTH rows' details requests (each is matched by its own appointment id). The details are a GET to
+    // /dashboard/prep-memory, so aborting it reproduces a real transport failure: the server is never reached and the browser-side
+    // fetch rejects. practitioner feedback (26 Nov): the details now load on first render, so the failure is installed BEFORE the
+    // page loads.
     let aborted = 0;
-    await page.route("**/dashboard**", async (route) => {
-      if (route.request().method() === "POST") {
+    await page.route("**/dashboard/prep-memory**", async (route) => {
+      const id = new URL(route.request().url()).searchParams.get("appointment_id");
+      if (id === apptA.appointmentId || id === apptB.appointmentId) {
         aborted += 1;
         return route.abort("failed");
       }
       return route.fallback();
     });
+    await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
+    await expect(page.getByTestId("dashboard-memory-toggle").first()).toBeVisible({
+      timeout: T,
+    });
 
     await test.step("23. the row renders its OWN failure state", async () => {
-      await page.getByTestId("dashboard-memory-toggle").first().click();
+      await ensureLastVisitDetailsOpen(page.getByTestId("dashboard-memory-toggle").first());
       await expect(
         page.getByTestId("dashboard-memory-unavailable").first(),
       ).toBeVisible({ timeout: T });
-      expect(aborted, "the server action was never reached").toBeGreaterThan(0);
+      expect(aborted, "the details request was never sent on to the server").toBeGreaterThan(0);
     });
 
     await test.step("24. the Dashboard did NOT hit the route error boundary", async () => {
@@ -542,7 +545,7 @@ test.describe("a rejected disclosure fails to its own line", () => {
       await expect(page.getByTestId("dashboard-memory-toggle")).toHaveCount(2);
     });
 
-    await test.step("26. no clinical sentinel leaked from the failed request", async () => {
+    await test.step("26. no clinical sentinel leaked from the failed requests", async () => {
       const html = await page.content();
       for (const sentinel of [
         "SENTINELLOT-ROW-A",
@@ -557,19 +560,21 @@ test.describe("a rejected disclosure fails to its own line", () => {
     });
 
     await test.step("27. the NEIGHBOURING row is still usable once transport recovers", async () => {
-      await page.unroute("**/dashboard**");
-      await page.getByTestId("dashboard-memory-toggle").nth(1).click();
-      // `.nth(1)`: row A's region is still open showing its failure state, so
-      // two disclosure regions are mounted. That is the point — the failure
-      // stayed in row A.
+      // BOTH rows failed on mount. Transport recovers; only row B is closed and reopened, which retries its read.
+      await page.unroute("**/dashboard/prep-memory**");
+      const toggleB = page.getByTestId("dashboard-memory-toggle").nth(1);
+      await expect(page.getByTestId("dashboard-memory-unavailable")).toHaveCount(2);
+      await closeLastVisitDetails(toggleB);
+      await ensureLastVisitDetailsOpen(toggleB);
       await expect(page.getByTestId("dashboard-memory-full").nth(1)).toContainText(
         "SENTINELLOT-ROW-B",
         { timeout: T },
       );
-      // …and row A still shows its own failure, unchanged by B succeeding.
+      // …and row A, untouched, still shows its own failure, unchanged by B recovering.
       await expect(
         page.getByTestId("dashboard-memory-unavailable").first(),
       ).toBeVisible();
+      await expect(page.getByTestId("dashboard-memory-full").first()).not.toContainText("SENTINELLOT-ROW-A");
     });
   });
 });
@@ -578,25 +583,8 @@ test.describe("a rejected disclosure fails to its own line", () => {
 // The plan note is SERVER-rendered, and only where it is visible.
 // ===========================================================================
 
-test.describe("the plan note is server-rendered where it is shown", () => {
-  // NOTE ON WHAT IS PROVEN WHERE.
-  //
-  // The decisive proof for the disclosure boundary is the RUNTIME unit test in
-  // tests/app/dashboard/today-two-authority-truth.test.ts: `toDisclosureSummary`
-  // returns a new object with exactly three keys, so the plan note cannot be on
-  // the wire as a disclosure prop regardless of what the type says.
-  //
-  // A browser proof of the same property is NOT constructible by seeding:
-  // Before-Today resolves its "Remember" line from the newest session that
-  // recorded a plan note — the same session the prep loader picks — so on Today
-  // the note is visible whenever it exists at all. There is no seedable state
-  // where it is present but unrendered. Asserting its absence from Today's
-  // payload would therefore be asserting something false, and counting
-  // occurrences cannot separate the rendered copy from a prop, because Next
-  // emits both HTML and an RSC payload for anything rendered.
-  //
-  // What this covers instead is the visible half of the contract.
-  test("off Today the note renders, and nothing else claims it", async ({ page }) => {
+test.describe("the plan is limited to the immediate next appointment", () => {
+  test("only the immediately following treatment receives the plan", async ({ page }) => {
     const seed = await seedE2eStudio();
     const tz = await getStudioTimezone(seed.studioId);
     const PLAN = "SENTINELPLAN-drop-one-energy-step";
@@ -611,22 +599,25 @@ test.describe("the plan note is server-rendered where it is shown", () => {
     });
     await loginAsOwner(page, seed);
 
-    await test.step("28. off Today the SERVER paints it, once", async () => {
-      await page.goto(`/dashboard?day=${localDay(tz, OFFSET)}`);
-      await expect(page.getByTestId("dashboard-prep-remember")).toContainText(PLAN, {
-        timeout: T,
-      });
-      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(1);
+    await test.step("28. a later appointment omits the plan, including its initial payload", async () => {
+      const url = `/dashboard?day=${localDay(tz, OFFSET)}`;
+      const response = await page.request.get(url);
+      expect(response.ok()).toBe(true);
+      expect(await response.text()).not.toContain(PLAN);
+      await page.goto(url);
+      const client = row(page, "Memory Client");
+      await expect(client.getByTestId("dashboard-memory-toggle")).toBeVisible();
+      await expect(client).not.toContainText(PLAN);
     });
 
-    await test.step("29. on Today the Before-Today line owns it, not the prep strip", async () => {
+    await test.step("29. the immediate appointment shows the plan once, including after expansion", async () => {
       await page.goto("/dashboard");
-      await expect(
-        page.getByRole("heading", { level: 2, name: "Today", exact: true }),
-      ).toBeVisible({ timeout: T });
-      // One note, one label. The prep strip does not repeat it.
-      await expect(page.getByTestId("dashboard-prep-remember")).toHaveCount(0);
-      await expect(page.getByText(`Remember: ${PLAN}`)).toBeVisible();
+      const client = row(page, "Memory Client");
+      await expect(client.getByTestId("dashboard-prep-remember")).toHaveText(`From last visit, for today ${PLAN}`);
+      await ensureLastVisitDetailsOpen(client.getByRole("button", { name: /^Last visit details for / }));
+      await expect(client.getByTestId("dashboard-memory-full")).toContainText("Synchro");
+      await expect(client.getByTestId("dashboard-memory-full")).not.toContainText(PLAN);
+      await expect(client.getByText(PLAN, { exact: false })).toHaveCount(1);
     });
   });
 });
@@ -636,7 +627,7 @@ test.describe("Today never says 'no history' beside a proven treatment", () => {
     page,
   }) => {
     const seed = await seedE2eStudio();
-    const { clientId } = await seedE2eDashboardMemoryClient(seed, {
+    await seedE2eDashboardMemoryClient(seed, {
       cautionNote: "Avoid the jawline",
       nextVisitNote: "Lower the energy one step",
     });

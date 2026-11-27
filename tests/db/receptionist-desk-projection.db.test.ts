@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
+import { closeOlderContactCommands, reopenOlderContactCommands } from "./helpers/older-contact-commands";
 
 // 0274 receptionist desk projection (held, stacked on 0258/0266). Proved on the
 // real migrated database. Synthetic values only.
@@ -41,6 +42,7 @@ const dir = (uid: string, studio: string, q: string | null = null, filters: stri
   asUser(uid, (x) => x(`select * from public.receptionist_client_directory($1,$2,$3,$4,$5,$6)`, [studio, q, filters, sort, offset, limit]));
 
 beforeAll(async () => {
+  await reopenOlderContactCommands(); // closed by 0382; reopened for this file only to prove the reviewed body
   a = await seedStudio("desk-proj-a");
   b = await seedStudio("desk-proj-b");
   aPrac = await seedMember(a, "desk-proj-prac");
@@ -50,9 +52,9 @@ beforeAll(async () => {
   ids.maggie = a.clientId;
   await adminQuery("insert into public.client_legal_identities (client_id, studio_id, legal_given_name, legal_family_name, updated_by) values ($1,$2,'Marguerite',$3,$4)", [a.clientId, a.studioId, LEGAL, a.practitionerId]);
   await addClient(a, "plain", "Plain Person", null, "+1 555 0102", "plain@harness.local");
-  const archived = await addClient(a, "archived", "Archived Person", null, null, null);
+  const archived = await addClient(a, "archived", "Archived Person", "Archived Person", null, null);
   await adminQuery("update public.clients set archived_at = now() where id=$1", [archived]);
-  await addClient(b, "other", "Other Studio Person", null, null, null);
+  await addClient(b, "other", "Other Studio Person", "Other Studio Person", null, null);
   await addAppt(a, ids.maggie, "confirmed", "2031-03-04T15:00:00Z");
   await addAppt(a, ids.plain, "completed", "2024-01-02T15:00:00Z");
   await addAppt(a, ids.plain, "cancelled", "2025-06-01T15:00:00Z");
@@ -60,6 +62,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await closeOlderContactCommands();
   await closePool();
 });
 
@@ -91,18 +94,24 @@ describe("the payload", () => {
     const r = await dir(aDesk, a.studioId);
     const byId = new Map(r.rows.map((x) => [x.client_id, x]));
     expect(byId.get(ids.maggie)).toMatchObject({ display_name: "Maggie", name_on_file: false });
-    expect(byId.get(ids.plain)).toMatchObject({ display_name: "Plain Person", name_on_file: true });
+    // 0380: a client with no preferred name shows the regular client name; the fixed words are only for both blank.
+    expect(byId.get(ids.plain)).toMatchObject({ display_name: "Plain Person", name_on_file: false });
+    // The regular name behind a preferred name is not returned.
     expect(JSON.stringify(r.rows)).not.toContain("Margaret");
     expect(JSON.stringify(r.rows)).not.toContain(LEGAL);
     expect(byId.has(ids.archived)).toBe(false);
     expect(byId.has(ids.other)).toBe(false);
   });
-  it("search matches the shown name, email and phone, never the stored name behind a preferred one; a legal-only term finds nothing (positive control)", async () => {
+  it("search matches the shown name, email and phone, never the regular name behind a preferred one; a legal-only term finds nothing (positive control)", async () => {
     const hit = async (q: string) => (await dir(aDesk, a.studioId, q)).rows.map((x) => x.client_id);
     expect(await hit("maggie")).toEqual([ids.maggie]);
     expect(await hit("harness.local")).toHaveLength(2);
     expect(await hit("555 0102")).toEqual([ids.plain]);
     expect(await hit("Margaret")).toEqual([]);
+    // 0380: the regular name of a client with NO preferred name is what is shown, so it is searchable; the fixed words are not.
+    expect(await hit("Plain Person")).toEqual([ids.plain]);
+    expect(await hit("plain pers")).toEqual([ids.plain]);
+    expect(await hit("Name on file")).toEqual([]);
     expect(await hit(LEGAL)).toEqual([]);
     expect(await hit("100%")).toEqual([]);
   });
@@ -223,7 +232,7 @@ describe("R2: no enumeration", () => {
   });
   it("a studio larger than the cap cannot be walked: the last reachable row is at most 200", async () => {
     for (let i = 0; i < 230; i += 1) {
-      await adminQuery("insert into public.clients(id,studio_id,name) values (gen_random_uuid(),$1,$2)", [b.studioId, `Walk Client ${String(i).padStart(3, "0")}`]);
+      await adminQuery("insert into public.clients(id,studio_id,name,preferred_name) values (gen_random_uuid(),$1,$2,$2)", [b.studioId, `Walk Client ${String(i).padStart(3, "0")}`]);
     }
     const seen = new Set<string>();
     for (let off = 0; off < 200; off += 50) {
@@ -308,7 +317,7 @@ describe("Privacy C2 and Insurance L7 (reviews of 0274 at 236e34d6)", () => {
   });
 
   it("L7: a client with ONLY a live session and no completed appointment reads an empty desk last visit (the narrowing, pinned)", async () => {
-    const only = await addClient(a, "sessiononly", "Session Only", null, null, null);
+    const only = await addClient(a, "sessiononly", "Session Only", "Session Only", null, null);
     await adminQuery(
       `insert into public.sessions (id, studio_id, client_id, practitioner_id, modality) values (gen_random_uuid(), $1, $2, $3, 'electrolysis')`,
       [a.studioId, only, a.practitionerId],

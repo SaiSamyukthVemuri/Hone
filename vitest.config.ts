@@ -42,7 +42,9 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     exclude: ["node_modules/**", ".next/**", "tests/db/**"],
     pool: "forks",
-    reporters: "default",
+    // CI also writes a JUnit report (per-test names and durations) for the timing record; which tests run is unchanged.
+    reporters: process.env.CI ? ["default", "junit"] : "default",
+    outputFile: { junit: "junit-results/vitest-unit.xml" },
   },
   resolve: {
     alias: {

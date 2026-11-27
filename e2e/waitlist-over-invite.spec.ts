@@ -46,13 +46,13 @@ test.describe("invite beyond the estimate", () => {
 
     // 1. NORMAL NAVIGATION: the main navigation's Waitlist entry, then the link on that page. No page.goto to the override.
     await page.locator('[data-testid="nav-waitlist"]').first().click();
-    await expect(page).toHaveURL(/\/settings\/waitlist$/, { timeout: T });
+    await expect(page).toHaveURL((url) => url.pathname === "/waitlist", { timeout: T });
     const link = page.locator('[data-testid="over-invite-link"] a');
     await expect(link).toBeVisible({ timeout: T });
     await expect(link).toHaveText("Invite beyond the estimate");
     await expect(page.locator('[data-testid="over-invite-link"]')).toContainText("You confirm once; sending continues in the background.");
     await link.click();
-    await expect(page).toHaveURL(/\/settings\/waitlist\/over-invite/, { timeout: T });
+    await expect(page).toHaveURL((url) => url.pathname === "/waitlist/over-invite", { timeout: T });
 
     // 2. Choose the service and see the numbers, then choose every waiting client.
     await page.getByLabel("Service").selectOption({ label: seed.serviceName });
@@ -110,7 +110,7 @@ test.describe("invite beyond the estimate", () => {
     await loginAsOwner(page, seed);
     await page.locator('[data-testid="nav-waitlist"]').first().click();
     await page.locator('[data-testid="over-invite-link"] a').click();
-    await expect(page).toHaveURL(/\/settings\/waitlist\/over-invite/, { timeout: T });
+    await expect(page).toHaveURL((url) => url.pathname === "/waitlist/over-invite", { timeout: T });
     await page.getByLabel("Service").selectOption({ label: seed.serviceName });
     await page.getByRole("button", { name: "Show numbers" }).click();
     const form = page.locator('[data-testid="over-invite-confirm"]');
@@ -161,3 +161,73 @@ test.describe("invite beyond the estimate", () => {
     await expect(page.locator('[data-testid="over-invite-confirm"]')).toHaveCount(0);
   });
 });
+
+// ===========================================================================
+// A STUDIO WITH NO OPEN WEEKDAY: a real zero, and an owner choice that needs one more acknowledgement
+// ===========================================================================
+// Every weekday closed used to show "We couldn't check availability" and offered nobody to choose. It now reads zero appointments, shows what is about
+// to be sent (service, booking window, people selected), and requires "These clients may open the invitation and find no times to book." before it
+// sends, which the server also refuses without. Synthetic people on the fake provider; nothing leaves the machine.
+for (const [label, viewport] of [["desktop", { width: 1280, height: 900 }], ["phone", { width: 390, height: 844 }]] as const) {
+  test.describe(`invite beyond the estimate, every weekday closed (${label})`, () => {
+    test.use({ viewport });
+
+    test("reads zero, shows the scope, refuses without the acknowledgement, and sends each person once with it", async ({ page }) => {
+      test.setTimeout(240_000);
+      const seed = await seedE2eStudio();
+      const people = await seedWaiting(seed, 2);
+      await sql(`update public.studio_availability_default set is_open = false where studio_id = $1`, [seed.studioId]);
+      const mark = markResendLedger();
+
+      await loginAsOwner(page, seed);
+      await page.goto("/waitlist");
+      // The Waitlist page itself says zero, not that it could not check.
+      await expect(page.getByTestId("allowance-unavailable")).toHaveCount(0);
+      await expect(page.getByText("We couldn’t check availability just now.")).toHaveCount(0);
+      await page.locator('[data-testid="over-invite-link"] a').click();
+      await expect(page).toHaveURL((url) => url.pathname === "/waitlist/over-invite", { timeout: T });
+
+      await page.getByLabel("Service").selectOption({ label: seed.serviceName });
+      await page.getByRole("button", { name: "Show numbers" }).click();
+      const form = page.locator('[data-testid="over-invite-confirm"]');
+      await expect(form).toBeVisible({ timeout: T });
+      await expect(page.locator('[data-testid="over-invite-line"]')).toContainText("0 estimated appointments available");
+      await expect(page.getByText("We couldn't load the numbers just now.")).toHaveCount(0);
+
+      // The scope is on screen before anything is chosen or sent, and the count follows the selection.
+      const scope = page.locator('[data-testid="over-invite-scope"]');
+      await expect(scope).toContainText(`Service: ${seed.serviceName}`);
+      await expect(scope).toContainText("Booking window: next 7 days, any day");
+      await expect(scope).toContainText("People selected: 0");
+      await form.getByLabel(people[0].name).check();
+      await expect(scope).toContainText("People selected: 1");
+      await form.getByLabel(people[1].name).check();
+      await expect(scope).toContainText("People selected: 2");
+
+      // At zero there is one more acknowledgement, worded exactly.
+      const ack = form.getByRole("checkbox", { name: "These clients may open the invitation and find no times to book." });
+      await expect(ack).toBeVisible();
+
+      // With only the ordinary confirmation the SERVER refuses: nothing is sent.
+      await form.getByRole("checkbox", { name: /I understand some clients may find no availability/ }).check();
+      await form.getByRole("button", { name: "Send invitations" }).click();
+      await expect(page.locator('[data-testid="over-invite-notice"]')).toContainText("Tick the box to confirm: These clients may open the invitation and find no times to book. Nothing was sent.", { timeout: T });
+      expect(readResendLedger(mark)).toHaveLength(0);
+      expect((await sql<{ n: number }>(`select count(*)::int n from public.waitlist_invitation_batch_items where studio_id=$1`, [seed.studioId]))[0]!.n).toBe(0);
+
+      // The form clears its boxes after a refused send, so the owner ticks both again. With the acknowledgement, each chosen person is sent exactly once.
+      await expect(ack).not.toBeChecked();
+      await form.getByRole("checkbox", { name: /I understand some clients may find no availability/ }).check();
+      await ack.check();
+      await form.getByRole("button", { name: "Send invitations" }).click();
+      await expect(page.locator('[data-testid="over-invite-result"]')).toContainText("2 confirmed", { timeout: 90_000 });
+      for (let call = 0; call < 4; call++) {
+        const waiting = (await sql<{ n: number }>(`select count(*)::int n from public.waitlist_invitation_batch_items where studio_id=$1 and state in ('pending','claimed')`, [seed.studioId]))[0]!.n;
+        if (waiting === 0) break;
+        expect((await page.request.get("/api/cron/waitlist-invitation-batches", { headers: { Authorization: `Bearer ${CRON_SECRET}` }, timeout: 90_000 })).status()).toBe(200);
+      }
+      const sent = readResendLedger(mark).map((r) => r.to.toLowerCase());
+      for (const p of people) expect(sent.filter((to) => to === p.email.toLowerCase()), p.email).toHaveLength(1);
+    });
+  });
+}

@@ -63,6 +63,10 @@ export const BROWSER_GROUPS = {
       // the only lane its subject can regress in.
       "machine-switch-discards-draft.spec.ts",
       "machine-one-selector.spec.ts",
+      // one complete xCell Pur MultiPlex visit (decimals, pulse count, blank optionals, switch away and back, save, reopen, next visit) on
+      // desktop, an iPhone-sized emulation and iPhone WebKit; and Save pressed while the MultiPlex pick is still settling. Same surface, same group.
+      "xcell-multiplex-visit.spec.ts",
+      "multiplex-no-machine.spec.ts",
       "machine-mode-then-save.spec.ts",
       // MPX-03: the LOST RESPONSE on the initial save, and pressing Save
       // again. Same surface once more, so the same group - and this one most
@@ -93,6 +97,7 @@ export const BROWSER_GROUPS = {
       "finish-appointment-mobile.spec.ts",
       "combined-today-workflow.spec.ts",
       "dashboard-memory-visibility.spec.ts",
+      "dashboard-rebook-chart.spec.ts",
       // Chloe D1: the Today treatment-memory disclosure must EXPAND without
       // navigating (it used to sit inside the row-body link and push a route),
       // while the standalone appointment-prep card keeps its full-chart link.
@@ -123,6 +128,8 @@ export const BROWSER_GROUPS = {
       "dashboard-closed-row.spec.ts",
       // HON-65 (Chloe, 4 Nov): Last treatment is visible on the CLOSED row, as owner and practitioner at 1280 and 390.
       "dashboard-last-treatment-closed.spec.ts",
+      // practitioner feedback (26 Nov): one action row, yellow pinned notes, blue From-last-visit box, last visit details open on first render.
+      "dashboard-visit-card-actions.spec.ts",
       // #1308 phone fixes: no sideways scroll at 320/390 with a 95-character name, and the Today-row name tap navigates.
       "dashboard-phone-overflow.spec.ts",
       // Needs attention: the one heading count, exact unpaid amounts (full, partial, settlement, All outstanding), the gate-OFF default
@@ -207,6 +214,8 @@ export const BROWSER_GROUPS = {
       // the /book/[slug] surface, so it belongs with the other public booking
       // specs rather than with the shell interaction family.
       "book-next-available-fast.spec.ts",
+      // The public page after a staff change still lists the opening one buffer after an existing visit.
+      "public-booking-after-staff-change.spec.ts",
       // 0171: the public reschedule v2 contract (policy hash, exclusion,
       // duration authority, same-time, duplicate submit, post-commit success).
       "public-reschedule-v2.spec.ts",
@@ -245,6 +254,11 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
+      "team-invite-receptionist.spec.ts",
+      // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
+      // calendar lane on purpose: the targeted lane is already near its measured budget.
+      "receptionist-onboarding-flow.spec.ts",
       "public-booking-error-containment.spec.ts",
       "public-booking-slot-read-failure.spec.ts",
       // TWILIO-EGRESS-FAKE (MSG-006): a public booking with SMS consent reaches
@@ -257,6 +271,7 @@ export const BROWSER_GROUPS = {
     description: "calendar surfaces, services and colours",
     specs: [
       "service-calendar-color-mobile.spec.ts",
+      "service-discard-while-saving.spec.ts",
       "service-order-and-colors.spec.ts",
       "disinfectant-notification.spec.ts",
       // Appointment preparation memory on the calendar detail screen: the
@@ -267,6 +282,8 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      "desk-calendar.spec.ts",
+      "desk-finder-and-isolation.spec.ts",
       // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
       // (date passed vs treatment recorded), owner-only, and read-only unless the owner presses Change practitioner.
       "review-assignments-navigation.spec.ts",
@@ -283,11 +300,16 @@ export const BROWSER_GROUPS = {
       "team-day-view.spec.ts",
       // HON-48 five-user proof: five synthetic practitioners, simultaneous bookings with one winner, studio isolation, moves, blocks, returning-client lookup,
       // and iPad/iPhone selection. REQUIRED: these run whenever the calendar group is selected (about 3 minutes of serial browser time).
+      // HON-106: the live bell count, two sessions and the role/studio isolation, 1440 and 390.
+      "notifications-live-bell.spec.ts",
       "hon48-five-user-booking.spec.ts",
       "hon48-five-user-moves-blocks.spec.ts",
       "hon48-five-user-denial.spec.ts",
       "hon48-returning-client-lookup.spec.ts",
       "hon48-tablet-phone-selection.spec.ts",
+      // HON-48 Week and Month per practitioner (five synthetic practitioners with different booking counts, a moved booking, a lunch block,
+      // a crowded day) at desktop width and at iPhone width. REQUIRED, like the five above.
+      "hon48-week-month-per-user.spec.ts",
       // HON-48 commit-visibility measurement rig (opt-in: self-skips unless HON48_TIMING_E2E=1).
       "hon48-commit-visibility-timing.spec.ts",
     ],
@@ -330,6 +352,8 @@ export const BROWSER_GROUPS = {
       // 0339 (owner-only writes on services and consent wording): the owner still edits services and consent wording
       // through the shipped actions; a practitioner is shown no edit control.
       "owner-only-catalog-edit.spec.ts",
+      // HON-100: the owner's Statements month controls (arrow, picker, Back/Forward, reload) all name the same month. Owner-only read surface.
+      "statements-month-navigation.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
@@ -420,7 +444,9 @@ export const BROWSER_GROUPS = {
       // overview, book, back, close, Escape, clear) at desktop and phone width. Same group
       // and reasoning as UI-04: /clients/** has no PATH_TO_GROUP pattern.
       "clients-directory-journey.spec.ts",
-      "client-groups.spec.ts",
+      // Custom client groups were removed and their tables never applied: the standard directory for an owner and a
+      // practitioner at desktop and phone width, with no group control, warning or route. Same group and reasoning.
+      "clients-directory-without-groups.spec.ts",
       // #1328 + 0281: the three client-save paths (profile edit with its name revision and audit row, the
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
@@ -468,6 +494,9 @@ export const BROWSER_GROUPS = {
     description: "cross-cutting responsive behaviour",
     specs: [
       "mobile-ux.spec.ts",
+      // The desktop header cluster fits at every width from 1024 up for the widest case (owner, Waitlist link,
+      // a name that fills the 12ch cap): no sideways page scroll, account button never clipped.
+      "header-cluster-fit.spec.ts",
       // SIGNOUT-01: the authenticated Sign out path on BOTH shells, proved by
       // real session destruction in auth.sessions rather than by a pathname.
       //
@@ -567,6 +596,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "new-studio-wizard.spec.ts",
   "onboarding.spec.ts",
   "perceived-speed.spec.ts",
+  "public-booking-after-staff-change.spec.ts",
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",
@@ -596,7 +626,7 @@ const PATH_TO_GROUP = [
   //
   // The pattern is ANCHORED TO THE CARD rather than a bare /prep[-_]?memory/i,
   // following the OWNER-CAP precedent in this file. A loose pattern would also
-  // capture app/(app)/dashboard/prep-memory-actions.ts and
+  // capture app/(app)/dashboard/prep-memory-read.ts and
   // lib/sessions/appointment-prep-memory.ts, and the first of those currently
   // falls through to EXTENDED — so a loose rule would NARROW that file's
   // coverage from everything to one group. Additive only: the card already
@@ -608,6 +638,18 @@ const PATH_TO_GROUP = [
   // unattributable path, and narrowing it would reduce coverage, so it is
   // reported rather than changed here.
   { group: "sessions", patterns: [/sessions?\//i, /charting/i, /electrolysis/i, /laser/i, /session[-_]?block/i, /probe/i, /observation[-_]?chip/i, /treatment[-_]?memory/i, /clinical[-_]?note/i, /appointment[-_]?prep[-_]?memory[-_]?card/i] },
+  // MACHINES (CI-SELECT-01). lib/machines/**, components/machines/** and the Settings -> Machines page matched no rule, so a diff to the MultiPlex
+  // load reducer (lib/machines/multiplex-load.ts) fell through to the unattributed fail-safe and ran the whole extended suite: four shards, the
+  // storage-photos lane and the WebKit lane, to prove a form that one group's specs drive.
+  //
+  // WHY THIS IS SAFE, AND WHAT KEEPS IT SAFE. Every app route that imports these files, directly or through other modules, is a SESSIONS route
+  // or the Settings -> Machines page, whose browser coverage is machine-real-3g.spec.ts (it visits /settings/machines) in `sessions`.
+  // tests/ci/browser-selection.test.ts walks the real import graph and FAILS if a new route starts importing a mapped file without selecting
+  // `sessions` itself, so the mapping cannot silently narrow coverage as the code grows.
+  //
+  // TWO FILES ARE DELIBERATELY LEFT OUT and keep the extended fail-safe: legacy-machine.ts and profile-contract.ts are also imported by the
+  // client page (app/(app)/clients/[id]/page.tsx) and the data export (app/(app)/settings/data/**), which match no group.
+  { group: "sessions", patterns: [/^lib\/machines\/(?!legacy-machine\.ts$|profile-contract\.ts$)/, /^components\/machines\//, /^app\/\(app\)\/settings\/machines\//] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched
@@ -616,7 +658,7 @@ const PATH_TO_GROUP = [
   // "everything". These two patterns are deliberately anchored//specific rather
   // than a bare /capacity/i, which would also catch the unrelated studio
   // capacity-toggle helpers.
-  { group: "owner_admin", patterns: [/^app\/\(app\)\/dashboard\/capacity\//, /owner-capacity/i, /owner-practice-capacity/i, /onboarding/i, /invitation/i, /invite/i, /\badmin\b/i, /practitioner/i, /studio/i, /import/i] },
+  { group: "owner_admin", patterns: [/^app\/\(app\)\/dashboard\/capacity\//, /owner-capacity/i, /owner-practice-capacity/i, /statements-month-navigation/i, /onboarding/i, /invitation/i, /invite/i, /\badmin\b/i, /practitioner/i, /studio/i, /import/i] },
   { group: "marketing", patterns: [/^app\/\(marketing\)/, /marketing/i] },
   { group: "google", patterns: [/google[-_]?calendar/i] },
   { group: "responsive", patterns: [/mobile/i, /responsive/i] },

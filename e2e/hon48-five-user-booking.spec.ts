@@ -109,11 +109,12 @@ test("Week and Month show the committed bookings: the week total and the month d
   const weekCount = Number(/(\d+)\s+appointments?/i.exec(weekText)?.[1] ?? NaN);
   expect(weekCount, "the Week view's appointment total equals the database").toBe(expected.week);
 
-  // MONTH: the day's cell shows its chips plus "+N more", together equal to the database count for that day.
+  // MONTH: the selected day and its agenda agree with the persisted appointment count.
   await owner.goto(monthUrl(t.day, everyone));
-  const cell = owner.locator(`a[href*="day=${t.day}"]`).first();
+  // By accessible name, not href: on the 1st the toolbar's Day tab also links to day=<that date> and comes first in the page.
+  const cell = owner.getByRole("link", { name: `Open ${t.day}`, exact: true });
   await expect(cell).toBeVisible({ timeout: 20_000 });
-  const chips = await cell.locator("span[title]").count();
-  const moreText = (await cell.innerText()).match(/\+(\d+)\s+more/i);
-  expect(chips + Number(moreText?.[1] ?? 0), "the Month cell accounts for every appointment of the day").toBe(expected.day);
+  await expect(cell.locator("[data-month-count]")).toHaveText(String(expected.day));
+  await cell.click();
+  await expect(owner.getByRole("region", { name: "Selected day appointments" }).locator("li")).toHaveCount(expected.day);
 });

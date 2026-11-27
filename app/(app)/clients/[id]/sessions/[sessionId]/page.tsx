@@ -52,6 +52,9 @@ import { NextVisitNoteForm } from "./NextVisitNoteForm";
 import { CopyPreviousAreasPanel } from "./CopyPreviousAreasPanel";
 import { RemovePassButton } from "@/components/remove-pass-button";
 import { SessionBlocksView } from "./session-blocks-view";
+import { isNativeMachineBlock } from "@/lib/machines/legacy-machine";
+import { loadMultiplexOffer } from "@/lib/machines/multiplex-offer";
+import { readingsForBlock, machinesByIds, type MachineDb, type RecordedReading } from "@/lib/machines/machine-queries";
 import {
   addLaserEntryAction,
   deleteLaserEntryAction,
@@ -59,7 +62,7 @@ import {
   updateSessionPerformerAction,
 } from "./actions";
 import { createClient } from "@/lib/supabase/server";
-import { CHARTING_VIEW_STUDIOS_ENV } from "@/lib/charting/view-preference";
+import { chartingRolloutFor } from "@/lib/rollouts/charting-rollout";
 import { chartingViewForPage } from "@/lib/charting/page-view";
 import { NewViewHint, NewViewOnlyStep } from "@/components/charting-view-context";
 import { ChartingViewShell, ChartingViewToggle, ChartingVisitSummary } from "@/components/charting-view-shell";
@@ -343,6 +346,32 @@ export default async function SessionDetailPage({
       ? await getSessionWithBlocks(sessionId)
       : null;
 
+  // WHAT A NATIVE (xCell Pur MultiPlex ...) AREA RECORDED, for the area card. The legacy entry under such a block carries only the database
+  // default (pulse_count 1), so the card must show the recorded readings instead of it. One read per native block, bound to this session.
+  const nativeReadings: Record<string, { readings: RecordedReading[]; unavailable: boolean }> = {};
+  const nativeUnitNames: Record<string, string> = {};
+  if (blockData) {
+    const nativeBlocks = blockData.blocks.filter((b) => b.deleted_at == null && isNativeMachineBlock(b));
+    if (nativeBlocks.length > 0) {
+      const db = (await createClient()) as unknown as MachineDb;
+      await Promise.all(
+        nativeBlocks.map(async (b) => {
+          const got = await readingsForBlock(db, b.id, session.id);
+          nativeReadings[b.id] = got.ok ? { readings: got.value, unavailable: false } : { readings: [], unavailable: true };
+        }),
+      );
+      const ids = [...new Set(Object.values(nativeReadings).flatMap((n) => n.readings.map((r) => r.deviceId)))];
+      if (ids.length > 0) {
+        const named = await machinesByIds(db, studio.id, ids);
+        if (named.ok) for (const m of named.value) nativeUnitNames[m.deviceId] = m.displayName;
+      }
+    }
+  }
+
+
+  // MULTIPLEX IS OFFERED TO EVERY STUDIO: read here with the page, so the pill is present from the first visit with no extra request.
+  const multiplexOffer =
+    session.modality === "electrolysis" ? await loadMultiplexOffer((await createClient()) as unknown as MachineDb, studio.id) : null;
 
   // FINISH APPOINTMENT workflow context, derived from what is already loaded:
   // the widened appointment read above, the session, the client, and the studio
@@ -597,8 +626,7 @@ export default async function SessionDetailPage({
   // below changes at all and no extra read happens. When it is available, the person's own saved choice is read from
   // their sign-in profile (a failed read means Current). It is a display choice only and decides nothing else.
   const { toggleVisible: chartingToggleVisible, view: chartingInitialView } = await chartingViewForPage({
-    studioId: practitioner.studio_id,
-    rawGate: process.env[CHARTING_VIEW_STUDIOS_ENV],
+    rolloutOn: await chartingRolloutFor(practitioner.studio_id),
     readMetadata: async () => {
       const {
         data: { user: authUser },
@@ -808,6 +836,8 @@ export default async function SessionDetailPage({
           sessionId={session.id}
           clientId={id}
           blocks={blockData.blocks}
+          nativeReadings={nativeReadings}
+          nativeUnitNames={nativeUnitNames}
           orphanEntries={blockData.orphan_entries}
           clientTagLabels={clientTags.map((t) => t.label)}
           probeLotSuggestions={probeLotSuggestions}
@@ -824,6 +854,7 @@ export default async function SessionDetailPage({
           // copy just created, so recording today's minutes/hairs/observations
           // needs no scroll-back-and-reopen.
           autoEditBlockId={autoEditBlockId}
+          multiplexOffer={multiplexOffer}
         />
       ) : (
         <>

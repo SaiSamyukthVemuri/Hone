@@ -1,0 +1,12 @@
+.workspace [data-workspace-section] {
+  display: none;
+}
+.workspace[data-view="waiting"] [data-workspace-section="waiting"],
+.workspace[data-view="waiting"] [data-workspace-section="claimed"],
+.workspace[data-view="invited"] [data-workspace-section="invited"],
+.workspace[data-view="responses"] [data-workspace-section="responses"],
+.workspace[data-view="history"] [data-workspace-section="history"],
+.workspace[data-view="history"] [data-workspace-section="released"],
+.workspace[data-view="history"] [data-workspace-section="expired"] {
+  display: flex;
+}

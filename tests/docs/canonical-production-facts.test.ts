@@ -825,7 +825,7 @@ const L2_TITLE = /^##\s+L2\s+—\s+No real production whole-session copy has eve
 function tenantRow(slug: string): number[] | null {
   const row = currentProse(CURRENT_STATE)
     .split("\n")
-    .find((l) => l.includes(`\`${slug}\``) && l.trim().startsWith("|"));
+    .find((l) => l.trim().startsWith("|") && l.split("|")[1]?.replace(/[`*\s]/g, "") === slug.replace(/[`*\s]/g, ""));
   if (!row) return null;
   return [...row.matchAll(/\|\s*\*{0,2}(\d+)\*{0,2}\s*(?=\|)/g)].map((m) => Number(m[1]));
 }
@@ -852,7 +852,7 @@ function allTenantTotals(): { clients: number; appointments: number } {
 export function findSyntheticAsCustomer(text: string, totals: number[]): string[] {
   const hits: string[] = [];
   for (const line of text.split("\n")) {
-    if (!/\b(?:real[\s-]customer|customer activity|Willow)\b/i.test(line)) continue;
+    if (!/\b(?:real[\s-]customer|customer activity|(?:Willow|the pilot studio))\b/i.test(line)) continue;
     // A line may legally NAME a forbidden figure in order to LABEL or DISCLAIM
     // it. §0's own reading rule does exactly that: it names the Twin-subtracted
     // remainder precisely to say the remainder is not customer activity. The
@@ -1400,7 +1400,7 @@ describe("canonical production docs: synthetic rows are never customer activity"
    */
   function forbiddenCustomerFigures(): number[] {
     const out = [totals.clients, totals.appointments];
-    const twin = tenantRow("hone-synthetic-twin");
+    const twin = tenantRow("the synthetic twin");
     if (twin && twin.length >= 2) {
       out.push(totals.clients - twin[0], totals.appointments - twin[1]);
     }
@@ -1412,12 +1412,12 @@ describe("canonical production docs: synthetic rows are never customer activity"
     expect(register, "the tenant register must exist").toMatch(/^##\s+0\.\s+Tenant register/m);
     expect(
       register,
-      "hone-synthetic-twin must be classified as synthetic, by name",
-    ).toMatch(/`hone-synthetic-twin`[^|]*\|[^|]*\*\*Synthetic\*\*/);
+      "the synthetic twin must be classified as synthetic, by name",
+    ).toMatch(/the synthetic twin[^|]*\|[^|]*\*\*Synthetic\*\*/);
     expect(
       register,
-      "willow-electrolysis must be classified as the real-customer tenant",
-    ).toMatch(/`willow-electrolysis`[^|]*\|[^|]*\*\*Real customer\*\*/);
+      "the pilot studio must be classified as the real-customer tenant",
+    ).toMatch(/\|\s*the pilot studio\s*\|[^|]*\*\*Real customer\*\*/);
     expect(
       register,
       "the register must warn that the non-synthetic remainder is NOT real-customer activity — " +
@@ -1425,20 +1425,20 @@ describe("canonical production docs: synthetic rows are never customer activity"
     ).toMatch(/Non-synthetic is not the same as real-customer/i);
   });
 
-  it("the stated real-customer figures are the WILLOW row, not a subtraction", () => {
-    const willow = tenantRow("willow-electrolysis");
-    expect(willow, "§0 must carry a willow-electrolysis row with numbers").toBeTruthy();
-    const [clients, appts] = willow as number[];
+  it("the stated real-customer figures are the pilot studio's row, not a subtraction", () => {
+    const pilot = tenantRow("the pilot studio");
+    expect(pilot, "§0 must carry a pilot studio row with numbers").toBeTruthy();
+    const [clients, appts] = pilot as number[];
     const rule = currentProse(CURRENT_STATE).match(
-      /Real-customer activity is `willow-electrolysis` only:\s*\*{0,2}(\d+)\*{0,2}\s*clients,\s*\*{0,2}(\d+)\*{0,2}\s*appointments/i,
+      /Real-customer activity is (?:`the pilot studio`|the pilot studio) only:\s*\*{0,2}(\d+)\*{0,2}\s*clients,\s*\*{0,2}(\d+)\*{0,2}\s*appointments/i,
     );
     expect(
       rule,
       "§0's reading rule must state the customer figures explicitly, so they are tied to the " +
         "customer-classified tenant rather than inferred by subtracting the Twin",
     ).toBeTruthy();
-    expect(Number(rule?.[1]), "customer clients must equal the Willow row").toBe(clients);
-    expect(Number(rule?.[2]), "customer appointments must equal the Willow row").toBe(appts);
+    expect(Number(rule?.[1]), "customer clients must equal the pilot studio row").toBe(clients);
+    expect(Number(rule?.[2]), "customer appointments must equal the pilot studio row").toBe(appts);
   });
 
   it("no CURRENT-state doc labels an all-tenant total as customer activity", () => {
@@ -1474,7 +1474,7 @@ describe("canonical production docs: synthetic rows are never customer activity"
 // written. None of them was true when this was corrected.
 //
 // A read-only hosted query on 2026-09-19 returned 31 rows in
-// `new_client_waitlist_entries`, 28 of them for `willow-electrolysis`, the
+// `new_client_waitlist_entries`, 28 of them for the pilot studio, the
 // oldest joined 2026-08-25. The guard was therefore not merely stale: it was
 // actively holding the canonical documentation at a falsehood, and a lane that
 // tried to tell the truth would have gone red for doing so.
@@ -1613,7 +1613,7 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // Neither asserts that the flag is off now, and banning them would push
       // real history out of the document to satisfy a regex.
       /durable\s+WAIT\s+(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?OFF\b/i,
-      /Willow[^.\n]{0,40}durable[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?off\b/i,
+      /(?:Willow|the pilot studio)[^.\n]{0,40}durable[^.\n]{0,40}\b(?:is|remains|stays)\s+(?:deliberately\s+|intentionally\s+)?off\b/i,
       // ADJECTIVE FORM, where OFF modifies "durable" instead of following the
       // verb: "Willow remains legacy-enabled and durable-OFF". Codex #740,
       // fourth round, found this after the narrowing above -- the hole was
@@ -1646,7 +1646,7 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       // table still said "No studio HAS BEEN enabled" three rows below the
       // correction that contradicted it.
       /\bNo studio (?:is|has been|was|had been) enabled\b/i,
-      /\bWillow is\s+\*{0,2}not\s+enabled\*{0,2}/i,
+      /\b(?:Willow|the pilot studio) is\s+\*{0,2}not\s+enabled\*{0,2}/i,
       // The activation-authorization claim, which is the same falsehood stated
       // as a gate rather than as a count.
       /activation\s+(?:—|-|--)?\s*is ungranted/i,
@@ -1738,9 +1738,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         // a heading reading "WAIT-01 - the email-delivered waitlist. LIVE at
         // Willow." and a row reading "LIVE for Willow" both slipped through.
         // `[\s\S]` spans sentences; at|for covers both prepositions.
-        /WAIT-01[\s\S]{0,90}?\b(?:enabled|live)\b[^\n]{0,40}?\b(?:at|for)\s+Willow\b/i,
-        /\bWillow\b[^.\n]{0,50}\bWAIT-01\b[^.\n]{0,40}\bcommit point\b/i,
-        /WAIT-01[^.\n]{0,40}\bcommit point\b[^.\n]{0,40}\bWillow\b/i,
+        /WAIT-01[\s\S]{0,90}?\b(?:enabled|live)\b[^\n]{0,40}?\b(?:at|for)\s+(?:Willow|the pilot studio)\b/i,
+        /\b(?:Willow|the pilot studio)\b[^.\n]{0,50}\bWAIT-01\b[^.\n]{0,40}\bcommit point\b/i,
+        /WAIT-01[^.\n]{0,40}\bcommit point\b[^.\n]{0,40}\b(?:Willow|the pilot studio)\b/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,
@@ -1776,14 +1776,14 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
       const prose = currentProse(doc);
       for (const shape of [
         /\bthen\s+explicitly\s+enable\s+durable\b/i,
-        /\b(?:before|prior to)\s+Willow\s+migration\b/i,
-        /\bsilently\s+durable-enabling\s+Willow\b/i,
+        /\b(?:before|prior to)\s+(?:Willow|the pilot studio)\s+migration\b/i,
+        /\bsilently\s+durable-enabling\s+(?:Willow|the pilot studio)\b/i,
         // Codex #740, eighth round: the same instruction phrased as a CUTOVER
         // rather than an enable. Five active sections still sequenced work
         // "before" or "only then authorize" a cutover performed in August.
-        /\b(?:before|prior to)\s+(?:Willow\s+)?durable\s+cutover\b/i,
+        /\b(?:before|prior to)\s+(?:(?:Willow|the pilot studio)\s+)?durable\s+cutover\b/i,
         /\bonly then\s+authoriz\w*[^.\n]{0,40}\bcutover\b/i,
-        /\bauthorize\s+Willow\s+durable\s+cutover\b/i,
+        /\bauthorize\s+(?:Willow|the pilot studio)\s+durable\s+cutover\b/i,
         // GENERIC "before migration", with no Willow or durable token in the
         // sentence at all. Codex #740, twelfth direction: an acceptance-debt row
         // told operators to close WAIT-CONTINUITY-01 "before migration". Scoped
@@ -1794,9 +1794,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
         // BARE WORDING. Codex #740, ninth round: "then Willow cutover" listed as
         // remaining work, with no "durable" and no verb to anchor on. The guard
         // had been matching the decorated forms only.
-        /\bthen\s+Willow\s+cutover\b/i,
-        /\bWillow\s+cutover\b[^.\n]{0,30}\bremain\w*/i,
-        /\bremain\w*[^.\n]{0,40}\bWillow\s+cutover\b/i,
+        /\bthen\s+(?:Willow|the pilot studio)\s+cutover\b/i,
+        /\b(?:Willow|the pilot studio)\s+cutover\b[^.\n]{0,30}\bremain\w*/i,
+        /\bremain\w*[^.\n]{0,40}\b(?:Willow|the pilot studio)\s+cutover\b/i,
       ]) {
         expect(
           prose.match(shape)?.[0] ?? null,
@@ -1928,9 +1928,9 @@ describe("canonical production docs: WAIT-02B's durable waitlist is recorded as 
   });
 });
 
-const APPLY_HISTORY_ENTRIES = 35;
+const APPLY_HISTORY_ENTRIES = 44;
 const APPLY_HISTORY_DIGEST =
-  "827b90ca9d19e6154770a1c83ba83c597ee28c6590071386d6fd254c49e3a93c";
+  "76b9b0b325edd1a07c686cb5ec95f0bf4cc457d4e2d8e9dcf487a9d68c4d22ff";
 
 describe("canonical production docs: the apply history is append-only", () => {
   /**
@@ -2191,6 +2191,23 @@ describe("NEGATIVE CONTROLS — the guard actually goes red", () => {
 // ===========================================================================
 
 /** Every 40-hex string in a document, deduplicated. */
+/**
+ * The SHAs in `shas` that are NOT commits in this repository (missing, or present as a tree, blob or tag), in input order.
+ * One `git cat-file --batch-check` process for the whole list. A git failure THROWS: it must never read as "every SHA is fine".
+ */
+export function nonCommitShas(shas: string[]): string[] {
+  if (shas.length === 0) return [];
+  const out = execFileSync("git", ["cat-file", "--batch-check"], { encoding: "utf8", cwd: ROOT, input: shas.join("\n") + "\n", stdio: ["pipe", "pipe", "ignore"] });
+  return nonCommitsIn(shas, out);
+}
+
+/** Reads a `git cat-file --batch-check` answer: one line per SHA, in order. Fewer or more lines than SHAs THROWS, so a truncated answer cannot pass for "all fine". */
+export function nonCommitsIn(shas: string[], batchCheckOutput: string): string[] {
+  const lines = batchCheckOutput.split("\n").filter((l) => l.length > 0);
+  if (lines.length !== shas.length) throw new Error(`git cat-file --batch-check answered ${lines.length} lines for ${shas.length} SHAs`);
+  return shas.filter((_, i) => lines[i].split(" ")[1] !== "commit");
+}
+
 export function shasIn(doc: string): string[] {
   return [...new Set(doc.match(/\b[0-9a-f]{40}\b/g) ?? [])];
 }
@@ -2252,13 +2269,44 @@ describe("RULE A — current-state.md pins a real, current production SHA", () =
     // "Not in this clone" and "not a commit" are different claims and only the
     // second is a defect.
     requireUsableGit("A1");
-    const unreal = shasIn(CURRENT_STATE).filter((sha) => git("cat-file", "-t", sha) !== "commit");
+    const named = shasIn(CURRENT_STATE);
+    // Non-vacuity: an empty extraction would make this pass for the wrong reason. The record lists 216 SHAs today and only ever grows; a floor of 100 catches a
+    // broken extraction without making a normal edit fail.
+    expect(named.length, "the SHA extraction found almost nothing: the check below would be vacuous").toBeGreaterThan(100);
+    const unreal = nonCommitShas(named);
     expect(
       unreal,
       "current-state.md names one or more 40-hex SHAs that are not commits in this " +
         "repository. A fabricated or mistyped SHA reads exactly like a real one; this is the " +
         "only thing that tells them apart. Offending: " + JSON.stringify(unreal),
     ).toEqual([]);
+    // An explicit budget, not the 5 s default: the record names a few hundred SHAs and every refresh adds more, so this check grows with it. It measured
+    // 5.0-5.3 s on a loaded host with one `git cat-file` process per SHA and went red under wide runs while passing alone. The lookups are now ONE
+    // `git cat-file --batch-check` call; the 30 s is headroom for a loaded host, not a licence to be slow.
+  }, 30_000);
+
+  it("A1 negative control: a fabricated SHA, a non-commit object and a missing SHA are each reported; a real commit is not", () => {
+    requireUsableGit("A1 negative control");
+    const head = git("rev-parse", "HEAD") as string;
+    const tree = git("rev-parse", "HEAD^{tree}") as string;
+    const fake = "0123456789abcdef0123456789abcdef01234567";
+    expect(nonCommitShas([head])).toEqual([]);
+    expect(nonCommitShas([fake])).toEqual([fake]);
+    expect(nonCommitShas([tree])).toEqual([tree]);
+    expect(nonCommitShas([head, fake, tree, head])).toEqual([fake, tree]);
+    expect(nonCommitShas([])).toEqual([]);
+  });
+
+  it("A1 a short or long batch answer THROWS instead of passing", () => {
+    const sha = (n: number) => String(n).repeat(40).slice(0, 40);
+    const shas = [sha(1), sha(2), sha(3)];
+    const line = (s: string) => `${s} commit 200`;
+    expect(nonCommitsIn(shas, shas.map(line).join("\n") + "\n")).toEqual([]);
+    expect(() => nonCommitsIn(shas, line(shas[0]) + "\n")).toThrow(/answered 1 lines for 3 SHAs/);
+    expect(() => nonCommitsIn(shas, "")).toThrow(/answered 0 lines for 3 SHAs/);
+    expect(() => nonCommitsIn(shas, shas.map(line).join("\n") + "\n" + line(sha(4)) + "\n")).toThrow(/answered 4 lines for 3 SHAs/);
+    // a missing line in the middle is still a count mismatch, and a "missing" answer is reported, not skipped
+    expect(nonCommitsIn(shas, [line(shas[0]), `${shas[1]} missing`, line(shas[2])].join("\n"))).toEqual([shas[1]]);
   });
 
   it("A1b: every abbreviated SHA presented as the CURRENT baseline matches the pin", () => {

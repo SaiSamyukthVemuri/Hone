@@ -87,6 +87,30 @@ export function buildOverInvitePreview(input: {
   };
 }
 
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+
+/**
+ * What the owner is about to send, in three plain lines shown BEFORE the send: the service, the booking window (how many days, and which weekdays)
+ * and how many people are selected. Built from the same scope the form posts, so the words cannot describe something other than what is sent.
+ */
+export function buildScopeSummary(input: {
+  serviceName: string;
+  windowDays: number;
+  allowedWeekdays: readonly number[] | null;
+  selected: number;
+}): { service: string; window: string; people: string } {
+  const days = Math.max(1, whole(input.windowDays));
+  const weekdays =
+    input.allowedWeekdays && input.allowedWeekdays.length > 0
+      ? input.allowedWeekdays.map((d) => WEEKDAY_NAMES[d] ?? "").filter(Boolean).join(", ")
+      : "any day";
+  return {
+    service: `Service: ${input.serviceName}`,
+    window: `Booking window: next ${n(days, "day", "days")}, ${weekdays}`,
+    people: `People selected: ${whole(input.selected)}`,
+  };
+}
+
 /**
  * Did anything the owner SAW change materially before the send? Compared on the three numbers the preview shows.
  * Any difference in fit or active count (or a changed extra) is material: the owner confirms again on the new numbers.

@@ -125,18 +125,11 @@ describe("placement + reuse", () => {
     // HON-10: the preview is per VISIT (keyed by appointment id), not per client.
     expect(PAGE).toMatch(/beforeTodayPreviews\.get\(appt\.id\)/);
     expect(PAGE).toMatch(/workflow=\{workflowByAppointment\.get\(appt\.id\) \?\? null\}/);
-    expect(PAGE).toMatch(/Before today/);
-    // Chloe dashboard-memory fix: the Remember note is rendered WHOLE — the
-    // 70-char cap is gone. Full-visibility is pinned in its own suite
-    // (tests/app/dashboard/dashboard-memory-visibility.test.ts).
-    expect(PAGE).toMatch(/Remember: \{workflow\.remember\}/);
-    expect(PAGE).toMatch(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/);
-    // ONE relationship line now: the old card said "No charted history yet."
-    // and the brief separately said "No prior treatment history yet".
-    expect(PAGE).toMatch(/New client · No charted history yet/);
-    expect(PAGE).toMatch(/No watch\/plan note\./);
-    // Empty roster state untouched.
-    expect(PAGE).toMatch(/No appointments today\./);
+    expect(PAGE).toContain("<NextSessionReminder note={prepSummary.remember} />");
+    expect(read("app/(app)/dashboard/visit-actions.tsx")).toContain('data-testid="dashboard-prep-remember"');
+    expect(PAGE).toContain("<DashboardTreatmentMemory");
+    expect(PAGE).toContain("New client · No charted history yet");
+    expect(PAGE).toContain("No appointments today.");
   });
 
   it("preview is NOT in the snapshot metric cards; full card stays on the Overview", () => {

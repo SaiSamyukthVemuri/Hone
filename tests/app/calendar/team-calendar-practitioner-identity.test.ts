@@ -181,19 +181,21 @@ describe("short cards: the practitioner fits without displacing details", () => 
     service: html.indexOf("Synthetic service"),
   });
 
-  it("a 30-minute mobile card names the practitioner on the time row, before the client", () => {
+  it("a 30-minute mobile card names the practitioner on the time row, after the client", () => {
     const html = renderOne(30);
     expect(html.match(/data-practitioner-tag=""/g)).toHaveLength(1);
     expect(html).toContain("Synthetic Practitioner S");
     expect(html).toContain(bg("teal"));
     const o = order(html);
     expect(o.tag).toBeGreaterThan(-1);
-    expect(o.tag).toBeLessThan(o.client);
+    expect(o.client).toBeGreaterThan(-1);
+    expect(o.tag).toBeGreaterThan(o.client);
   });
   it("a 60-minute mobile card keeps its service row and the practitioner on the time row", () => {
     const o = order(renderOne(60));
     expect(o.service).toBeGreaterThan(o.client);
-    expect(o.tag).toBeLessThan(o.client);
+    expect(o.client).toBeGreaterThan(-1);
+    expect(o.tag).toBeGreaterThan(o.client);
   });
   it("a 90-minute mobile card gives the practitioner its own row between client and service", () => {
     const o = order(renderOne(90));

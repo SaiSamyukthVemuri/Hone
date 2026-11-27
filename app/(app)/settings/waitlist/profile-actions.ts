@@ -1,5 +1,6 @@
 "use server";
 
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { revalidatePath } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin-server";
@@ -172,7 +173,7 @@ export async function setWaitlistAvailabilityAction(
     };
   }
 
-  revalidatePath("/settings/waitlist");
+  revalidatePath(WAITLIST_PATH);
   return { ok: true };
 }
 
@@ -232,7 +233,7 @@ export async function addWaitlistEntryAction(
     };
   }
 
-  revalidatePath("/settings/waitlist");
+  revalidatePath(WAITLIST_PATH);
   return { ok: true };
 }
 
@@ -344,7 +345,7 @@ export async function importLegacyWaitlistEntryAction(
     };
   }
 
-  revalidatePath("/settings/waitlist");
+  revalidatePath(WAITLIST_PATH);
   return { ok: true };
 }
 

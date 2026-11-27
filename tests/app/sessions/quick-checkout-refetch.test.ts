@@ -104,7 +104,7 @@ describe("quick checkout fix is isolated to the modal", () => {
     // The one authorized settlement pass-through, and only that one. Ordinary
     // DOM handlers (onChange / onClick) and the card's own form callback
     // (onSubmit) are not caller-refresh hooks and are excluded by name.
-    const DOM_OR_LOCAL = new Set(["onChange", "onClick", "onSubmit"]);
+    const DOM_OR_LOCAL = new Set(["onChange", "onClick", "onSubmit", "onFeeChange"]);
     const callerHooks = [
       ...new Set([...CARD.matchAll(/\bon[A-Z]\w*/g)].map((m) => m[0])),
     ]

@@ -425,13 +425,21 @@ describe("the connected wrapper makes NO request until asked", () => {
     // only for an area that already carries a SAVED machine (migration 0301):
     // a reopened area opens on its machine instead of an empty "Choose
     // machine". Every other charting path still makes no request on mount.
-    expect((code.match(/useEffect\(/g) ?? []).length).toBe(1);
+    // Two more, and neither makes a request on mount. The TOKEN effect acts only on a token the host minted for a MultiPlex CLICK and returns at once
+    // without one (a saved area and "Choose machine" never mint it); the PRESENCE effect only tells the host the panel is mounted or gone. Both pinned below.
+    expect((code.match(/useEffect\(/g) ?? []).length).toBe(3);
+    const tokenEffect = code.slice(code.indexOf("const loadTokenRef"), code.indexOf("}, [multiplexLoadToken]);"));
+    expect(tokenEffect).toContain("if (multiplexLoadToken === null) return;");
+    expect(tokenEffect).toContain("ctx.multiplexRoute");
+    const presenceEffect = code.slice(code.indexOf("const presenceRef"), code.indexOf("}, []);", code.indexOf("const presenceRef")));
+    expect(presenceEffect).toContain("presenceRef.current?.(true)");
+    expect(presenceEffect, "the presence effect makes no request").not.toMatch(/open\(|ensureContext|load\(/);
     expect(code).toMatch(/if \(hasSavedIdentity && state === "idle" && ctx === null\) void open\(\)/);
     expect(code).toContain("useCallback");
     // ...and that one effect has NO CLEANUP and reports nothing to the host: a cleanup keyed on
     // [hasSavedIdentity] runs when the identity is WRITTEN, while the reading entry is still mounted, and used to clear the host's
     // draft and hold. Unsaved state is the owners' registry entries (components/machines/draft-registry.tsx), never this wrapper's.
-    const effect = code.slice(code.indexOf("useEffect("), code.indexOf("}, [hasSavedIdentity]);"));
+    const effect = code.slice(code.lastIndexOf("useEffect(", code.indexOf("}, [hasSavedIdentity]);")), code.indexOf("}, [hasSavedIdentity]);"));
     expect(effect, "the open-on-identity effect was not found").toContain("void open()");
     expect(effect, "the open-on-identity effect returns a cleanup").not.toMatch(/return\s*(\(\)|\w+)?\s*(=>|;|\()/);
     expect(code, "the wrapper reports a draft or hold to the host").not.toMatch(/onRevision(Draft|Unresolved)/);
@@ -1525,6 +1533,36 @@ describe("the machine dropdown", () => {
     });
     expect(html).toContain("disabled");
     expect(html).toContain("no machine registered yet");
+  });
+
+  it("says the rollout could not be read beside the choices, even when the studio HAS another selectable machine", () => {
+    const MSG = "We could not check whether this is available right now. Please try again in a moment.";
+    const withUnit = render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT, rolloutNotice: MSG });
+    expect(withUnit).toContain('data-testid="machine-rollout-unavailable"');
+    expect(withUnit).toContain("We could not check whether this is available");
+    expect(render({ scope: SCOPE, devices: [DEVICE], catalogue: CAT })).not.toContain("machine-rollout-unavailable");
+  });
+
+  it("a restored selection naming a unit that is NOT listed (the rollout is Off and the unit left the list) renders cleanly: no crash, no ghost option, nothing chosen", () => {
+    const html = render({
+      scope: SCOPE,
+      devices: [DEVICE],
+      catalogue: CAT,
+      restoredSelection: { deviceId: "unit-not-listed", modeKey: "multiplex" },
+    });
+    expect(html).toContain('data-testid="machine-select"');
+    expect(html).not.toContain("unit-not-listed"); // no option, no label, no leaked id
+    expect(html).not.toContain("no longer available"); // the saved-unit note belongs to a saved block, which this is not
+    expect(html).toContain("Choose machine"); // the empty "not chosen" option is still there
+    expect(html).toContain(DEVICE.displayName); // the listed machine is still offered
+    expect(html).not.toContain("machine-mode"); // no mode or readings surface is built on the unlisted unit
+  });
+
+  it("with NOTHING selectable the reason shows once and the separate notice is absent", () => {
+    const MSG = "We could not check whether this is available right now. Please try again in a moment.";
+    const html = render({ scope: SCOPE, devices: [], catalogue: CAT, inventoryReason: MSG, rolloutNotice: MSG });
+    expect(html.split("We could not check whether this is available").length - 1).toBe(2); // the field hint and the empty-state line each carry the reason once
+    expect(html).not.toContain("machine-rollout-unavailable");
   });
 
   it("uses the SHARED control classes, so the touch floor is not re-derived", () => {

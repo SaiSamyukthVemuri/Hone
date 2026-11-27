@@ -373,7 +373,7 @@ const LEGACY_BASELINE: ReadonlyArray<readonly [string, number]> = [
   ["app/(app)/clients/[id]/intake/page.tsx", 1],
   ["app/(app)/clients/[id]/page.tsx", 1],
   ["app/(app)/dashboard/practice-snapshot.tsx", 2],
-  ["app/(app)/records/page.tsx", 2],
+  ["app/(app)/records/page.tsx", 0],
   ["components/appointment/postcare-section.tsx", 1],
   ["components/clinical-notes-section.tsx", 3],
   ["components/consultation-notes-card.tsx", 2],
@@ -532,15 +532,8 @@ describe("UX-02: SectionLabel adoption at the converted Settings and session-cha
       "the known remaining census is not empty and must not be asserted as such",
     ).toBeGreaterThan(0);
 
-    // And the layout-decorated shape means even THAT number understates it, so
-    // the census is a FLOOR rather than a total.
-    //
-    // SCOPED TO SETTINGS DELIBERATELY, not swept across the tree. A second
-    // whole-tree AST pass put this test at 2.6-5.4s against vitest's 5s default
-    // and it failed on the slow runs — a guard that reds on machine load teaches
-    // people to re-run it, which is worse than not having it. Settings is where
-    // the retired claim lived, so it is where the floor has to be demonstrated;
-    // the systemic version of this belongs to whoever tightens the detector.
+    // Settings' last layout-decorated duplicate was the service-menu heading.
+    // Scan this directory with the precise detector to catch its return.
     const settingsFiles = FILES.filter((file) => file.startsWith("app/(app)/settings/"));
     expect(settingsFiles.length, "no Settings files found — vacuous").toBeGreaterThan(9);
     const undercounted = settingsFiles.filter((file) =>
@@ -548,26 +541,7 @@ describe("UX-02: SectionLabel adoption at the converted Settings and session-cha
         isLayoutDecoratedDuplicate,
       ),
     );
-    expect(
-      undercounted.length,
-      "Settings still contains labels the detector cannot see — the census is a floor, not a total",
-    ).toBeGreaterThan(0);
-
-    // AND THIS IS THE ASSERTION THAT MAKES IT HONEST WHEN THEY ARE CONVERTED.
-    // The predicate matches the primitive's FULL contract plus extras, so it
-    // falls to zero the moment the last layout-decorated duplicate is adopted —
-    // and this test then reds, telling whoever did it that the detector can be
-    // tightened and this control retired. A looser predicate would have stayed
-    // green on status pills forever, still claiming an undercount that no longer
-    // existed.
-    expect(
-      undercounted.every((file) =>
-        classNameLiterals(readFileSync(path.join(REPO_ROOT, file), "utf8"), file).some(
-          (literal) => isLayoutDecoratedDuplicate(literal) && !isHandRolledDuplicate(literal),
-        ),
-      ),
-      "every undercounted file must hold a real layout-decorated duplicate, not a lookalike",
-    ).toBe(true);
+    expect(undercounted, "Settings headings should use SectionLabel for this typography").toEqual([]);
   });
 
   it("3. legacy occurrence counts never increase from the baseline", () => {

@@ -2,7 +2,8 @@
 
 import { machineModelLabel } from "@/lib/machines/display-name";
 import { recordedSummary } from "@/lib/machines/recorded-count";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { Preselect } from "@/lib/machines/preselect";
 import { pickerUnits } from "@/lib/machines/picker-entries";
 import { LEGACY_MACHINE_OPTION_VALUE } from "@/lib/machines/legacy-machine";
@@ -34,11 +35,13 @@ import { MachinePriorSetup } from "./machine-prior-setup";
 import { MachineRecordedSetups } from "./machine-recorded-setups";
 import {
   MachineSettingDraft,
+  type ParkedSettingDraft,
   MachineSettingDraftReset,
 } from "./machine-setting-draft";
 import type { GroupSubmission } from "@/lib/machines/setting-groups";
 import type { PendingSetupIdentity } from "@/lib/machines/pending-setup";
 import type { MachineProfile } from "@/lib/machines/profile-contract";
+import { profileById } from "@/lib/machines/catalogue";
 import { nativeFieldGroups } from "@/lib/machines/charting";
 import { OWNER_INPUT_REQUEST } from "@/lib/machines/owner-input-copy";
 import { profileProvenance } from "@/lib/machines/profile-provenance";
@@ -134,6 +137,8 @@ export type MachineFirstSetupPanelProps = {
    * empty studio and an unreadable inventory are different situations.
    */
   inventoryReason?: string | null;
+  /** The platform rollout could not be read: said beside the choices even when the studio has another machine (an empty list already says it through inventoryReason). */
+  rolloutNotice?: string | null;
   /** Reports the display label of the unit's model now chosen (machineModelLabel), or null. DISPLAY ONLY: read by the New view's "This visit" card. */
   onChosenModel?: (model: string | null) => void;
   /** The ONE-CHOICE PRESELECT (New view): used only as the INITIAL state, and only when no restored, remembered or unavailable selection applies. */
@@ -239,12 +244,17 @@ export type MachineFirstSetupPanelProps = {
    * contract published. The unit is never listed as a second xCell; picking MultiPlex under xCell selects it, picking the existing
    * settings returns to the existing workflow. Null means nothing about the xCell choice changes.
    */
-  multiplexRoute?: { deviceId: string; modeKey: string } | null;
+  multiplexRoute?: { deviceId: string; modeKey: string; unspecified?: boolean } | null;
+  /** the pending MultiPlex request is the click that opened this panel, so it is applied on mount. */
+  applyRequestOnMount?: boolean;
+  multiplexReadingsHost?: HTMLDivElement | null;
   /**
    * The host form's MULTIPLEX pick in its ONE Mode control (there is no second selector here). Each pick bumps `seq`: `want` true
    * binds this NEW area to the routed unit, false returns it to the existing xCell workflow. Acted on only when the sequence changes.
    */
   multiplexRequest?: { seq: number; want: boolean } | null;
+  /** EXACTLY ONE per `want` request this panel handles: applied, or refused (not routable, a saved area, frozen, or the choice threw). Never silent. */
+  onMultiplexOutcome?: (seq: number, outcome: "applied" | "not_applied") => void;
   /** The area was saved as that workflow: open on it. */
   initialLegacyChosen?: boolean;
   /** A saved area that already holds xCell Pur readings: native machines are listed but cannot be chosen. */
@@ -347,6 +357,7 @@ function MachineFirstSetupPanelImpl({
   catalogue = MACHINE_CATALOGUE,
   persistence = NO_PERSISTENCE,
   inventoryReason = null,
+  rolloutNotice = null,
   onChosenModel,
   onlyChoice = null,
   blockId = null,
@@ -365,7 +376,10 @@ function MachineFirstSetupPanelImpl({
   onSelectMachine,
   legacyMachine = null,
   multiplexRoute = null,
+  applyRequestOnMount = false,
+  multiplexReadingsHost,
   multiplexRequest = null,
+  onMultiplexOutcome,
   initialLegacyChosen = false,
   nativeLocked = false,
   savedDeviceId = null,
@@ -453,7 +467,9 @@ function MachineFirstSetupPanelImpl({
     (initialLegacyChosen || (onlyChoice?.kind === "legacy" && !restored && !unavailableSelection && initialDeviceId == null)) && legacyMachine !== null,
   );
   // The route applies only beside the existing xCell choice (never a second xCell on its own).
-  const xcellRouted = multiplexRoute !== null && legacyMachine !== null;
+  const xcellRouted = multiplexRoute !== null && (legacyMachine !== null || multiplexRoute.unspecified === true);
+  // The route's unit is the inert placeholder: no machine is shown as chosen, no legacy option stands in for it.
+  const routedUnspecified = multiplexRoute?.unspecified === true;
   /**
    * Choose (or clear) the machine.
    *
@@ -473,7 +489,7 @@ function MachineFirstSetupPanelImpl({
     // previous one over would persist a key from a different profile, which
     // means nothing - a mode exists only within the profile that declares it.
     const nextPick =
-      next === null ? undefined : selectable.find((s) => s.device.deviceId === next);
+      next === null ? undefined : choosable.find((s) => s.device.deviceId === next);
     const nextMode = nextPick
       ? (supportedModes(nextPick.device, nextPick.profile)[0]?.key ?? null)
       : null;
@@ -610,9 +626,18 @@ function MachineFirstSetupPanelImpl({
   // to a studio and the filter is studio-scoped. Without identity the panel
   // shows the catalogue status and nothing else, rather than guessing.
   const selectable = scope ? selectableDevices(scope, devices, catalogue) : [];
+  // the MultiPlex route's "Machine not specified" placeholder can be CHOSEN (by the Mode control) but is never LISTED: the picker, its
+  // count and its hints read `selectable`, which excludes it.
+  const routeUnit = (() => {
+    if (!scope || !multiplexRoute?.unspecified) return null;
+    const d = devices.find((x) => x.deviceId === multiplexRoute.deviceId && x.isUnspecified === true && x.studioId === scope.studioId);
+    const profile = d ? profileById(d.profileId, catalogue) : null;
+    return d && profile && profile.availability === "active" && d.profileVersion === profile.version ? { device: d, profile } : null;
+  })();
+  const choosable = routeUnit ? [...selectable, routeUnit] : selectable;
   const chosen = legacyChosen
     ? null
-    : (selectable.find((s) => s.device.deviceId === deviceId) ?? null);
+    : (choosable.find((s) => s.device.deviceId === deviceId) ?? null);
   // A MODE KEY IS ONLY MEANINGFUL WITHIN ONE PROFILE, so an unrecognised one
   // falls back rather than blanking the panel: a remembered mode can outlive
   // the machine it was chosen on.
@@ -659,19 +684,44 @@ function MachineFirstSetupPanelImpl({
     : (chosen && mode) || savedUnavailable || modeUnresolved
       ? "native"
       : "none";
-  const lastMultiplexSeq = useRef(multiplexRequest?.seq ?? 0);
+  // WHAT SHE TYPED FOR EACH NATIVE IDENTITY, kept in memory while this NEW area is open, so choosing another machine or mode and coming back
+  // restores exactly her entries. Never stored. Cleared when the area is saved (a block exists) and dies with the panel.
+  const parkedNative = useRef(new Map<string, ParkedSettingDraft>());
   useEffect(() => {
-    if (!multiplexRequest || multiplexRequest.seq === lastMultiplexSeq.current) return;
-    lastMultiplexSeq.current = multiplexRequest.seq;
+    if (blockId) parkedNative.current.clear();
+  }, [blockId]);
+  // THE LAST REQUEST THIS PANEL HAS FINISHED WITH (applied, or dropped for a reason that will not change).
+  const handledMultiplexSeq = useRef(applyRequestOnMount ? 0 : (multiplexRequest?.seq ?? 0));
+  useEffect(() => {
+    if (!multiplexRequest || multiplexRequest.seq === handledMultiplexSeq.current) return;
     // A NEW area only: a saved area keeps the identity it was saved with.
-    if (!xcellRouted || !multiplexRoute || blockId) return;
+    if (!xcellRouted || !multiplexRoute || blockId) {
+      handledMultiplexSeq.current = multiplexRequest.seq;
+      if (multiplexRequest.want) onMultiplexOutcome?.(multiplexRequest.seq, "not_applied");
+      return;
+    }
     // THE FREEZE WINS (Codex P1): a request that arrives while a create is pending or its response is unknown is dropped, never queued,
-    // so no click can move the identity under an unresolved save.
-    if (identityFrozen || selectionPending) return;
-    if (multiplexRequest.want) void chooseDevice(multiplexRoute.deviceId);
-    else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
+    // so no click can move the identity under an unresolved save. The host is told it was refused, so it never waits on it.
+    if (identityFrozen) {
+      handledMultiplexSeq.current = multiplexRequest.seq;
+      if (multiplexRequest.want) onMultiplexOutcome?.(multiplexRequest.seq, "not_applied");
+      return;
+    }
+    // A PICK STILL SETTLING (its preference write is in flight) HOLDS the request instead of losing it. Dropping it left the form showing
+    // two modes at once with the old machine still chosen, and her next click did nothing visible. The effect re-runs when the pick settles
+    // (`selectionPending` is a dependency) and applies the LATEST request; nothing is written for a new area here, so nothing can be
+    // moved under an unresolved save (that case is the freeze above).
+    if (selectionPending) return;
+    handledMultiplexSeq.current = multiplexRequest.seq;
+    if (multiplexRequest.want) {
+      const seq = multiplexRequest.seq;
+      chooseDevice(multiplexRoute.deviceId).then(
+        () => onMultiplexOutcome?.(seq, "applied"),
+        () => onMultiplexOutcome?.(seq, "not_applied"),
+      );
+    } else if (deviceId === multiplexRoute.deviceId) void chooseDevice(null, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [multiplexRequest]);
+  }, [multiplexRequest, selectionPending]);
   useEffect(() => {
     onKindChange?.(machineKind);
   }, [machineKind, onKindChange]);
@@ -715,6 +765,12 @@ function MachineFirstSetupPanelImpl({
         return out;
       }
     : undefined;
+
+  // The visit form owns the layout. Keep the editor under its existing draft provider.
+  const placeReadings = (editor: ReactNode) =>
+    multiplexReadingsHost && chosen && chosen.device.deviceId === multiplexRoute?.deviceId && mode?.key === multiplexRoute.modeKey
+      ? createPortal(editor, multiplexReadingsHost)
+      : editor;
 
   return (
     <section
@@ -761,7 +817,7 @@ function MachineFirstSetupPanelImpl({
         <FieldLabel
           label="Machine"
           hint={
-            selectable.length === 0
+            selectable.length === 0 && !chosen
               ? (inventoryReason ??
                 "No verified machine is available for this studio yet.")
               : undefined
@@ -771,7 +827,7 @@ function MachineFirstSetupPanelImpl({
             className={fieldControlClass()}
             ref={selectRef}
             value={
-              legacyChosen || (xcellRouted && deviceId === multiplexRoute?.deviceId)
+              legacyChosen || (xcellRouted && !routedUnspecified && deviceId === multiplexRoute?.deviceId)
                 ? LEGACY_MACHINE_OPTION_VALUE
                 : (deviceId ?? (savedUnavailable ? savedDeviceId : "") ?? "")
             }
@@ -831,6 +887,11 @@ function MachineFirstSetupPanelImpl({
             )}
           </select>
         </FieldLabel>
+      )}
+      {scope && rolloutNotice && selectable.length > 0 && (
+        <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-rollout-unavailable">
+          {rolloutNotice}
+        </p>
       )}
       {modeUnresolved && (
         <p className="text-sm text-amber-800 dark:text-amber-300" role="status" data-testid="machine-mode-unresolved">
@@ -937,7 +998,7 @@ function MachineFirstSetupPanelImpl({
           {legacyMachine?.label}: use the treatment fields below.
         </p>
       )}
-      {selectable.length === 0 ? (
+      {selectable.length === 0 && !chosen ? (
         <p className="text-sm text-neutral-600 dark:text-neutral-400" hidden={legacyChosen}>
           No verified machine is available to select yet.{" "}
           {!scope
@@ -961,9 +1022,9 @@ function MachineFirstSetupPanelImpl({
       ) : (
         <div className="flex flex-col gap-3" data-testid="machine-chosen">
           <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
-            {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? legacyMachine?.label : chosen.device.displayName}
+            {xcellRouted && !routedUnspecified && chosen.device.deviceId === multiplexRoute?.deviceId ? legacyMachine?.label : chosen.device.displayName}
             <span className="ml-2 font-normal text-neutral-600 dark:text-neutral-400">
-              {xcellRouted && chosen.device.deviceId === multiplexRoute?.deviceId ? "" : machineModelLabel(chosen.profile)}
+              {xcellRouted && !routedUnspecified && chosen.device.deviceId === multiplexRoute?.deviceId ? "" : machineModelLabel(chosen.profile)}
               {mode ? ` - ${mode.nativeLabel}` : ""}
             </span>
             {/* AN EXPLICIT WAY TO CHANGE IT: takes the practitioner to the one
@@ -1062,7 +1123,7 @@ function MachineFirstSetupPanelImpl({
             THE DRAFT RESET USED TO SIT HERE, and it could not do its job from
             inside this branch. See the hoisted copy above the branch.
           */}
-          {!blockId && onSettingDraft && mode ? (
+          {placeReadings(!blockId && onSettingDraft && mode ? (
             <MachineSettingDraft
               // Same payload, same freeze — see block-setup-form.
               frozen={settingDraftFrozen}
@@ -1074,6 +1135,8 @@ function MachineFirstSetupPanelImpl({
               key={`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`}
               profile={chosen.profile}
               mode={mode}
+              restore={parkedNative.current.get(`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`) ?? null}
+              onPark={(p) => parkedNative.current.set(`${chosen.device.deviceId}::${chosen.profile.profileId}::${chosen.profile.version}::${mode.key}`, p)}
               // THE IDENTITY IS ADDED HERE, where the chosen unit is known.
               onDraftChange={(d) =>
                 onSettingDraft({
@@ -1177,7 +1240,7 @@ function MachineFirstSetupPanelImpl({
               </ul>
             </div>
             ))
-          )}
+          ))}
         </div>
       )}
 

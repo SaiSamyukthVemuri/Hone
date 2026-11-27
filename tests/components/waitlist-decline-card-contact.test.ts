@@ -49,7 +49,7 @@ describe("the decline response card shows the entry's contact", () => {
     expect(html).toContain("a@example.test");
     expect(html).toContain('href="mailto:a@example.test"');
     expect(html).toContain('href="tel:+15550100"');
-    expect(html).toContain(`href="/settings/waitlist#entry-${E1}"`);
+    expect(html).toContain(`href="/waitlist#entry-${E1}"`);
     expect(html).toContain("Copy email");
   });
   it("phone missing and email missing use the plain wording", () => {
@@ -89,7 +89,7 @@ describe("the decline response card shows the entry's contact", () => {
     const m = new Map<string, ReplyContact>([[E1, { kind: "entry", email: "a@example.test", phone: null }]]);
     const mk = (ids: Set<string> | null) =>
       renderToStaticMarkup(createElement(DeclineFollowUpSection, { rows: [row()], timeZone: "UTC", emailEnabled: true, outbox: null, linkable: new Map(), notice: null, contacts: m, renderedEntryIds: ids }));
-    expect(mk(new Set([E1]))).toContain(`href="/settings/waitlist#entry-${E1}"`);
+    expect(mk(new Set([E1]))).toContain(`href="/waitlist#entry-${E1}"`);
     expect(mk(new Set([E2]))).not.toContain("Open this waitlist entry");
     expect(mk(null)).not.toContain("Open this waitlist entry");
   });

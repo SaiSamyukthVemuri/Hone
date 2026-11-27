@@ -41,6 +41,12 @@ export default async function AdminLayout({
               New studio
             </Link>
             <Link
+              href="/admin/rollouts"
+              className="text-neutral-200 hover:text-white"
+            >
+              Rollouts
+            </Link>
+            <Link
               href="/admin/ops-alerts"
               className="text-neutral-200 hover:text-white"
             >

@@ -121,7 +121,7 @@ describe("the reference is displayed; the FINAL charge is the editable total", (
     // pricing-dependent presentation model, so the card no longer derives
     // `resolvedAmount`. The invariant is unchanged: the form renders only for
     // a currently resolved price.
-    expect(CARD).toMatch(/\{presentation\.prepareFormAmount !== null &&/);
+    expect(CARD).toMatch(/const stripeForm = presentation\.prepareFormAmount !== null && eligibleDetails \? \(\s*<PrepareForm/);
     const PERM_PF = readFileSync(
       path.join(process.cwd(), "lib/billing/ready-control-permission.ts"),
       "utf8",

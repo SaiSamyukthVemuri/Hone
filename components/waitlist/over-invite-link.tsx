@@ -1,6 +1,7 @@
-import Link from "next/link";
+import { WAITLIST_OVER_INVITE_PATH } from "@/lib/waitlist/paths";
+import { WaitlistNavLink } from "@/components/waitlist/waitlist-nav-link";
 
-export const OVER_INVITE_LINK_PATH = "/settings/waitlist/over-invite";
+export const OVER_INVITE_LINK_PATH = WAITLIST_OVER_INVITE_PATH;
 export const OVER_INVITE_LINK_LABEL = "Invite beyond the estimate";
 export const OVER_INVITE_LINK_HELP = "Choose waiting clients to invite even when the week looks full. You confirm once; sending continues in the background.";
 
@@ -12,9 +13,9 @@ export function OverInviteLink({ isOwner }: { isOwner: boolean }) {
   if (isOwner !== true) return null;
   return (
     <section data-testid="over-invite-link" className="flex flex-col gap-1 text-sm">
-      <Link href={OVER_INVITE_LINK_PATH} className="min-h-11 self-start font-medium underline">
+      <WaitlistNavLink href={OVER_INVITE_LINK_PATH} className="min-h-11 self-start font-medium underline">
         {OVER_INVITE_LINK_LABEL}
-      </Link>
+      </WaitlistNavLink>
       <p className="text-neutral-600 dark:text-neutral-400">{OVER_INVITE_LINK_HELP}</p>
     </section>
   );

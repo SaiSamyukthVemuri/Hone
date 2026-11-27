@@ -399,42 +399,27 @@ describe("dashboard wiring", () => {
     expect(rendered).not.toMatch(/Send feedback|Send it to Sam|Know another electrologist|Pilot learning/i);
   });
 
-  it("the card renders each fact once, from the workflow item only", () => {
-    // Strip comments: the code explains WHY the old duplicate labels are gone,
-    // and that prose must not be mistaken for a rendered label.
-    const code = PAGE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    // The old duplicated sources are no longer read by the row.
-    expect(code).not.toMatch(/beforeToday\.rememberLine/);
-    expect(code).not.toMatch(/beforeToday\.recordsLine/);
-    expect(code).not.toMatch(/Last recorded:/);
-    expect(code).not.toMatch(/For next visit:/);
-    expect(code).not.toMatch(/Caution noted:/);
-    // Exactly one rendered Remember, Caution and Latest setup label.
-    expect(code.match(/Remember: \{workflow\.remember\}/g) ?? []).toHaveLength(1);
-    // The caution line now renders in RowSafetyLines (fed `caution={workflow.caution}` by the row): the page
-    // passes it once and the component renders it once.
-    expect(code.match(/workflow\.hasHistory \? workflow\.caution : null/g) ?? []).toHaveLength(1);
-    expect(code).not.toMatch(/Caution: \{workflow\.caution\}/);
-    const safety = readFileSync("app/(app)/dashboard/row-safety-lines.tsx", "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  const row = PAGE.slice(PAGE.indexOf("function AppointmentRow(")).replace(/\/\*[\s\S]*?\*\//g, "");
+  const safety = readFileSync("app/(app)/dashboard/row-safety-lines.tsx", "utf8");
+
+  it("renders the appointment's one-visit plan once, keeping the clinical caution separate", () => {
+    const reminder = readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8");
+    expect(reminder.match(/>From last visit, for today<\/h3>/g) ?? []).toHaveLength(1);
+    expect(reminder).toMatch(/>\{note\}<\/p>/);
+    expect(row.match(/<NextSessionReminder note=\{prepSummary\.remember\} \/>/g) ?? []).toHaveLength(1);
+    expect(row).not.toMatch(/workflow\.remember|beforeToday\.rememberLine|beforeToday\.recordsLine/);
+    expect(row.match(/caution=\{workflow && !workflow\.unavailable && workflow\.hasHistory \? workflow\.caution : null\}/g) ?? []).toHaveLength(1);
     expect(safety.match(/Caution: \{caution\}/g) ?? []).toHaveLength(1);
-    expect(
-      code.match(/Latest setup: \{workflow\.setup \?\? "Not recorded"\}/g) ?? [],
-    ).toHaveLength(1);
   });
 
-  it("full-text rendering from #486/#489 is preserved (no cap, no clamp)", () => {
-    const start = PAGE.indexOf("function AppointmentRow(");
-    const row = PAGE.slice(start, PAGE.indexOf("function AppointmentStatusPill("));
-    for (const field of ["workflow.remember", "workflow.caution", "workflow.setup"]) {
-      expect(row).toContain(field);
-    }
-    expect(row).toMatch(/whitespace-pre-wrap break-words/);
-    expect(row).not.toMatch(/line-clamp/);
-    // truncate() survives only for the pinned note, which is out of scope here.
-    const truncs = row.match(/truncate\(/g) ?? [];
-    expect(truncs.length).toBeLessThanOrEqual(1);
+  it("offers the recorded setup in one disclosure and keeps long notes and cautions readable", () => {
+    expect(row.match(/<DashboardTreatmentMemory\b/g) ?? []).toHaveLength(1);
+    expect(row).not.toMatch(/Latest setup:|workflow\.setup\b|line-clamp/);
+    expect(readFileSync("app/(app)/dashboard/visit-actions.tsx", "utf8")).toMatch(/<p className="[^"]*whitespace-pre-wrap break-words[^"]*">\{note\}<\/p>/);
+    expect(safety).toMatch(/data-testid="today-row-caution"[^>]*whitespace-pre-wrap break-words/);
+    const details = readFileSync("app/(app)/dashboard/dashboard-treatment-memory.tsx", "utf8");
+    expect(details).toMatch(/fetch\(`\/dashboard\/prep-memory\?appointment_id=/);
+    expect(details).toMatch(/<AppointmentPrepMemoryCard[\s\S]*?memory=\{result\.memory\}[\s\S]*?embedded/);
   });
 
   it("adds NO new database query for the combined view", () => {

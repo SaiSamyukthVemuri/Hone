@@ -1,4 +1,7 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import "server-only";
+import { cache } from "react";
+import { resolveSettingsNavWithReachable } from "./nav";
 
 import { launchNav } from "@/app/(app)/settings/launch/nav";
 import { calendarNav } from "@/app/(app)/settings/calendar/nav";
@@ -121,7 +124,7 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
     id: "waitlist",
     group: "studio",
     label: "Waitlist",
-    href: "/settings/waitlist",
+    href: WAITLIST_PATH,
     roles: OWNER,
     visibleWhen: waitlistVisible,
     order: 50,
@@ -159,3 +162,10 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
   { id: "import", group: "studio", label: "Import", href: "/settings/import", roles: OWNER, order: 130 },
   { id: "data", group: "studio", label: "Data", href: "/settings/data", roles: OWNER, order: 140 },
 ];
+
+// The layout and overview render together. Reuse the same permission and
+// visibility decision, including reads for launch and waitlist, in this request.
+export const getSettingsNavigation = cache(
+  (role: SettingsNavContext["role"], studio: SettingsNavContext["studio"]) =>
+    resolveSettingsNavWithReachable(SETTINGS_NAV, { role, studio }),
+);

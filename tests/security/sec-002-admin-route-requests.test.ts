@@ -192,6 +192,12 @@ const PAGES: PageCase[] = [
     refusal: "not-found",
   },
   {
+    path: "/admin/rollouts",
+    load: () => import("@/app/admin/rollouts/page") as never,
+    props: () => ({ searchParams: Promise.resolve({}) }),
+    refusal: "not-found",
+  },
+  {
     path: `/admin/studios/${STUDIO_B}`,
     load: () => import("@/app/admin/studios/[id]/page") as never,
     props: () => ({ params: Promise.resolve({ id: STUDIO_B }) }),

@@ -1,3 +1,4 @@
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import Link from "next/link";
 import { OwnerOnlyNotice } from "@/components/settings/view-heading";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
@@ -80,7 +81,7 @@ export default async function RepliesPage({
         </ul>
         </>
       )}
-      <Link href="/settings/waitlist" className="underline">
+      <Link href={WAITLIST_PATH} className="underline">
         Back to the waitlist
       </Link>
     </main>

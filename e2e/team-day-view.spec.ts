@@ -411,7 +411,7 @@ test.describe("F1: quick block scope", () => {
       [seed.studioId, day, local, TZ],
     );
   async function openBlockDrawer(page: Page) {
-    await page.goto(`/calendar?day=${day}`);
+    await page.goto(`/calendar?day=${day}&layout=grid`); // the phone's "+" belongs to the time-grid layout (#1764)
     await page.getByRole("button", { name: "Add appointment or block time" }).tap();
     await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Block time" }).tap();
     const drawer = blockDrawer(page);
@@ -419,6 +419,21 @@ test.describe("F1: quick block scope", () => {
     await expect(drawer.getByText(day, { exact: true })).toBeVisible();
     return drawer;
   }
+
+  test("By practitioner week and Month: the owner can still block time, and must choose who it blocks", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    for (const url of [`/calendar?view=week&day=${day}`, `/calendar?view=month&month=${day.slice(0, 8)}01&day=${day}`]) {
+      await page.goto(url);
+      await page.getByRole("button", { name: "Block time", exact: true }).tap();
+      const drawer = blockDrawer(page);
+      await expect(drawer).toBeVisible();
+      await expect(drawer.getByText(day, { exact: true })).toBeVisible();
+      await expect(drawer.getByLabel("Applies to").locator("option")).toHaveText(["Choose who this blocks", "All practitioners", ...roster.map((p) => `Only ${p.name}`)]);
+      await drawer.getByRole("button", { name: "Save block" }).tap();
+      await expect(drawer.getByRole("alert")).toHaveText("Choose who this block applies to.");
+      await page.keyboard.press("Escape");
+    }
+  });
 
   test("the owner must choose; Only Di closes Di's time alone", async ({ page }) => {
     const di = byKey("di");
@@ -466,4 +481,208 @@ test.describe("F1: quick block scope", () => {
       await expect(column(page, p.id).getByTitle(`Unavailable · Only ${bo.name}`, { exact: true })).toHaveCount(p.key === "bo" ? 1 : 0);
     }
   });
+});
+
+// The Block time button (by-practitioner week, day, month) must hand the drawer the SAME server-resolved acting
+// practitioner and studio as the time-grid paths: a member can only block their own time, an owner must choose.
+async function blockFromButton(page: Page, url: string, local: string, tap: boolean) {
+  const press = (l: Locator) => (tap ? l.tap() : l.click());
+  await page.goto(url);
+  await press(page.getByRole("button", { name: "Block time", exact: true }));
+  const drawer = page.getByRole("dialog", { name: "Block time" });
+  await expect(drawer).toBeVisible();
+  await drawer.getByLabel("Start", { exact: true }).fill(local);
+  const [h, m] = local.split(":").map(Number);
+  const end = h * 60 + m + 30;
+  await drawer.getByLabel("End", { exact: true }).fill(`${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}`);
+  return { drawer, press };
+}
+const rowsAt = (local: string) => sql<{ id: string; practitioner_id: string | null; studio_id: string }>(
+  "select id, practitioner_id, studio_id from public.studio_timed_blocks where studio_id=$1 and starts_at = ($2::date + $3::time) at time zone $4",
+  [seed.studioId, day, local, TZ],
+);
+function blockButtonTests(tap: boolean, times: { member: string; owner: string; day: string }) {
+  test("Block time button: a member's block lands on their own column in this studio, with no studio-wide choice", async ({ page }) => {
+    const cy = byKey("cy");
+    await loginByMagicLink(page, cy.email!);
+    // Let the practitioner start a block before the sidebar finishes restoring their own column.
+    // Deliver the real navigation after the edit, so both phone and desktop exercise the same transition.
+    const ownWeek = (url: URL) => url.pathname === "/calendar" && url.searchParams.get("people") === cy.id;
+    let releaseNavigation!: () => void;
+    const editing = new Promise<void>((resolve) => { releaseNavigation = resolve; });
+    await page.route(ownWeek, async (route) => {
+      await editing;
+      await route.fallback();
+    });
+    const { drawer, press } = await blockFromButton(page, `/calendar?view=week&day=${day}`, times.member, tap)
+      .finally(releaseNavigation);
+    await expect(page).toHaveURL(ownWeek);
+    await expect(page.getByRole("button", { name: "Block time", exact: true })).toHaveCount(0);
+    await expect(drawer.getByLabel("Start", { exact: true })).toHaveValue(times.member);
+    await expect(drawer.getByLabel("Applies to")).toHaveCount(0);
+    await press(drawer.getByRole("button", { name: "Save block" }));
+    await expect(drawer).toHaveCount(0);
+    await expect.poll(async () => (await rowsAt(times.member)).map((r) => [r.practitioner_id, r.studio_id])).toEqual([[cy.id, seed.studioId]]);
+  });
+  test("Block time button on the day: the owner chooses Only Ed and it lands on Ed in this studio", async ({ page }) => {
+    const ed = byKey("ed");
+    await loginAsOwner(page, seed);
+    const { drawer, press } = await blockFromButton(page, `/calendar?view=day&day=${day}`, times.owner, tap);
+    await drawer.getByLabel("Applies to").selectOption({ label: `Only ${ed.name}` });
+    await press(drawer.getByRole("button", { name: "Save block" }));
+    await expect(drawer).toHaveCount(0);
+    await expect.poll(async () => (await rowsAt(times.owner)).map((r) => [r.practitioner_id, r.studio_id])).toEqual([[ed.id, seed.studioId]]);
+  });
+}
+
+test.describe("Block time follows the phone time grid's selected day", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  test("changing the weekday on the phone grid, then Block time, opens on THAT day (no stale-date button beside the grid)", async ({ page }) => {
+    await loginAsOwner(page, seed);
+    await page.goto(`/calendar?view=week&day=${day}&layout=grid`);
+    // The page-level Block time button keeps the day the page loaded on, so it must not sit beside this grid.
+    await expect(page.getByRole("button", { name: "Block time", exact: true })).toHaveCount(0);
+    const pills = page.locator("button[data-selected]");
+    const selectedIndex = await pills.evaluateAll((els) => els.findIndex((e) => e.getAttribute("data-selected") === "true"));
+    expect(selectedIndex).toBeGreaterThanOrEqual(0);
+    const delta = selectedIndex > 0 ? -1 : 1;
+    const other = new Date(Date.parse(`${day}T12:00:00Z`) + delta * 86400000).toISOString().slice(0, 10);
+    await pills.nth(selectedIndex + delta).tap();
+    await expect(pills.nth(selectedIndex + delta)).toHaveAttribute("data-selected", "true");
+    await page.getByRole("button", { name: "Add appointment or block time" }).tap();
+    await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Block time" }).tap();
+    const drawer = page.getByRole("dialog", { name: "Block time" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText(other, { exact: true })).toBeVisible();
+    await expect(drawer.getByText(day, { exact: true })).toHaveCount(0);
+  });
+
+  // The phone's week view loads on a MONDAY; the person switches to WEDNESDAY and saves a block. It must land on Wednesday, for the
+  // chosen practitioner, in the row and on the screen after a refresh.
+  const mondayOnOrAfter = (from: string) => {
+    const d = new Date(`${from}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + ((8 - d.getUTCDay()) % 7));
+    return d.toISOString().slice(0, 10);
+  };
+  const plusDays = (date: string, n: number) => new Date(Date.parse(`${date}T12:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+  async function mondayToWednesdayBlock(page: Page, who: { id: string; name: string }, owner: boolean, start: string) {
+    const [sh, sm] = start.split(":").map(Number);
+    const end = `${String(sh).padStart(2, "0")}:${String(sm + 30).padStart(2, "0")}`;
+    const monday = mondayOnOrAfter(day);
+    const wednesday = plusDays(monday, 2);
+    const reason = `Phone check ${who.name}`;
+    await page.goto(`/calendar?view=week&day=${monday}&layout=grid`);
+    await expect(page.getByRole("button", { name: "Block time", exact: true })).toHaveCount(0); // no stale-day button beside the grid
+    await page.locator("button[data-selected]").filter({ has: page.locator("span", { hasText: /^Wed$/i }) }).tap();
+    await expect(page.locator('button[data-selected="true"]').filter({ has: page.locator("span", { hasText: /^Wed$/i }) })).toHaveCount(1);
+    await page.getByRole("button", { name: "Add appointment or block time" }).tap();
+    await page.getByRole("dialog", { name: "Choose action for selected time" }).getByRole("button", { name: "Block time" }).tap();
+    const drawer = page.getByRole("dialog", { name: "Block time" });
+    await expect(drawer.getByText(wednesday, { exact: true })).toBeVisible();
+    await expect(drawer.getByText(monday, { exact: true })).toHaveCount(0);
+    await drawer.getByLabel("Start", { exact: true }).fill(start);
+    await drawer.getByLabel("End", { exact: true }).fill(end);
+    await drawer.locator("input").nth(2).fill(reason);
+    if (owner) await drawer.getByLabel("Applies to").selectOption({ label: `Only ${who.name}` });
+    else await expect(drawer.getByLabel("Applies to")).toHaveCount(0);
+    await drawer.getByRole("button", { name: "Save block" }).tap();
+    await expect(drawer).toHaveCount(0);
+    const rows = () => sql<{ d: string; practitioner_id: string | null; studio_id: string }>(
+      "select to_char(starts_at at time zone $2,'YYYY-MM-DD HH24:MI') as d, practitioner_id, studio_id from public.studio_timed_blocks where studio_id=$1 and private_note=$3",
+      [seed.studioId, TZ, reason],
+    );
+    await expect.poll(async () => (await rows()).map((r) => [r.d, r.practitioner_id, r.studio_id])).toEqual([[`${wednesday} ${start}`, who.id, seed.studioId]]);
+    await page.goto(`/calendar?view=week&day=${wednesday}&layout=grid`);
+    // A member's view does not carry the private note, so find the block by its time on the Wednesday timeline.
+    const saved = page.locator("button[title]").filter({ hasText: new RegExp(`${sh - 12}:00 PM|${start}`) }).first();
+    await saved.scrollIntoViewIfNeeded();
+    await expect(saved).toBeVisible();
+    await page.screenshot({ path: `${process.env.EV_DIR ?? "test-results"}/phone-monday-to-wednesday-${owner ? "owner" : "practitioner"}.png` });
+    return { monday, wednesday };
+  }
+  test("phone week: Monday to Wednesday, the owner picks one practitioner, and the block lands on Wednesday for them", async ({ page }) => {
+    const ed = byKey("ed");
+    await loginAsOwner(page, seed);
+    await mondayToWednesdayBlock(page, { id: ed.id, name: ed.name }, true, "15:00");
+  });
+  test("phone week: Monday to Wednesday, a practitioner's block lands on Wednesday on their own schedule", async ({ page }) => {
+    const cy = byKey("cy");
+    await loginByMagicLink(page, cy.email!);
+    await mondayToWednesdayBlock(page, { id: cy.id, name: cy.name }, false, "17:00"); // a different time from the owner's test, so the two blocks never overlap
+  });
+});
+
+test.describe("Block time button on desktop", () => {
+  test.use({ viewport: { width: 1280, height: 1000 } });
+  blockButtonTests(false, { member: "19:00", owner: "19:30", day });
+});
+test.describe("Block time button on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  blockButtonTests(true, { member: "20:00", owner: "20:30", day });
+});
+
+test("finds a colleague's opening on another day and books the exact previewed slot", async ({ page }) => {
+  const target = byKey("bo");
+  const { clientId } = await seedE2eClient(seed);
+  const bookingClient = await clientName(clientId);
+  const [{ id: service }] = await sql<{ id: string }>(
+    `insert into public.services (studio_id, name, modality, default_duration_minutes, price_cents, active)
+     values ($1, 'Synthetic 45-minute session', 'electrolysis', 45, 0, true) returning id`,
+    [seed.studioId],
+  );
+  await seedServiceEligibility(seed.studioId, service, target.id);
+  const weekday = new Date(nextDay + "T12:00:00Z").getUTCDay();
+  await seedPractitionerDefault(seed.studioId, target.id, weekday, true, "13:00", "13:45");
+  await loginAsOwner(page, seed);
+  async function previewOpening(page: Page) {
+    await page.goto(`/calendar?view=day&day=${day}`);
+    await expect(page.getByTestId("team-day-column-header")).toHaveCount(5);
+    await page.getByRole("button", { name: "Find time", exact: true }).click();
+    const sidebar = page.getByTestId("calendar-sidebar");
+    await sidebar.getByRole("combobox", { name: "Service", exact: true }).selectOption(service);
+    await sidebar.getByRole("combobox", { name: "Practitioner", exact: true }).selectOption(target.id);
+    await sidebar.getByLabel("From", { exact: true }).fill(nextDay);
+    await sidebar.getByLabel("Through", { exact: true }).fill(nextDay);
+    await sidebar.getByRole("button", { name: "Search availability" }).click();
+    await sidebar.getByRole("button", { name: new RegExp(target.name) }).click();
+
+    await expect(page).toHaveURL(url => url.searchParams.get("day") === nextDay);
+    const preview = column(page, target.id).getByRole("button", { name: new RegExp(`^Book .* with ${target.name}`) });
+    await expect(preview).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "New appointment" })).toHaveCount(0);
+    return preview;
+  }
+
+  const otherPage = await page.context().newPage();
+  const [preview, stalePreview] = await Promise.all([previewOpening(page), previewOpening(otherPage)]);
+  const drawer = page.getByRole("dialog", { name: "New appointment" });
+  await preview.click();
+  await expect(drawer).toBeVisible();
+  await drawer.getByPlaceholder("Find existing client").fill(bookingClient);
+  await drawer.getByRole("button", { name: bookingClient }).click();
+  await expect(drawer.getByRole("combobox").first()).toHaveValue(service);
+  await expect(drawer.getByLabel("Practitioner")).toHaveValue(target.id);
+
+  const appointments = () => sql<{ practitioner_id: string; service_id: string; local_start: string; duration_minutes: number }>(
+    "select practitioner_id, service_id, to_char(starts_at at time zone $3, 'YYYY-MM-DD HH24:MI') as local_start, duration_minutes from public.appointments where studio_id = $1 and client_id = $2",
+    [seed.studioId, clientId, TZ],
+  );
+  expect(await appointments()).toEqual([]);
+  await drawer.getByRole("button", { name: "Book appointment", exact: true }).click();
+  await expect(drawer).toBeHidden();
+  await expect.poll(appointments).toEqual([{
+    practitioner_id: target.id, service_id: service,
+    local_start: nextDay + " 13:00", duration_minutes: 45,
+  }]);
+
+  // Another staff member had previewed this same opening before confirmation.
+  // The stale tab may already have refreshed and drawn the booked visit over its marker; the marker's own handler is what is under test.
+  await stalePreview.dispatchEvent("click");
+  const staleDrawer = otherPage.getByRole("dialog", { name: "New appointment" });
+  await expect(staleDrawer.getByText(/opening is no longer available/i)).toBeVisible();
+  await staleDrawer.getByPlaceholder("Find existing client").fill(bookingClient);
+  await staleDrawer.getByRole("button", { name: bookingClient }).click();
+  await expect(staleDrawer.getByRole("button", { name: "Book appointment", exact: true })).toBeDisabled();
+  expect(await appointments()).toHaveLength(1);
+  await otherPage.close();
 });

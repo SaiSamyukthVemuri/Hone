@@ -12,6 +12,8 @@ import path from "node:path";
 //
 // - GHSA-p3m5-59mp-jv5r (next, Server Actions DoS): patched 15.5.28 on
 //   the 15.x line, 16.4.1 on the 16.x line.
+// - GHSA-f3mh-rxg3-f5g2, GHSA-7qx7-33qx-rqx2 and GHSA-pc58-hwjq-p385
+//   (Edge cookies, image optimization and forwarded responses): 15.5.29 / 16.4.5.
 // - GHSA-wq5f-xc86-pv6w (sharp, librsvg): patched 0.35.5.
 // - GHSA-rgj7-g3m4-5g8c (sharp, libheif): patched 0.35.4.
 //
@@ -25,7 +27,7 @@ const LOCK: { packages: Record<string, LockEntry> } = JSON.parse(
   readFileSync(path.join(ROOT, "package-lock.json"), "utf8"),
 );
 
-const NEXT_FLOOR_BY_MAJOR: Record<number, string> = { 15: "15.5.28", 16: "16.4.1" };
+const NEXT_FLOOR_BY_MAJOR: Record<number, string> = { 15: "15.5.29", 16: "16.4.5" };
 const SHARP_FLOOR = "0.35.5";
 const LIBVIPS_FLOOR = "1.3.4";
 
@@ -89,7 +91,7 @@ describe("patched floor helpers", () => {
   });
 });
 
-describe("resolved next is at or above the GHSA-p3m5-59mp-jv5r patch", () => {
+describe("resolved next meets the reviewed security floor", () => {
   const copies = resolvedCopies("next");
 
   it("the lockfile resolves next", () => {
