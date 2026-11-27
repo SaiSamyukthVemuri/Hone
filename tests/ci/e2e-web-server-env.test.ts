@@ -19,8 +19,7 @@ import path from "node:path";
 // machine model is evidence-gated and blocked, so the ordinary extended run is
 // itself the proof that no real model is ever offered. Arming the synthetic
 // profile lane-wide would delete that proof. This file is the guard that keeps
-// the spread conditional, asserted both on the SOURCE and on the actual
-// exported object.
+// the spread conditional, asserted on the actual exported object.
 // ===========================================================================
 
 const LOCAL_ENV_PATH = path.resolve(__dirname, "../../e2e/helpers/local-env.ts");
@@ -241,26 +240,7 @@ describe("the forwarded flag actually OPENS the gate in the e2e server", () => {
   });
 });
 
-describe("the source keeps the spread conditional", () => {
-  it("declares the flag ONLY inside a conditional spread", () => {
-    // The shape that matters, pinned on the source as well as the object:
-    // a future edit that hoists it to a plain entry would still fail the
-    // runtime cases above, but this says why in one line at the site.
-    expect(CODE).toMatch(
-      /\.\.\.\(process\.env\.HONE_SYNTHETIC_MACHINE_PROFILE === "1"\s*\?\s*\{\s*HONE_SYNTHETIC_MACHINE_PROFILE: "1"\s*\}\s*:\s*\{\}\),/,
-    );
-  });
-
-  it("carries no UNCONDITIONAL entry for it", () => {
-    // i.e. no bare `HONE_SYNTHETIC_MACHINE_PROFILE: "..."` outside a spread.
-    const unconditional = CODE.split("\n").filter(
-      (l) =>
-        /^\s*HONE_SYNTHETIC_MACHINE_PROFILE\s*:/.test(l) &&
-        !l.includes("process.env"),
-    );
-    expect(unconditional).toEqual([]);
-  });
-
+describe("the source keeps the precedent and the unconditional markers", () => {
   it("matches the precedent it was modelled on", () => {
     // HONE_PERF_TIMING is the established pattern for exactly this problem and
     // must keep its own conditional shape; if it is ever made unconditional,

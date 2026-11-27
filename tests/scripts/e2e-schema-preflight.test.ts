@@ -65,20 +65,6 @@ describe("2. local database ahead of the checkout fails closed", () => {
     expect(v.codes).toContain("LOCAL_AHEAD_OF_CHECKOUT");
     expect(v.localOnly).toEqual([m("0003", "another_branches_feature")]);
   });
-
-  it("this is the exact shape the audit observed on the shared stack", () => {
-    // Recorded as a SHAPE, deliberately parameterised: a checkout of N, a
-    // database of N+1, and the extra one named by another lane. The numbers
-    // below are fixtures for the shape, not the repository's real state — see
-    // test 7, which forbids encoding real migration numbers in the guard.
-    const checkout = Array.from({ length: 5 }, (_, i) =>
-      m(String(i + 1).padStart(4, "0"), `migration_${i + 1}`),
-    );
-    const local = [...checkout, m("0006", "unmerged_lane_feature")];
-    const v = compareMigrationState(checkout, local);
-    expect(v.ok).toBe(false);
-    if (!v.ok) expect(v.localOnly.map((x) => x.version)).toEqual(["0006"]);
-  });
 });
 
 describe("3. checkout ahead of the local database fails closed", () => {

@@ -3,13 +3,14 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // PR #169. Pin the session-payment product model documented in
-// docs/16 §12 + docs/02 + docs/13. Every assertion below is a load-
+// docs/16 §12 + docs/02. Every assertion below is a load-
 // bearing product decision; a future PR that contradicts one of
 // them must either update the doc OR be the live-mode enablement
 // PR that deliberately retires the constraint.
 //
 // These are docs-only tests. The runtime guards on the Stripe path
-// live in tests/lib/billing/live-mode-blockers.test.ts (PR #168).
+// live in tests/lib/billing/live-mode-blockers.test.ts (PR #168) and
+// scripts/check-stripe-gates.mjs (tests/scripts/check-stripe-gates.test.ts).
 
 function readDoc(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../..", rel), "utf8");
