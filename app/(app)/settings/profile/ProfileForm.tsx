@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { updateOwnProfileAction } from "./actions";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { fieldControlClass } from "@/components/ui/field";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
 type Props = {
   initialDisplayName: string;
@@ -32,14 +33,18 @@ export function ProfileForm({ initialDisplayName, email }: Props) {
 
     startTransition(async () => {
       try {
-        await updateOwnProfileAction(fd);
+        const result = await updateOwnProfileAction(fd);
+        if (!result.ok) {
+          setHint({ kind: "error", message: result.error });
+          return;
+        }
         setSaved(displayName);
         setHint({ kind: "saved" });
         window.setTimeout(() => setHint({ kind: "idle" }), 1500);
       } catch (err) {
         setHint({
           kind: "error",
-          message: err instanceof Error ? err.message : "Failed to save.",
+          message: actionFailureMessage(err),
         });
       }
     });

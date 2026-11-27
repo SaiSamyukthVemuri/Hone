@@ -60,7 +60,8 @@ describe("owner-only editing is preserved; non-owner sees read-only note", () =>
   });
   it("the save action stays owner-gated server-side (unchanged)", () => {
     expect(ACTIONS).toMatch(/updateStudioPostcareAction/);
-    expect(ACTIONS).toMatch(/Only studio owners can change postcare settings/);
+    // HON-124 item 19: the refusal is RETURNED (production redacts a thrown message), still before any write.
+    expect(ACTIONS).toMatch(/practitioner\.role !== "owner"\) \{\s*return actionFailed\("Only the studio owner can change postcare settings\."\)/);
   });
 });
 

@@ -5,6 +5,7 @@ import { updateStudioAction } from "./actions";
 import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { fieldControlClass } from "@/components/ui/field";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
 type Props = {
   initialName: string;
@@ -39,11 +40,15 @@ export function StudioSettingsForm({
 
     startTransition(async () => {
       try {
-        await updateStudioAction(fd);
+        const result = await updateStudioAction(fd);
+        if (!result.ok) {
+          feedback.failed(result.error); // typed values stay in the fields
+          return;
+        }
         setSaved({ name, legalEntity });
         feedback.saved();
       } catch (err) {
-        feedback.failed(err instanceof Error ? err.message : "Failed to save.");
+        feedback.failed(actionFailureMessage(err));
       }
     });
   }

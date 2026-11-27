@@ -5,6 +5,7 @@ import { SaveStatus, useSaveFeedback } from "@/components/settings/save-status";
 import { useUnsavedChangesGuard } from "@/components/settings/unsaved-changes";
 import { updateStudioPolicyAction } from "./actions";
 import { MarkdownLiteTextarea } from "./PostcareEditingHelpers";
+import { actionFailureMessage } from "@/lib/actions/action-result";
 
 // Per-studio cancellation / no-show policy editor (C2a-core).
 //
@@ -64,11 +65,15 @@ export function PolicySettingsForm({ initial }: Props) {
     fd.set("no_show_policy_text", noShow);
     startTransition(async () => {
       try {
-        await updateStudioPolicyAction(fd);
+        const result = await updateStudioPolicyAction(fd);
+        if (!result.ok) {
+          feedback.failed(result.error); // typed values stay in the fields
+          return;
+        }
         setSaved({ cancellation, noShow });
         feedback.saved();
       } catch (err) {
-        feedback.failed(err instanceof Error ? err.message : "Failed to save.");
+        feedback.failed(actionFailureMessage(err));
       }
     });
   }

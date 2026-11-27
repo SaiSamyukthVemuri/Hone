@@ -8,24 +8,16 @@ import {
   generateCalendarFeedToken,
   hashCalendarFeedToken,
 } from "@/lib/calendar-feed/token";
-import { dbErrorCode } from "@/lib/logging/error-class";
+import { ACTION_OK, actionFailed, type ActionResult } from "@/lib/actions/action-result";
+import { userFacingDbFailure } from "@/lib/logging/user-facing-db-failure";
 
-function trimmedOrThrow(
-  value: FormDataEntryValue | null,
-  label: string,
-): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${label} is required.`);
-  }
-  return value.trim();
-}
-
-export async function updateOwnProfileAction(formData: FormData): Promise<void> {
+export async function updateOwnProfileAction(formData: FormData): Promise<ActionResult> {
   const { studio } = await getCurrentPractitionerWithStudio();
-  const displayName = trimmedOrThrow(
-    formData.get("display_name"),
-    "Your name",
-  );
+  const rawName = formData.get("display_name");
+  if (typeof rawName !== "string" || rawName.trim().length === 0) {
+    return actionFailed("Enter your name, then save again.");
+  }
+  const displayName = rawName.trim();
 
   // 0178: governed own-preference command. NO practitioner id crosses the
   // boundary: the DATABASE binds the actor to auth.uid() and the explicit
@@ -36,28 +28,29 @@ export async function updateOwnProfileAction(formData: FormData): Promise<void> 
     { p_studio_id: studio.id, p_display_name: displayName, p_color: null },
   );
   if (error) {
-    throw new Error(`Failed to save your name: ${dbErrorCode(error)}`);
+    return actionFailed(userFacingDbFailure("save your name", error, "update_own_profile_name_failed"));
   }
   // NULL = no ACTIVE membership in that studio. Before 0178 the owner-only RLS
   // policy made this a SILENT zero-row write for every non-owner; reporting
   // success for a write that did not happen is the exact bug being closed.
   if (!updatedId) {
-    throw new Error("Failed to save your name: no active membership.");
+    return actionFailed("Your account is no longer active in this studio, so the change was not saved. Ask the studio owner.");
   }
 
   revalidatePath("/settings/profile");
   revalidatePath("/settings/studio", "layout");
   revalidatePath("/settings/team");
   revalidatePath("/dashboard");
+  return ACTION_OK;
 }
 
 export async function updatePractitionerColorAction(
   formData: FormData,
-): Promise<void> {
+): Promise<ActionResult> {
   const { studio } = await getCurrentPractitionerWithStudio();
   const token = formData.get("color");
   if (!isPractitionerColor(token)) {
-    throw new Error("Pick a color from the palette.");
+    return actionFailed("Pick one of the colors shown.");
   }
 
   const supabase = await createClient();
@@ -66,14 +59,15 @@ export async function updatePractitionerColorAction(
     { p_studio_id: studio.id, p_display_name: null, p_color: token },
   );
   if (error) {
-    throw new Error(`Failed to save your color: ${dbErrorCode(error)}`);
+    return actionFailed(userFacingDbFailure("save your color", error, "update_own_profile_color_failed"));
   }
   if (!updatedId) {
-    throw new Error("Failed to save your color: no active membership.");
+    return actionFailed("Your account is no longer active in this studio, so the change was not saved. Ask the studio owner.");
   }
 
   revalidatePath("/settings/profile");
   revalidatePath("/calendar");
+  return ACTION_OK;
 }
 
 // ---------------------------------------------------------------------------

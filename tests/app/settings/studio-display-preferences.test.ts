@@ -76,9 +76,11 @@ describe("updateStudioAction (studio details)", () => {
 
   it("still refuses a practitioner", async () => {
     scenario.role = "practitioner";
-    await expect(updateStudioAction(form({ name: "Studio" }))).rejects.toThrow(
-      "Only studio owners can change studio settings.",
-    );
+    // HON-124 item 19: a returned refusal (a thrown message is redacted in production).
+    expect(await updateStudioAction(form({ name: "Studio" }))).toEqual({
+      ok: false,
+      error: "Only the studio owner can change studio settings.",
+    });
     expect(updates).toHaveLength(0);
   });
 });
