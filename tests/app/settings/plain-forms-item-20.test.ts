@@ -44,9 +44,9 @@ describe("MarkAllReadForm", () => {
 describe("PortalReviewedForm", () => {
   it("a refusal is shown to the visitor; success shows nothing extra (the page re-renders with its Reviewed badge)", async () => {
     const { PortalReviewedForm } = await import("@/app/portal/PortalReviewedForm");
-    let host = await mount((c) => c(PortalReviewedForm, { action: async () => ({ ok: false, error: "Could not mark this message as reviewed. Try again." }), messageId: "m1" }), form);
+    let host = await mount((c) => c(PortalReviewedForm, { action: async () => ({ ok: false as const, error: "Could not mark this message as reviewed. Try again." }), messageId: "m1" }), form);
     expect(host.querySelector('[role="alert"]')!.textContent).toMatch(/Could not mark this message as reviewed/);
-    host = await mount((c) => c(PortalReviewedForm, { action: async () => ({ ok: true }), messageId: "m1" }), form);
+    host = await mount((c) => c(PortalReviewedForm, { action: async () => ({ ok: true as const }), messageId: "m1" }), form);
     expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 });
