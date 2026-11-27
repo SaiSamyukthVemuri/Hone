@@ -1,6 +1,5 @@
 import "server-only";
 import { inferStripeLivemode } from "@/lib/stripe/server";
-import { resolveStripePublishableKey } from "@/lib/stripe/publishable-key";
 
 // Shared read-only payment status presenter (PR A of the app-wide
 // smart-payment-status plan). ONE place derives payment state and the copy
@@ -167,11 +166,7 @@ export function portalCardCopy(capability: PortalCardCapability): string {
   }
 }
 
-// Convenience for server components that already hold the connect input:
-// resolves the publishable-key gate from env (pure env read, no query).
-export function publishableKeyOk(): boolean {
-  return resolveStripePublishableKey().ok;
-}
+// The publishable-key gate for a studio now lives in lib/stripe/studio-publishable-key.ts (HON-90): the key is the studio's PLATFORM's.
 
 // ---------------------------------------------------------------------------
 // 4. Public booking card collection: OFF today; single source of truth so

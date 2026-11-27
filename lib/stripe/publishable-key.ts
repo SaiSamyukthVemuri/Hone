@@ -1,3 +1,5 @@
+// HON-90: the key is the PLATFORM's, so the platform is a required argument (CA: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY, unchanged;
+// US: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY_US). Portal Stripe.js must use the publishable key of the platform that owns the connected account.
 // PR #135. Publishable-key gate that mirrors the secret-key gate in
 // lib/stripe/server.ts. Both server-side calls (for safe-render hints)
 // and the portal client component import the resolver below; never
@@ -22,6 +24,8 @@
 // Stripe Elements. The portal NEVER crashes when the env var is
 // missing or invalid.
 
+import { PLATFORM_ENV, type StripePlatform } from "@/lib/stripe/platform-routing";
+
 export type PublishableKeyResolution =
   | { ok: true; key: string }
   | { ok: false; reason: "missing" | "live_mode_blocked" | "invalid_prefix" };
@@ -40,8 +44,8 @@ function liveModeExplicitlyEnabled(): boolean {
 // unavailable message" without ever exposing a misconfigured key to
 // the browser bundle. The "ok:true" path returns the key string for
 // loadStripe(); the "ok:false" path keeps the key off the wire.
-export function resolveStripePublishableKey(): PublishableKeyResolution {
-  const raw = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+export function resolveStripePublishableKey(platform: StripePlatform): PublishableKeyResolution {
+  const raw = process.env[PLATFORM_ENV[platform].publishableKey];
   if (!raw || raw.length === 0) {
     return { ok: false, reason: "missing" };
   }
@@ -61,6 +65,6 @@ export function resolveStripePublishableKey(): PublishableKeyResolution {
 
 // Convenience boolean. Useful for portal Server Components that
 // want to branch on availability without surfacing the key itself.
-export function isStripePublishableKeyAvailable(): boolean {
-  return resolveStripePublishableKey().ok;
+export function isStripePublishableKeyAvailable(platform: StripePlatform): boolean {
+  return resolveStripePublishableKey(platform).ok;
 }

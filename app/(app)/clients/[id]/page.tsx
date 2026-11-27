@@ -6,7 +6,7 @@ import { orderByRecency } from "@/lib/sessions/charted-session";
 // bare <Link>s here — the /clients back link and the two Edit links — were NOT
 // in the measured slice and are deliberately left alone.
 import { PendingLink } from "@/components/pending-link";
-import { publishableKeyOk } from "@/lib/payments/payment-status-presenter";
+import { studioPublishableKeyOk } from "@/lib/stripe/studio-publishable-key";
 import { notFound, redirect } from "next/navigation";
 import {
   buildLastSessionSummary,
@@ -376,6 +376,7 @@ export default async function ClientCheatSheetPage({
     importedMemory,
     portalAccessEvents,
     overviewVisitAppointments,
+    cardSetupKeyOk,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -463,6 +464,8 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
+    // HON-90: the card form uses the publishable key of the platform that owns this studio's connected account (one read, in this wave).
+    studioPublishableKeyOk(studio.id),
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -1475,7 +1478,7 @@ export default async function ClientCheatSheetPage({
                 }
                 cardAuthorizationSigned={cardAuthorizationSigned}
                 cardAuthorizationOutOfDate={cardAuthorizationOutOfDate}
-                cardSetupBlockedByEnvironment={!publishableKeyOk()}
+                cardSetupBlockedByEnvironment={!cardSetupKeyOk}
               />
             );
           })()}

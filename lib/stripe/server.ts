@@ -158,14 +158,6 @@ export function inferStripeLivemode(): boolean {
   return key.startsWith("sk_live_");
 }
 
-/**
- * Country for Express connected-account creation. Hardcoded to Canada
- * for the current single-country rollout. To generalize, plumb a
- * per-studio `country` column into the schema and read it here.
- */
-export const STRIPE_CONNECT_COUNTRY: string =
-  process.env.STRIPE_CONNECT_COUNTRY ?? "CA";
-
 // ---------------------------------------------------------------------------
 // App-origin resolution
 // ---------------------------------------------------------------------------

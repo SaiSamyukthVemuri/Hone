@@ -35,6 +35,8 @@ vi.mock("@/lib/consent/queries", () => ({
   getLatestSignaturesByTemplateForPortal: async () => new Map(),
 }));
 vi.mock("@/lib/payment-methods/queries", () => ({ getActiveCardForStudioClient: async () => ({ id: "card" }) }));
+// HON-90: the portal resolves the key through the studio's platform; these renders are about consent, so the key is unavailable as before.
+vi.mock("@/lib/stripe/studio-publishable-key", () => ({ resolveStudioPublishableKey: async () => ({ ok: false, reason: "missing" }) }));
 vi.mock("@/lib/stripe/publishable-key", () => ({ resolveStripePublishableKey: () => ({ ok: false, reason: "missing" }) }));
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false }));
 
