@@ -39,6 +39,8 @@ import {
   createClientForCalendarBookingAction,
   fetchLastServiceForClientAction,
 } from "./actions";
+import { buttonClasses } from "@/components/ui/button";
+import { CONTROL_COMPACT_FINE_POINTER, CONTROL_MIN_TOUCH, FOCUS_RING, NAV_ROW_FEEDBACK, NAV_ROW_FOCUS, PRESS_TRANSITION, TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
 
 // Rebook shortcut: a client's "last service" (lazy-fetched when an
 // existing client is selected). serviceName/durationMinutes describe the
@@ -712,7 +714,7 @@ export function QuickBookDrawer({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-md border border-neutral-300 px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-900"
+            className={buttonClasses({ variant: "secondary", size: "sm" })}
           >
             Esc
           </button>
@@ -741,7 +743,7 @@ export function QuickBookDrawer({
                   setSelectedClient(null);
                   setClientQuery("");
                 }}
-                className="shrink-0 text-xs text-neutral-500 hover:underline"
+                className={cx(CONTROL_MIN_TOUCH, "shrink-0 text-xs text-neutral-500", TEXT_LINK_FEEDBACK)}
               >
                 Change
               </button>}
@@ -758,10 +760,10 @@ export function QuickBookDrawer({
                   role="tab"
                   aria-selected={clientMode === "search"}
                   onClick={() => setClientMode("search")}
-                  className={`flex-1 rounded-md px-3 py-1.5 transition ${
+                  className={`${CONTROL_MIN_TOUCH} ${CONTROL_COMPACT_FINE_POINTER} ${NAV_ROW_FOCUS} flex-1 rounded-md px-3 transition ${
                     clientMode === "search"
                       ? "bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
-                      : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                      : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900 active:bg-white dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:active:bg-neutral-700"
                   }`}
                 >
                   Search existing
@@ -771,10 +773,10 @@ export function QuickBookDrawer({
                   role="tab"
                   aria-selected={clientMode === "new"}
                   onClick={() => setClientMode("new")}
-                  className={`flex-1 rounded-md px-3 py-1.5 transition ${
+                  className={`${CONTROL_MIN_TOUCH} ${CONTROL_COMPACT_FINE_POINTER} ${NAV_ROW_FOCUS} flex-1 rounded-md px-3 transition ${
                     clientMode === "new"
                       ? "bg-white font-medium text-neutral-900 shadow-sm dark:bg-neutral-950 dark:text-neutral-100"
-                      : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+                      : "text-neutral-600 hover:bg-white/70 hover:text-neutral-900 active:bg-white dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100 dark:active:bg-neutral-700"
                   }`}
                 >
                   Add a new client
@@ -803,7 +805,7 @@ export function QuickBookDrawer({
                           <button
                             type="button"
                             onClick={() => setSelectedClient(c)}
-                            className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900"
+                            className={cx("flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm", NAV_ROW_FEEDBACK)}
                           >
                             <div className="min-w-0 flex-1">
                               <div className="truncate font-medium">{c.name}</div>
@@ -896,7 +898,7 @@ export function QuickBookDrawer({
                     type="button"
                     onClick={handleCreateClient}
                     disabled={creatingClient || newClientName.trim().length === 0}
-                    className="self-start rounded-md border border-neutral-900 bg-white px-4 py-1.5 text-sm font-medium text-neutral-900 hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white dark:bg-neutral-950 dark:text-neutral-100 dark:hover:bg-neutral-900"
+                    className={buttonClasses({ variant: "secondary", className: "self-start" })}
                   >
                     {creatingClient ? "Adding…" : "Add client"}
                   </button>
@@ -937,7 +939,7 @@ export function QuickBookDrawer({
                 <button
                   type="button"
                   onClick={() => setServiceId(lastService.serviceId)}
-                  className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium hover:bg-white dark:border-neutral-700 dark:hover:bg-neutral-900"
+                  className={buttonClasses({ variant: "secondary", size: "sm", className: "self-start" })}
                 >
                   Use this service
                 </button>
@@ -1156,12 +1158,13 @@ export function QuickBookDrawer({
                     key={slot.start}
                     type="button"
                     onClick={() => setPickedSlot(slot)}
-                    className={`rounded-md border px-3 py-1.5 text-sm transition ${
+                    aria-pressed={picked}
+                    className={`${CONTROL_MIN_TOUCH} ${CONTROL_COMPACT_FINE_POINTER} ${FOCUS_RING} ${PRESS_TRANSITION} cursor-pointer rounded-md border px-3 text-sm ${
                       picked
                         ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
                         : isHint
-                          ? "border-neutral-500 hover:border-neutral-900 dark:border-neutral-500 dark:hover:border-white"
-                          : "border-neutral-300 hover:border-neutral-500 dark:border-neutral-700"
+                          ? "border-neutral-500 hover:border-neutral-900 hover:bg-neutral-50 active:bg-neutral-200 dark:border-neutral-500 dark:hover:border-white dark:hover:bg-neutral-900 dark:active:bg-neutral-800"
+                          : "border-neutral-300 hover:border-neutral-500 hover:bg-neutral-50 active:bg-neutral-200 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:active:bg-neutral-800"
                     }`}
                   >
                     {slot.startLabel}
@@ -1205,7 +1208,7 @@ export function QuickBookDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+            className={buttonClasses({ variant: "secondary" })}
           >
             Cancel
           </button>
@@ -1213,7 +1216,7 @@ export function QuickBookDrawer({
             type="button"
             onClick={handleSubmit}
             disabled={!canBook}
-            className="rounded-md bg-neutral-900 px-5 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            className={buttonClasses({ variant: "primary" })}
           >
             {booking ? "Booking…" : "Book appointment"}
           </button>
