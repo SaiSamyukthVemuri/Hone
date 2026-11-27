@@ -11,7 +11,7 @@
 -- executable by anon or authenticated. Every application reader and writer already uses the service-role client (tests/security/ops-alert-operator-only-guard).
 --
 -- GUARDS: a preamble refuses to run unless the table has RLS on and EXACTLY one policy, ops_alerts_member_read, SELECT only, with the 0067 qual. The
--- after-check refuses to commit unless the table has zero policies and RLS on, anon and authenticated hold no table or column privilege of any kind, and
+-- after-check refuses to commit unless the table has zero policies and RLS on, anon and authenticated hold no table or column privilege of any kind (MAINTAIN included), and
 -- service_role still holds select, insert, update and delete. A failed check rolls the whole transaction back, so there is no half state.
 --
 -- CAPTURED BEFORE (hosted, read-only, 2026-11-27): relacl {postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}.
@@ -60,7 +60,7 @@ begin
     raise exception '0397 refuses to commit: row-level security is not on';
   end if;
   foreach v_role in array array['anon', 'authenticated'] loop
-    foreach v_priv in array array['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger'] loop
+    foreach v_priv in array array['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger', 'maintain'] loop
       if pg_catalog.has_table_privilege(v_role, 'public.ops_alerts', v_priv) then
         raise exception '0397 refuses to commit: % still holds % on ops_alerts', v_role, v_priv;
       end if;

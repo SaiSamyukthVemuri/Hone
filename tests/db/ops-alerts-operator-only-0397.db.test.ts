@@ -111,6 +111,15 @@ describe("0397: ops_alerts is operator-only", () => {
     }
   });
 
+  it("MAINTAIN, TRUNCATE, REFERENCES and TRIGGER are gone for anon and authenticated too, and kept for service_role", async () => {
+    for (const role of ["anon", "authenticated"]) {
+      for (const v of ["truncate", "references", "trigger", "maintain"]) {
+        expect((await adminQuery(`select has_table_privilege($1, 'public.ops_alerts', $2) as ok`, [role, v])).rows[0].ok, `${role} ${v}`).toBe(false);
+      }
+    }
+    expect((await adminQuery(`select has_table_privilege('service_role', 'public.ops_alerts', 'maintain') as ok`)).rows[0].ok).toBe(true);
+  });
+
   it("the four SECURITY DEFINER functions are unchanged by it: definer, owned by postgres, pinned search_path, not executable by anon or authenticated", async () => {
     const r = await adminQuery(
       `select p.proname, p.prosecdef, pg_get_userbyid(p.proowner) as owner, p.proconfig::text as cfg,

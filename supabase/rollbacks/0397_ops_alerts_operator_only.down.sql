@@ -47,7 +47,7 @@ begin
     raise exception '0397 down refuses to commit: the 0067 policy was not restored exactly';
   end if;
   foreach v_role in array array['anon', 'authenticated', 'service_role'] loop
-    foreach v_priv in array array['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger'] loop
+    foreach v_priv in array array['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger', 'maintain'] loop
       if not pg_catalog.has_table_privilege(v_role, 'public.ops_alerts', v_priv) then
         raise exception '0397 down refuses to commit: % lacks % on ops_alerts', v_role, v_priv;
       end if;

@@ -41,7 +41,7 @@ describe("0397 up", () => {
   it("cannot commit a half state: after-checks on policies, RLS, anon/authenticated table and column privileges, and service_role", () => {
     const after = U.slice(U.indexOf("$after$"));
     for (const needle of ["still has a policy", "row-level security is not on", "still holds %", "column-level", "service_role lost"]) expect(after).toContain(needle);
-    for (const v of ["'select'", "'insert'", "'update'", "'delete'"]) expect(after).toContain(v);
+    for (const v of ["'select'", "'insert'", "'update'", "'delete'", "'truncate'", "'references'", "'trigger'", "'maintain'"]) expect(after).toContain(v);
   });
   it("touches no function: the four definer functions are not redefined", () => {
     expect(U).not.toMatch(/create (or replace )?function/i);
