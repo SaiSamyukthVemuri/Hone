@@ -205,7 +205,9 @@ export type CardEvent =
   | { type: "result"; outcome: "succeeded" | "failed" | "unknown"; text?: string }
   | { type: "lost_response" }
   | { type: "status"; outcome: "succeeded" | "failed" | "unknown"; text?: string }
-  | { type: "restore"; attemptId: string };
+  | { type: "restore"; attemptId: string }
+  /** The ledger (re-read, or changed on another device) now says this attempt is no longer pending at Stripe. */
+  | { type: "ledger_settled"; attemptId: string; status: "succeeded" | "failed" };
 
 export function cardReduce(s: CardPhase, e: CardEvent): CardPhase {
   switch (e.type) {
@@ -213,7 +215,15 @@ export function cardReduce(s: CardPhase, e: CardEvent): CardPhase {
     case "prepared": return s.phase === "preparing" ? { phase: "charging", attemptId: e.attemptId } : s;
     case "prepare_refused": return s.phase === "preparing" ? { phase: "failed", attemptId: null, message: e.text } : s;
     // A page that loads while a card payment is still unresolved (pending_stripe) starts in the checking state: no charge control, a recheck instead.
-    case "restore": return s.phase === "idle" ? { phase: "unknown", attemptId: e.attemptId } : s;
+    // Also from a finished phase when the unresolved attempt is a DIFFERENT one (a second device started it): the checking state wins, no charge control.
+    case "restore":
+      if (s.phase === "idle") return { phase: "unknown", attemptId: e.attemptId };
+      if ((s.phase === "succeeded" || s.phase === "failed") && s.attemptId !== e.attemptId) return { phase: "unknown", attemptId: e.attemptId };
+      return s;
+    // Checking ends when the ledger itself proves the outcome for the attempt being checked; any other attempt's news is ignored.
+    case "ledger_settled":
+      if (s.phase !== "unknown" || s.attemptId !== e.attemptId) return s;
+      return e.status === "succeeded" ? { phase: "succeeded", attemptId: e.attemptId } : { phase: "failed", attemptId: e.attemptId, message: "The card was not charged." };
     case "lost_response": return s.phase === "charging" ? { phase: "unknown", attemptId: s.attemptId } : s;
     case "result": case "status": {
       if (s.phase !== "charging" && s.phase !== "unknown") return s;
@@ -222,6 +232,37 @@ export function cardReduce(s: CardPhase, e: CardEvent): CardPhase {
       return { phase: "unknown", attemptId: s.attemptId };
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Submission ids: ONE id per distinct intent (its fingerprint), kept across a lost answer so a retry of the SAME intent is the same command, and never shared
+// with a different intent (a different payment, amount, kind or reason is a different command and must not replay the first).
+// ---------------------------------------------------------------------------
+export type Submissions = Readonly<Record<string, string>>;
+export const chargeFingerprint = (a: { tender: string; cents: number | null; currency: string }) => `charge|${a.tender}|${a.cents ?? "x"}|${a.currency}`;
+export const refundFingerprint = (a: { paymentId: string; cents: number | null; kind: string; reason: string }) => `refund|${a.paymentId}|${a.cents ?? "x"}|${a.kind}|${a.reason.trim()}`;
+/** The id for this intent: the one already held, or the freshly minted one (returned with the next map). */
+export function submissionFor(subs: Submissions, fingerprint: string, mint: () => string): { id: string; next: Submissions } {
+  const held = subs[fingerprint];
+  if (held) return { id: held, next: subs };
+  const id = mint();
+  return { id, next: { ...subs, [fingerprint]: id } };
+}
+/** A definite answer ends this intent: the next time it is asked it is a new command. */
+export function settleSubmission(subs: Submissions, fingerprint: string): Submissions {
+  if (!(fingerprint in subs)) return subs;
+  const next = { ...subs }; delete next[fingerprint];
+  return next;
+}
+
+/** The payment chosen for a refund, kept while it is still refundable, else the first refundable one (never a stale id, "" when none). */
+export function reconcileRefundSelection(selected: string, options: ReadonlyArray<{ id: string; cents: number }>): string {
+  if (options.some((o) => o.id === selected && o.cents > 0)) return selected;
+  return options.find((o) => o.cents > 0)?.id ?? "";
+}
+/** Whether a typed refund can be sent for the selected payment: a positive amount within what that payment still has, with a reason. */
+export function refundSendable(selected: { cents: number } | undefined, cents: number | null, reason: string): boolean {
+  return !!selected && cents !== null && cents > 0 && cents <= selected.cents && reason.trim() !== "";
 }
 
 /** The one rule the screen follows: a new charge may be started only from idle or after a DEFINITE result (a payment that succeeded or failed). Never while preparing, charging or unknown. */

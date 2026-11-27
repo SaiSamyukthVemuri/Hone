@@ -4,7 +4,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
   canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
-  STATUS_LABEL, unresolvedCardAttempt, type CardPhase, type ExternalMethod, type VisitCurrency,
+  STATUS_LABEL, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
   confirmTransferAction, sendSplitCardReceiptAction, prepareSplitCardPaymentAction, refundCardPaymentAction, recordExternalPaymentAction, refundExternalPaymentAction, runSplitCardPaymentAction,
@@ -47,19 +47,24 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState<{ tone: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [submission, setSubmission] = useState(() => crypto.randomUUID());
+  // One submission id per distinct intent (see submissionFor): a retry of the same command reuses it, a different command never does.
+  const subsRef = useRef<Submissions>({});
+  const subFor = (fp: string) => { const r = submissionFor(subsRef.current, fp, () => crypto.randomUUID()); subsRef.current = r.next; return r.id; };
+  const settleSub = (fp: string) => { subsRef.current = settleSubmission(subsRef.current, fp); };
   const [phase, dispatch] = useReducer(cardReduce, { phase: "idle" } as CardPhase);
   const pollRef = useRef(0);
+  const amountRef = useRef("");
   const fmt = (c: number) => formatMoney(c, currency);
   const collectable = balance?.collectableCents ?? 0;
+  amountRef.current = amount;
 
   useEffect(() => { setAmount((a) => (a === "" && collectable > 0 ? (collectable / 100).toFixed(2) : a)); }, [collectable]);
 
-  const apply = useCallback((r: SplitActionResult) => {
+  const apply = useCallback((r: SplitActionResult, fp?: string) => {
     setNote(r.note);
     if (r.state) onChanged(r.state);
-    // A definite answer ends this submission; the next one gets a fresh id. A refusal keeps what was typed.
-    if (r.ok) { setSubmission(crypto.randomUUID()); setAmount(""); }
+    // A definite answer ends this intent (the next ask is a new command). A refusal or a lost answer keeps the id and what was typed.
+    if (r.ok) { if (fp) settleSub(fp); setAmount(""); }
   }, [onChanged]);
 
   const form = (extra: Record<string, string>) => {
@@ -78,8 +83,8 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         const out = await runSplitCardPaymentAction(form({ attempt_id: attemptId }));
         if (mine !== pollRef.current) return;
         if (out.state) onChanged(out.state);
-        if (out.outcome === "succeeded") { dispatch({ type: "result", outcome: "succeeded" }); setNote({ tone: "ok", message: "Card payment received." }); setSubmission(crypto.randomUUID()); setAmount(""); return; }
-        if (out.outcome === "failed") { dispatch({ type: "result", outcome: "failed", text: out.message }); setNote({ tone: "blocked", message: out.message }); setSubmission(crypto.randomUUID()); return; }
+        if (out.outcome === "succeeded") { dispatch({ type: "result", outcome: "succeeded" }); setNote({ tone: "ok", message: "Card payment received." }); settleSub(chargeFingerprint({ tender: "card", cents: parseDollarsToCents(amountRef.current), currency })); setAmount(""); return; }
+        if (out.outcome === "failed") { dispatch({ type: "result", outcome: "failed", text: out.message }); setNote({ tone: "blocked", message: out.message }); settleSub(chargeFingerprint({ tender: "card", cents: parseDollarsToCents(amountRef.current), currency })); return; }
         dispatch({ type: "result", outcome: "unknown" });
       } catch {
         // The connection dropped: we do NOT know whether Stripe took the charge. Never offer a second charge; ask again.
@@ -93,24 +98,34 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   }, [appointmentId, onChanged]);
 
   // A reload (or a second device) while a card payment is unresolved: show "Checking payment status" and check it, offering NO charge control.
-  // Runs once per mount; the attempt id is the idempotency key, so checking is safe.
-  const restoredRef = useRef(false);
+  // Evaluated on every ledger change, not once per mount: an attempt another device starts later is restored too, and checking ends when the ledger proves the outcome.
+  // The attempt id is the idempotency key, so checking is safe; one check loop per attempt.
+  const checkingRef = useRef<string | null>(null);
+  const pendingId = unresolvedCardAttempt(ledger);
   useEffect(() => {
-    if (restoredRef.current) return;
-    const id = unresolvedCardAttempt(ledger);
-    if (!id) return;
-    restoredRef.current = true;
-    dispatch({ type: "restore", attemptId: id });
-    void runCard(id);
+    if (pendingId) {
+      if (checkingRef.current === pendingId) return;
+      checkingRef.current = pendingId;
+      dispatch({ type: "restore", attemptId: pendingId });
+      void runCard(pendingId);
+      return;
+    }
+    // Nothing pending any more: if we were checking an attempt, the ledger now says how it ended.
+    const was = checkingRef.current;
+    if (was) {
+      checkingRef.current = null;
+      const c = ledger.cards.find((x) => x.id === was);
+      if (c && (c.status === "succeeded" || c.status === "failed" || c.status === "cancelled")) dispatch({ type: "ledger_settled", attemptId: was, status: c.status === "succeeded" ? "succeeded" : "failed" });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pendingId]);
 
   async function chargeCard() {
     if (!canStartCharge(phase)) return;
     dispatch({ type: "submit" });
     setBusy(true);
     try {
-      const prep = await prepareSplitCardPaymentAction(form({ amount_dollars: amount, submission_id: submission, expected_currency: currency }));
+      const prep = await prepareSplitCardPaymentAction(form({ amount_dollars: amount, submission_id: subFor(chargeFingerprint({ tender: "card", cents, currency })), expected_currency: currency }));
       if (!prep.ok) {
         dispatch({ type: "prepare_refused", text: prep.note.message });
         setNote(prep.note);
@@ -131,7 +146,8 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   async function recordExternal() {
     setBusy(true);
     try {
-      apply(await recordExternalPaymentAction(form({ method: tender, amount_dollars: amount, submission_id: submission })));
+      const fp = chargeFingerprint({ tender, cents, currency });
+      apply(await recordExternalPaymentAction(form({ method: tender, amount_dollars: amount, submission_id: subFor(fp) })), fp);
     } catch {
       setNote({ tone: "blocked", message: "That did not go through. Reload the page and check before trying again." });
     } finally {
@@ -273,14 +289,16 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
         <RefundForm received={refundable} fmt={fmt} busy={busy}
           onSubmit={async (v) => {
             setBusy(true);
+            // One id per distinct refund (payment, amount, kind, reason): a lost answer keeps it, so asking again re-reads the one refund; a different refund never replays it.
+            const fp = refundFingerprint({ paymentId: v.paymentId, cents: parseDollarsToCents(v.amount), kind: v.kind, reason: v.reason });
+            const sid = subFor(fp);
             try {
               if (v.card) {
-                const r = await refundCardPaymentAction(form({ attempt_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: submission }));
-                apply(r);
-                // Lost answer: keep the SAME submission so checking again re-reads the one refund, never makes another.
-                if (r.checking) { setSubmission(submission); setNote({ tone: "info", message: "Checking refund status" }); }
+                const r = await refundCardPaymentAction(form({ attempt_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: sid }));
+                apply(r, fp);
+                if (r.checking) setNote({ tone: "info", message: "Checking refund status" });
               } else {
-                apply(await refundExternalPaymentAction(form({ payment_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: submission })));
+                apply(await refundExternalPaymentAction(form({ payment_id: v.paymentId, amount_dollars: v.amount, kind: v.kind, reason: v.reason, submission_id: sid })), fp);
               }
             } catch {
               setNote({ tone: "blocked", message: "Checking refund status. Do not refund again yet; reload and check this payment's history." });
@@ -321,7 +339,10 @@ function RefundForm(props: {
   onSubmit: (v: { paymentId: string; amount: string; kind: "price_reduction" | "payment_reversal"; reason: string; card: boolean }) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
-  const [paymentId, setPaymentId] = useState(props.received[0]?.id ?? "");
+  const [picked, setPicked] = useState(props.received[0]?.id ?? "");
+  // The choice follows the ledger: a payment that is no longer refundable (refunded elsewhere, a review opened) never stays selected under a stale id.
+  const paymentId = reconcileRefundSelection(picked, props.received);
+  const selected = props.received.find((r) => r.id === paymentId);
   const [amount, setAmount] = useState("");
   const [kind, setKind] = useState<"price_reduction" | "payment_reversal">("payment_reversal");
   const [reason, setReason] = useState("");
@@ -333,7 +354,7 @@ function RefundForm(props: {
       {open && (
         <div className="mt-3 flex flex-col gap-3" data-testid="split-refund-form">
           <label className="text-sm font-medium">Payment to refund
-            <select className={input} value={paymentId} onChange={(e) => setPaymentId(e.target.value)}>
+            <select className={input} value={paymentId} onChange={(e) => setPicked(e.target.value)}>
               {props.received.map((r) => <option key={r.key} value={r.id}>{r.label}, up to {props.fmt(r.cents)} refundable</option>)}
             </select>
           </label>
@@ -351,8 +372,8 @@ function RefundForm(props: {
             <input className={input} value={reason} maxLength={500} aria-describedby="split-refund-reason-help" onChange={(e) => setReason(e.target.value)} />
             <span id="split-refund-reason-help" className="mt-1 block text-xs font-normal text-neutral-600 dark:text-neutral-400">{REASON_HELP}</span>
           </label>
-          <button type="button" className={primary} disabled={props.busy || cents === null || reason.trim() === ""}
-            onClick={() => void props.onSubmit({ paymentId, amount, kind, reason: reason.trim(), card: props.received.find((r) => r.id === paymentId)?.card ?? false }).then(() => { setAmount(""); setReason(""); })}>
+          <button type="button" className={primary} disabled={props.busy || !refundSendable(selected, cents, reason)}
+            onClick={() => void props.onSubmit({ paymentId, amount, kind, reason: reason.trim(), card: selected?.card ?? false }).then(() => { setAmount(""); setReason(""); })}>
             {cents ? `Record ${props.fmt(cents)} ${kind === "price_reduction" ? "price reduction" : "refund"}` : "Record refund"}
           </button>
         </div>
