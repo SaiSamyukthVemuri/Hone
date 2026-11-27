@@ -45,7 +45,25 @@ async function focusRing(page: Page, row: Locator, label: string) {
   expect(await ring(row), `${label}: keyboard focus draws a ring`).not.toBe(rest);
 }
 
-async function openPage(page: Page): Promise<void> {
+type Snapshot = Array<{ title: string; status: string; is_live: boolean; version: number; updated_at: string }>;
+const EXPECTED = [
+  { title: "E2E active form", status: "active", is_live: false, version: 1 },
+  { title: "E2E archived form", status: "archived", is_live: false, version: 1 },
+  { title: "E2E live form", status: "active", is_live: true, version: 1 },
+];
+const snapshot = (studioId: string) =>
+  sql<Snapshot[number]>(
+    "select title, status, is_live, version, updated_at::text as updated_at from public.consent_form_templates where studio_id = $1 order by title",
+    [studioId],
+  );
+/** Consent forms are legally sensitive: after the walk the three seeded forms must still be exactly what was seeded (status, live flag, version, and not even re-saved), and no form was added. */
+async function expectUntouched(studioId: string, before: Snapshot) {
+  const after = await snapshot(studioId);
+  expect(after.map(({ title, status, is_live, version }) => ({ title, status, is_live, version })), "the three forms keep their exact status, live flag and version").toEqual(EXPECTED);
+  expect(after.map((r) => r.updated_at), "no form was saved (updated_at unchanged)").toEqual(before.map((r) => r.updated_at));
+}
+
+async function openPage(page: Page): Promise<{ studioId: string; before: Snapshot }> {
   const seed = await seedE2eStudio();
   const row = (title: string, type: string, status: string, live: boolean) =>
     sql(
@@ -59,10 +77,11 @@ async function openPage(page: Page): Promise<void> {
   await loginAsOwner(page, seed);
   await page.goto("/settings/consent");
   await expect(page.getByRole("button", { name: "+ New consent form" })).toBeVisible({ timeout: T });
+  return { studioId: seed.studioId, before: await snapshot(seed.studioId) };
 }
 
 async function walk(page: Page) {
-  await openPage(page);
+  const { studioId, before } = await openPage(page);
   const rowButtons: Array<[string, Locator]> = [
     ["Edit", page.getByRole("button", { name: "Edit", exact: true }).first()],
     ["Make live in client portal", page.getByRole("button", { name: "Make live in client portal" })],
@@ -89,6 +108,7 @@ async function walk(page: Page) {
     await focusRing(page, el, label);
   }
   await expect(create, "nothing was created or closed by the presses").toBeVisible();
+  await expectUntouched(studioId, before);
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow, "no horizontal scroll").toBeLessThanOrEqual(0);
 }
@@ -107,7 +127,7 @@ test.describe("on a touch device", () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
 
   test("the consent forms' buttons are at least 44px tall where the pointer is coarse", async ({ page }) => {
-    await openPage(page);
+    const { studioId, before } = await openPage(page);
     expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), "touch emulation must be in effect").toBe(true);
     const tall = async (l: Locator, label: string) => {
       await l.scrollIntoViewIfNeeded();
@@ -120,5 +140,6 @@ test.describe("on a touch device", () => {
     await page.getByRole("button", { name: "+ New consent form" }).click();
     await tall(page.getByRole("button", { name: "Create form", exact: true }), "Create form");
     await tall(page.getByRole("button", { name: "Cancel", exact: true }), "Cancel");
+    await expectUntouched(studioId, before);
   });
 });
