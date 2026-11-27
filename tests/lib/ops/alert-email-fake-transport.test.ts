@@ -103,6 +103,32 @@ describe("critical ops alert email through the fake transport", () => {
     expect(seen[0]!.text).toContain("Record and payment details are on the alert itself");
   });
 
+  it("a list with ANY non-harness address never reaches the ledger in plaintext (only hashes)", async () => {
+    process.env.OPS_ALERT_EMAILS = "ops@harness.local, real.operator@example.com";
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { recordOpsAlert } = await import("@/lib/ops/alerts");
+    await recordOpsAlert({ severity: "critical", event: "x_event", message: "m" });
+    const rows = ledger();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].to).toHaveLength(2);
+    for (const a of rows[0].to) expect(a).toMatch(/^sha256:[0-9a-f]{12}$/);
+    const raw = readFileSync(file, "utf8");
+    expect(raw).not.toContain("real.operator");
+    expect(raw).not.toContain("example.com");
+    // not even the harness address of a MIXED list is kept: the rule is all-or-nothing
+    expect(raw).not.toContain("ops@harness.local");
+  });
+
+  it("CONTROL: a list of ONLY harness addresses is stored in plaintext (the hashing is the non-harness rule, not a broken ledger)", async () => {
+    process.env.OPS_ALERT_EMAILS = "ops@harness.local,second@harness.local";
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { recordOpsAlert } = await import("@/lib/ops/alerts");
+    await recordOpsAlert({ severity: "critical", event: "x_event", message: "m" });
+    expect(ledger()[0].to).toEqual(["ops@harness.local", "second@harness.local"]);
+  });
+
   it("CONTROL: with the fake NOT armed and no Resend key, nothing is sent (the lane flag is what routes it)", async () => {
     delete process.env.HONE_E2E_FAKE_RESEND;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

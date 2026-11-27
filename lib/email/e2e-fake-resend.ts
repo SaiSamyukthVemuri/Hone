@@ -246,6 +246,17 @@ const failedOnceRecipients = new Set<string>();
  *  this, so a fake success is never mistaken for a real provider receipt. */
 export const FAKE_MESSAGE_ID = "fake-resend-message-id";
 
+/**
+ * What the ledger stores as `to`. A single address is stored as before. A LIST (only the operator critical-alert email sends one) is stored in
+ * plaintext ONLY when EVERY element is a harness address; if any element is not, each element is replaced by a short sha256 prefix, so a lane that
+ * arms the ledger with real operator addresses in OPS_ALERT_EMAILS can never write them to disk (HON-127, Privacy).
+ */
+export function ledgerRecipients(to: string | string[]): string | string[] {
+  if (!Array.isArray(to)) return to;
+  if (to.every((a) => isHarnessRecipient(a))) return to;
+  return to.map((a) => `sha256:${sha256(String(a).trim().toLowerCase()).slice(0, 12)}`);
+}
+
 export function createFakeResendTransport(): MinimalEmailTransport {
   return {
     emails: {
@@ -269,7 +280,7 @@ export function createFakeResendTransport(): MinimalEmailTransport {
               html_sha256: sha256(String(html ?? "")),
             }
           : {};
-        recordFakeResendSend({ t: new Date().toISOString(), pid: process.pid, mode, to, subject, ...bodies });
+        recordFakeResendSend({ t: new Date().toISOString(), pid: process.pid, mode, to: ledgerRecipients(to), subject, ...bodies });
         if (mode === "hold") {
           // GENUINELY IN FLIGHT for HOLD_MS. Bounded and self-releasing: no test
           // can leave a request hanging, and nothing outside the fake changes.
