@@ -61,6 +61,7 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
       discardFailed: false,
       moving: false,
       change,
+      hold: (_fields: NoteDraftFields) => undefined,
       flush: async () => true,
       retry: () => undefined,
       keepMine: () => undefined,
@@ -80,6 +81,8 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
     discardFailed,
     moving,
     change,
+    /** Edits on a superseded target: kept in the registry saver (survive an unmount), never sent, carried by Keep as new. */
+    hold: (fields: NoteDraftFields) => saver.hold(fields),
     flush: () => saver.flush(),
     retry: () => saver.retry(),
     keepMine: () => saver.keepMine(),

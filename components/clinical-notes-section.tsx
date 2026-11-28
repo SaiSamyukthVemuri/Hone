@@ -23,7 +23,7 @@
 // This component must NOT be imported by any client-portal, public-booking,
 // email, or SMS surface. It is authenticated practitioner UI only.
 
-import { useActionState, useRef, useState } from "react";
+import { useActionState, useState } from "react";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
 import { heldText, latestDraft, seedEntry, type DraftActions } from "@/lib/note-drafts/draft-registry";
 import { NoteDraftStatus } from "@/components/note-draft-status";
@@ -528,8 +528,7 @@ function NoteForm({
   }
   const [yourVersion, setYourVersion] = useState<string | null>(null);
   // A superseded target is never autosaved, but the person can still edit the reopened text before choosing Keep as new note. Those edits are HELD
-  // here (never sent) and are what the move carries; without this the move would seed the new draft with the text as it was when the editor opened.
-  const heldEdits = useRef<NoteDraftFields | null>(null);
+  // in the registry saver (never sent; they survive this editor unmounting) and are what the move carries.
   function touch(next: { body?: string; areasText?: string; occurredAt?: string }) {
     if (!draftActions) return;
     const fields: NoteDraftFields = {
@@ -538,7 +537,7 @@ function NoteForm({
       occurred_at: next.occurredAt ?? occurredAt,
     };
     if (revised) {
-      heldEdits.current = fields;
+      draft.hold(fields);
       return;
     }
     setRestoredAt(null);
@@ -549,7 +548,6 @@ function NoteForm({
       const result = await action(formData);
       if (result.ok) {
         draft.settle(); // the save already cleared the draft in its own transaction
-        heldEdits.current = null;
         onSaved(result.note, result.author_name);
         return { status: "idle" };
       }
@@ -651,13 +649,7 @@ function NoteForm({
           onRetry={draft.retry}
           onKeepMine={draft.keepMine}
           revised={revised}
-          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => onKeepAsNewNote({
-            latest: () => heldEdits.current ?? draft.latest(),
-            moveOut: async () => {
-              const moved = await draft.moveOut();
-              return heldEdits.current ?? moved;
-            },
-          }) : draft.keepAsNew}
+          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => onKeepAsNewNote({ latest: draft.latest, moveOut: draft.moveOut }) : draft.keepAsNew}
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) applyTheirs(t);
@@ -665,7 +657,6 @@ function NoteForm({
           discardFailed={draft.discardFailed}
           onDiscard={async () => {
             if (!(await draft.discard())) return; // failed: the editor stays exactly as it was and the status says so
-            heldEdits.current = null; // the discarded edits must never be what Keep as new carries
             setRestoredAt(null);
             resetBody(mode === "revise" && revising ? revising.body : "");
             setAreasText(revising ? revising.areas.join(", ") : "");

@@ -56,6 +56,19 @@ describe("draft registry", () => {
     expect(latestDraft(key, null, SCOPE_A)).toBeNull();
   });
 
+  it("r4 (Codex P2): edits held for a superseded target survive the editor unmounting and are what a reopened editor and a move start from", async () => {
+    const send = vi.fn(async () => ok(1));
+    const first = acquireEntry(key, null, actions(send), () => undefined);
+    first.saver.hold({ body: "edited on the revised note" });
+    await first.saver.flush(); // the unmount flush
+    const again = acquireEntry(key, null, actions(send), () => undefined); // a section or client switch, then back
+    expect(again.saver).toBe(first.saver);
+    expect(latestDraft(key, stored(2, "the page's older text"), SCOPE_A)).toMatchObject({ fields: { body: "edited on the revised note" } });
+    expect(heldText(key, SCOPE_A)).toEqual({ body: "edited on the revised note" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(send).not.toHaveBeenCalled(); // never sent to the superseded target
+  });
+
   it("once an entry exists it is the ONLY answer: a settled (saved or discarded) draft is not brought back by the page's stale prop", () => {
     const entry = acquireEntry(key, stored(2, "old"), actions(async () => ok(3)), () => undefined);
     entry.saver.settle();

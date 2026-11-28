@@ -116,13 +116,15 @@ export function ClientBudgetCard({
     touch({ level: next });
   }
   function touch(next: { level?: ClientBudgetLevel | null; notes?: string }) {
-    if (!draftActions) return;
+    // While the real Save is pending the card is locked (below). An edit that still arrives (a script, an assistive tool) is not taken: it would
+    // reach the draft but not the submitted FormData, and the settle that follows a successful Save would then delete it unseen.
+    if (!draftActions || savePending) return;
     setRestoredAt(null);
     const l = next.level !== undefined ? next.level : level;
     draft.change({ budget_level: l ?? "", budget_notes: next.notes ?? budgetText });
   }
 
-  const [state, formAction] = useActionState(
+  const [state, formAction, savePending] = useActionState(
     async (
       _prev: BudgetCardActionState,
       formData: FormData,
@@ -175,6 +177,7 @@ export function ClientBudgetCard({
                 key={value}
                 type="button"
                 aria-pressed={selected}
+                disabled={savePending}
                 onClick={() => chooseLevel(selected ? null : value)}
                 // min-h-11 == 44px: the iPad/phone touch-target floor.
                 className={
@@ -192,6 +195,7 @@ export function ClientBudgetCard({
           <div>
             <button
               type="button"
+              disabled={savePending}
               onClick={() => chooseLevel(null)}
               className="text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-900 dark:hover:text-neutral-100"
             >
@@ -212,6 +216,7 @@ export function ClientBudgetCard({
           id="client-budget-notes"
           name="budget_notes"
           key={notesKey}
+          readOnly={savePending}
           defaultValue={notesInit}
           onChange={(e) => {
             setBudgetText(e.target.value);

@@ -17,14 +17,14 @@ const G2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const key = { clientId: C, kind: "budget" as const, target: "current" };
 afterEach(() => endIdentity());
 
-async function mount(draft: unknown, save: (i: unknown) => Promise<unknown>, discard: () => Promise<{ ok: boolean }> = async () => ({ ok: true })) {
+async function mount(draft: unknown, save: (i: unknown) => Promise<unknown>, discard: () => Promise<{ ok: boolean }> = async () => ({ ok: true }), action: (fd: FormData) => Promise<unknown> = async () => ({ ok: true as const })) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
   await act(async () =>
     root.render(
       createElement(ClientBudgetCard, {
-        clientId: C, initial: { budgetLevel: null, budgetNotes: "" }, action: async () => ({ ok: true as const }),
+        clientId: C, initial: { budgetLevel: null, budgetNotes: "" }, action: action as never,
         draft: draft as never, draftActions: { scope: "p:s", save: save as never, discard: discard as never, peek: async () => ({ ok: true, draft: null }) },
       }),
     ),
@@ -83,5 +83,35 @@ describe("sign-out ends the draft identity", () => {
     expect(i).toBeGreaterThan(-1);
     expect(src.slice(i, i + 900)).toContain("endIdentity()");
     expect(src).not.toMatch(/onClick=\{[^}]*endIdentity/);
+  });
+});
+
+describe("r4 (Codex P2): the card cannot be edited while its Save is pending", () => {
+  it("the notes and the level chips are locked from submit until the answer, and nothing typed then reaches the draft", async () => {
+    vi.useFakeTimers();
+    let answer!: (r: unknown) => void;
+    const action = vi.fn(() => new Promise<unknown>((r) => (answer = r)));
+    const save = vi.fn(async (_i: unknown) => ({ status: "ok", revision: 1, savedAt: "t", generation: G1 }));
+    const { host, root } = await mount(null, save, undefined, action);
+    const area = host.querySelector("textarea") as HTMLTextAreaElement;
+    const type = async (v: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(area, v);
+        area.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await type("submitted text");
+    await act(async () => { host.querySelector("form")!.requestSubmit(); });
+    expect(action).toHaveBeenCalledTimes(1);
+    expect(area.readOnly).toBe(true);
+    for (const chip of host.querySelectorAll('[role="group"] button')) expect((chip as HTMLButtonElement).disabled).toBe(true);
+    await type("edit made after submit"); // as a script or an assistive tool could
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    const sent = save.mock.calls.map((c) => JSON.stringify(c[0]));
+    expect(sent.some((x) => x.includes("edit made after submit"))).toBe(false); // the late edit was not taken into the draft
+    await act(async () => { answer({ ok: true }); });
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).readOnly).toBe(false); // unlocked after the answer
+    vi.useRealTimers();
+    await act(async () => root.unmount());
   });
 });

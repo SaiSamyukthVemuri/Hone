@@ -200,6 +200,20 @@ describe("DraftSaver", () => {
     expect(saver.unsavedWork()?.fields).toEqual({ body: "new note after an earlier save" });
   });
 
+  it("r4 (Codex P2): held edits are never sent, are the newest text, count as unsaved work, and settle() clears them", async () => {
+    const send = vi.fn(async () => ok(1));
+    const { saver } = setup(send);
+    saver.hold({ body: "edits on a superseded note" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(send).not.toHaveBeenCalled();
+    expect(saver.latestFields()).toEqual({ body: "edits on a superseded note" });
+    expect(saver.hasUnsavedWork()).toBe(true);
+    expect(saver.unsavedWork()).toBeNull(); // nothing is queued to SEND
+    saver.settle();
+    expect(saver.latestFields()).toBeNull();
+    expect(saver.hasUnsavedWork()).toBe(false);
+  });
+
   it("r4 P2a: a late OK acknowledgement from before settle() is dropped: no revision, no 'saved', no old text restored as acknowledged", async () => {
     let release!: (r: NoteDraftSaveResult) => void;
     const send = vi.fn((_f: { body?: string }, _rev: number, _g: string) => new Promise<NoteDraftSaveResult>((r) => (release = r)));

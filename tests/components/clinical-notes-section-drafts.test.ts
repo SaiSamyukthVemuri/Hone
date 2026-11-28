@@ -115,6 +115,26 @@ describe("Keep as new note never overwrites an occupied destination", () => {
     await act(async () => root.unmount());
   });
 
+  it("r4 (Codex P2): edits typed into the revised editor survive switching away (unmount) and back, and Keep as new still carries them", async () => {
+    vi.useFakeTimers();
+    const first = await mount({ notes, drafts: [mine], peek: async () => ({ ok: true, draft: null }) });
+    const ta = first.host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      set.call(ta, "EDITED before switching section");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => first.root.unmount()); // a section or client switch
+    const { host, root, save } = await mount({ notes, drafts: [mine], peek: async () => ({ ok: true, draft: null }) });
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("EDITED before switching section");
+    await click(button(host, "Keep as new draft"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    const bodies = save.mock.calls.map((c) => c[0] as { key: { target: string }; fields: { body?: string } }).filter((c) => c.key.target === "new").map((c) => c.fields.body);
+    expect(bodies).toContain("EDITED before switching section");
+    vi.useRealTimers();
+    await act(async () => root.unmount());
+  });
+
   it("r4 (Codex P2): after a SUCCESSFUL Discard of a superseded-target draft, Keep as new does not carry the discarded edits", async () => {
     vi.useFakeTimers();
     const { host, root, save } = await mount({ notes, drafts: [mine], peek: async () => ({ ok: true, draft: null }) });

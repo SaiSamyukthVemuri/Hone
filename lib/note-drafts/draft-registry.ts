@@ -115,6 +115,8 @@ export function latestDraft(key: NoteDraftKey, fromServer: StoredNoteDraft | nul
   const server = fromServer ? { fields: fromServer.fields, revision: fromServer.revision, savedAt: fromServer.savedAt as string | null, unsaved: false } : null;
   const entry = peekEntry(key, scope);
   if (!entry) return server;
+  const held = entry.saver.heldFields(); // edits on a superseded target: the newest text, never sent
+  if (held) return { fields: held, revision: entry.saver.currentRevision(), savedAt: null, unsaved: true };
   const unsaved = entry.saver.unsavedWork();
   if (unsaved) return { fields: unsaved.fields, revision: unsaved.revision, savedAt: null, unsaved: true };
   const latest = entry.saver.latestFields();

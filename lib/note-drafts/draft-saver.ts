@@ -43,6 +43,11 @@ export class DraftSaver {
   private pending: NoteDraftFields | null = null;
   /** The fields of the request currently in flight (so a timed-out unmount can still hold them). */
   private inFlightFields: NoteDraftFields | null = null;
+  /**
+   * Text edited on a key that can no longer be saved (a note that already has its revision): HELD here, never sent, so it survives the editor
+   * unmounting (a section or client switch) and is what Keep as new carries. Cleared by settle() (Save or Discard).
+   */
+  private held: NoteDraftFields | null = null;
   /** Quiesced for a discard: nothing new is sent until resume() or settle(). */
   private paused = false;
   private inFlight = false;
@@ -136,9 +141,20 @@ export class DraftSaver {
     return fields ? { fields, revision: this.revision } : null;
   }
 
-  /** The newest text this saver knows of (acknowledged or not). */
+  /** The newest text this saver knows of (acknowledged or not; held edits are the newest of all). */
   latestFields(): NoteDraftFields | null {
-    return this.pending ?? this.inFlightFields ?? this.lastAcked;
+    return this.held ?? this.pending ?? this.inFlightFields ?? this.lastAcked;
+  }
+
+  /** Keep edits that must NOT be sent (see `held`). */
+  hold(fields: NoteDraftFields) {
+    if (this.disposed) return;
+    this.held = fields;
+  }
+
+  /** The held edits, or null. */
+  heldFields(): NoteDraftFields | null {
+    return this.held;
   }
 
   /** Stop sending and wait for an in-flight request to finish, keeping the queued text. Pair with resume() or settle(). */
@@ -293,6 +309,7 @@ export class DraftSaver {
     this.lastAcked = null;
     // The text of a request still in flight is what the real Save just recorded (or what the person discarded): hide it from unsavedWork() and
     // latestFields() NOW, or reopening the form before the reply arrives would restore already-saved text. The reply itself is dropped by run().
+    this.held = null;
     this.inFlightFields = null;
     this.clear();
     // The next typing is a NEW draft lifecycle: a new generation and expected revision 0 (the server begins it on the tombstone).
@@ -303,7 +320,7 @@ export class DraftSaver {
   }
 
   hasUnsavedWork(): boolean {
-    return this.pending != null || this.inFlight || this.state.phase === "error" || this.state.phase === "conflict" || this.state.phase === "cleared";
+    return this.held != null || this.pending != null || this.inFlight || this.state.phase === "error" || this.state.phase === "conflict" || this.state.phase === "cleared";
   }
 
   dispose() {
