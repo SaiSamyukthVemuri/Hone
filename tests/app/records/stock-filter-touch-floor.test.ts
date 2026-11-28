@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 // pointer, never by width, so a portrait iPad keeps the full target.
 const src = readFileSync("app/(app)/records/page.tsx", "utf8");
 const body = /function StockFilters[\s\S]*?\n}\n/.exec(src)?.[0] ?? "";
-const linkClass = /<PendingLink[\s\S]*?className=\{`([^`]*)`\}/.exec(body)?.[1] ?? "";
+// The class list is the first (always-on) string of the link's cx(...) call: the sizing, not the per-state feedback that follows it.
+const linkClass = /<PendingLink[\s\S]*?className=\{cx\(\s*"([^"]*)"/.exec(body)?.[1] ?? "";
 const classesOf = (c: string) => c.replace(/\$\{[^}]*\}/g, " ").split(/\s+/).filter(Boolean);
 const classes = classesOf(linkClass);
 // The sterile row's "Trace usage" link is the same family: a thumb press inside a logbook row.
