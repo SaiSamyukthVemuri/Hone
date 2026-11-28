@@ -534,3 +534,31 @@ describe("globals.css backs the primitives", () => {
     expect(tokenBlock).not.toMatch(/--color-practitioner|--color-service-/);
   });
 });
+
+describe("Button: a disabled or pending button does not react to a hover or a press", () => {
+  // CONTROL_DISABLED only dims the control, so each variant's hover and active fills would still paint on it. Each fill utility must have a `disabled:` twin that
+  // restores the RESTING value; the test derives the pairs from the rendered class list rather than naming them, so a new variant or a new fill is checked too.
+  const fillUtilities = (cls: string, state: "hover" | "active") =>
+    cls.split(/\s+/).filter((c) => c.startsWith(`${state}:`) && /^(hover|active):(bg|text)-/.test(c)).map((c) => c.slice(state.length + 1));
+
+  for (const variant of VARIANTS) {
+    for (const state of ["hover", "active"] as const) {
+      it(`variant=${variant}: every ${state} fill has a disabled:${state} restore`, () => {
+        const cls = classAttr(renderToStaticMarkup(createElement(Button, { variant, disabled: true }, "Label")));
+        const utilities = fillUtilities(cls, state);
+        expect(utilities.length, "the variant has a fill to restore, so the loop below is not vacuous").toBeGreaterThan(0);
+        const tokens = new Set(cls.split(/\s+/));
+        for (const u of utilities) {
+          const restores = [...tokens].filter((t) => t.startsWith(`disabled:${state}:${u.split("-")[0]}-`));
+          expect(restores.length, `${state}:${u} is cancelled for a disabled button`).toBeGreaterThan(0);
+        }
+      });
+    }
+  }
+
+  it("a pending button takes the same restore, because pending disables it", () => {
+    const html = renderToStaticMarkup(createElement(Button, { pending: true }, "Label"));
+    expect(isDisabled(html)).toBe(true);
+    expect(classAttr(html)).toContain("disabled:hover:bg-surface");
+  });
+});

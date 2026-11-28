@@ -36,10 +36,10 @@ describe("RecipientChooser", () => {
   });
   it("Previous is disabled on the first page and Next on the last, and an empty list says so", () => {
     const first = render(200);
-    expect(first).toMatch(/<button[^>]*disabled[^>]*>Previous/);
-    expect(first).not.toMatch(/<button[^>]*disabled[^>]*>Next/);
+    expect(first).toMatch(/<button[^>]*\sdisabled=""[^>]*>Previous/);
+    expect(first).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Next/);
     const one = render(10);
-    expect(one).toMatch(/<button[^>]*disabled[^>]*>Next/);
+    expect(one).toMatch(/<button[^>]*\sdisabled=""[^>]*>Next/);
     expect(render(0)).toContain("No one matches that search.");
   });
   it("a small list needs no cap and renders everyone", () => {
