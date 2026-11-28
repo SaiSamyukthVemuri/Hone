@@ -46,18 +46,35 @@ async function threeStates(page: Page, row: Locator, label: string) {
   await page.mouse.move(1, 1);
 }
 
-/** The first OPAQUE colour in a CSS value: a computed box-shadow lists Tailwind's empty (transparent) layers first. */
-const rgb = (s: string): [number, number, number] => {
-  for (const m of s.matchAll(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/g)) {
-    if (m[4] === undefined || Number(m[4]) > 0) return [Number(m[1]), Number(m[2]), Number(m[3])];
+type Rgb = [number, number, number];
+
+/** Computed colours are not always rgb(): Tailwind v4 colours (bg-neutral-900) compute as oklch(). The browser itself converts any CSS colour to sRGB when it is painted on a canvas pixel. */
+async function toSrgb(page: Page, css: string): Promise<[number, number, number, number]> {
+  return page.evaluate((c) => {
+    const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+    ctx.canvas.width = ctx.canvas.height = 1;
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = c;
+    ctx.fillRect(0, 0, 1, 1);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2], d[3]] as [number, number, number, number];
+  }, css);
+}
+
+/** The first non-transparent colour in a computed box-shadow (Tailwind's empty layers come first), as sRGB. */
+async function firstVisibleColour(page: Page, value: string): Promise<Rgb> {
+  for (const m of value.matchAll(/(?:rgba?|oklch|oklab|lab|lch|hsla?|hwb|color)\([^)]*\)/g)) {
+    const [r, g, b, a] = await toSrgb(page, m[0]);
+    if (a > 0) return [r, g, b];
   }
   return [NaN, NaN, NaN];
-};
-const luminance = ([r, g, b]: [number, number, number]) => {
+}
+
+const luminance = ([r, g, b]: Rgb) => {
   const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
   return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
 };
-const contrast = (a: [number, number, number], b: [number, number, number]) => {
+const contrast = (a: Rgb, b: Rgb) => {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 };
@@ -80,8 +97,8 @@ async function focusRing(page: Page, row: Locator, label: string) {
   await expect(row, `${label}: reached by keyboard`).toBeFocused();
   const drawn = await ring(row);
   expect(drawn, `${label}: keyboard focus draws a ring`).not.toBe(rest);
-  const ringColour = rgb(drawn); // the ring layer of the box-shadow
-  const bar = rgb(await barColour(row));
+  const ringColour = await firstVisibleColour(page, drawn); // the ring layer of the box-shadow
+  const bar = await firstVisibleColour(page, await barColour(row));
   expect(ringColour.every(Number.isFinite) && bar.every(Number.isFinite), `${label}: the ring and bar colours parse (${drawn})`).toBe(true);
   expect(ringColour, `${label}: the ring colour differs from the bar`).not.toEqual(bar);
   expect(contrast(ringColour, bar), `${label}: the ring contrasts with the bar (>= 3:1)`).toBeGreaterThanOrEqual(3);
