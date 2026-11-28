@@ -166,8 +166,12 @@ test.describe("UI-01G: Cluster B on a touch device", () => {
     const { seed, clientId } = await freshProfile();
     await loginAsOwner(page, seed);
     const controls = await timelineControls(page, clientId);
-    const target = controls.first();
-    const href = await target.getAttribute("href");
+    const href = await controls.first().getAttribute("href");
+    // Pin the control by its destination, resolved ONCE. `controls` finds links by their exact text, and a PendingLink gains a screen-reader
+    // "Opening…" status inside the anchor the moment it is pressed, so its text stops matching and `controls.first()` would silently
+    // resolve to the NEXT link (a different destination) for the second activation. That is a locator artefact, not a swallowed tap: the
+    // second press must land on the SAME control.
+    const target = page.locator(`a:visible[href="${href}"]`).first();
     await target.click({ noWaitAfter: true });
     await target.click({ noWaitAfter: true, force: true }).catch(() => undefined);
     await page.waitForURL(`**${href}`, { timeout: 20_000 });

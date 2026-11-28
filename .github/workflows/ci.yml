@@ -481,6 +481,27 @@ jobs:
   # path (install + two files). Trade: a heavy-lane failure that coexists with a
   # record failure now surfaces one push later. In 28% of the completed runs that
   # failed unit tests, a required heavy lane had also failed.
+  #
+  # CI-COST-03. The heavy lanes also wait for validate. Pre-flight stops the two
+  # record suites; it cannot stop a type, lint, build or unit failure, and the
+  # heavy lanes of such a run still ran to the end. Each heavy lane now needs
+  # validate and starts only when it passed:
+  #
+  #   !cancelled() && changes passed && records-preflight passed
+  #     && (not a pull_request || validate passed) && <draft gate> && ( <lane condition> )
+  #
+  # A job whose `if:` names a status function loses the implicit success(), so
+  # the two earlier gates are written out: a failed or skipped pre-flight still
+  # skips every heavy lane, exactly as before. On a production push the lanes wait
+  # for validate to finish and then run WHATEVER its result, for the reason given
+  # above: a stale record or a red unit lane there must not cost the merge commit
+  # its browser and DB proof. A skipped heavy lane that its diff needs fails
+  # closed as before (the aggregator, ENG-LOOP's REQUIRED_JOB_TABLE), and validate
+  # itself is red on that head.
+  #
+  # Cost: the heavy lanes of a PR run start after validate (p50 9 min, p90 11 min
+  # in a 387-run sample, 27 Oct-26 Nov) instead of beside it. No job is added.
+  # tests/ci/records-preflight.test.ts pins the expression and its truth table.
   records-preflight:
     name: records pre-flight (ledger + receipt)
     needs: changes
@@ -602,8 +623,8 @@ jobs:
 
   db-integration:
     name: db integration (local supabase)
-    needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
+    needs: [changes, records-preflight, validate]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.database == 'true' || needs.changes.outputs.security == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -912,8 +933,8 @@ jobs:
     # Dynamic name: branch protection must NOT depend on it. The stable
     # required check is the `browser-e2e` aggregator at the end of this file.
     name: browser shard ${{ matrix.shard }} (${{ needs.changes.outputs.browser_extended == 'true' && 'extended' || 'targeted' }})
-    needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
+    needs: [changes, records-preflight, validate]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.browser_run == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -1584,8 +1605,8 @@ jobs:
   # port collision with browser-e2e, and a flake here never blocks the fast lane.
   payment-browser-e2e:
     name: payment browser e2e (fake stripe)
-    needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
+    needs: [changes, records-preflight, validate]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.payment == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -1866,8 +1887,8 @@ jobs:
   # Separate job (own runner) → no port collision with the other browser lanes.
   mobile-completion-e2e:
     name: mobile completion e2e (chromium iphone-profile)
-    needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
+    needs: [changes, records-preflight, validate]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.mobile == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2128,8 +2149,8 @@ jobs:
   # Separate job (own runner) → no port collision with the other browser lanes.
   google-browser-e2e:
     name: google browser e2e (fake google)
-    needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
+    needs: [changes, records-preflight, validate]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.google_calendar == 'true' || needs.changes.outputs.full_matrix_required == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2413,10 +2434,20 @@ jobs:
   # It also runs on ANY database change: CI's db lane starts Supabase without
   # storage-api, so this is the only PR-time check of storage buckets and their
   # policies. full_matrix_required and the spec terms are unchanged.
+  #
+  # CI-COST-04. The extended term no longer starts this job, or webkit-hon-62, on
+  # a pull request. Extended is the classifier's fail-safe for unattributed
+  # application code, so it held on most PR runs and these two non-required
+  # lanes ran beside the shards on nearly every push to a PR: about 16% of PR
+  # runner-minutes in a 103-run sample, 19-26 Nov. On a pull request they now
+  # run only for their own reasons, all unchanged: the named specs, a database
+  # change (this job), a payment change (webkit), and the full matrix. The
+  # blanket extended run is kept on the production push, so every merge commit
+  # still gets both lanes; that is where "any application change" is now checked.
   storage-photos:
     name: storage photos (not required)
-    needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts') ) }}
+    needs: [changes, records-preflight, validate]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts') ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2665,9 +2696,11 @@ jobs:
   # job rather than a step in the targeted shards, so the required lane's
   # projects, sharding, budget and aggregator are untouched.
   #
-  # Runs when the HON-62 spec is selected, and on every extended or full-matrix
-  # run - extended meaning the browser shards actually run (browser_run), not
-  # the empty-selection flag a no-browser diff also carries (see storage-photos).
+  # Runs when the HON-62 spec is selected, on a payment change, and on every
+  # full-matrix run. It also runs on every extended production push - extended
+  # meaning the browser shards actually run (browser_run), not the
+  # empty-selection flag a no-browser diff also carries. On a pull request the
+  # extended term alone does not start it (CI-COST-04, see storage-photos).
   # The project exists only under HONE_E2E_WEBKIT=1 (playwright.config.ts),
   # so no other lane can pick it up.
   #
@@ -2682,8 +2715,8 @@ jobs:
   #   (CLAUDE.md section 4).
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
-    needs: [changes, records-preflight]
-    if: ${{ github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
+    needs: [changes, records-preflight, validate]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:

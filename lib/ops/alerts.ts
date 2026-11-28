@@ -1,6 +1,7 @@
 import "server-only";
 import { safeLog } from "@/lib/logging/safe-log";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { routeOperatorOnly } from "@/lib/ops/operator-only";
 import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
 import {
   redactOpsAlertMessage,
@@ -168,18 +169,22 @@ export async function recordOpsAlertDurably(
   // Durable row insert. Service-role admin client only.
   try {
     const admin = createAdminClient();
+    // HON-125: the ROW is member-readable when studio_id is set (ops_alerts_member_read, 0067), so an alert carrying money,
+    // a Stripe/attempt id or a client id is written operator-only (studio_id and client_id NULL, both ids kept in safe_details).
+    // The structured log above and the critical email keep the original ids: neither is a member surface.
+    const routed = routeOperatorOnly({ ...input, safeDetails: redacted });
     const insert = admin.from("ops_alerts").insert({
       severity: input.severity,
       event: input.event,
       message,
-      studio_id: input.studioId ?? null,
+      studio_id: routed.studioId,
       appointment_id: input.appointmentId ?? null,
-      client_id: input.clientId ?? null,
+      client_id: routed.clientId,
       stripe_event_id: input.stripeEventId ?? null,
       stripe_payment_intent_id: input.stripePaymentIntentId ?? null,
       manual_fee_attempt_id: input.manualFeeAttemptId ?? null,
       route: input.route ?? null,
-      safe_details: redacted,
+      safe_details: routed.safeDetails,
     });
     const { error } = await (signal ? insert.abortSignal(signal) : insert);
     persisted = !error;

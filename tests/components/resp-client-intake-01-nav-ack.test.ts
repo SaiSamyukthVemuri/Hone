@@ -43,6 +43,9 @@ const CONVERTED = [
   { file: PROFILE, href: "/intake`", label: "Opening intake…", count: 3 },
   { file: PROFILE, href: "/sessions/${lastTreatment.id}`", label: "Opening session…", count: 1 },
   { file: PROFILE, href: "/images`", label: "Opening treatment photos…", count: 1 },
+  // HON-109 (Records): the two Edit links on the client profile were left bare here because they were NOT in the measured slice. They are measured now
+  // (slice 3, control CR7: no cue in 10 of 10 runs, 502 ms warm and 1,615 ms cold to the editor on desktop), so they are converted, deliberately.
+  { file: PROFILE, href: "/edit`", label: "Opening the client editor…", count: 2 },
   { file: INTAKE, href: "/clients/${id}`", label: "Opening client…", count: 2 },
   { file: HISTORY, href: "?intake=${row.id}`", label: "Opening intake version…", count: 1 },
 ] as const;
@@ -118,16 +121,18 @@ describe("RESP-CLIENT-INTAKE-01: the two raw anchors are gone", () => {
 });
 
 describe("RESP-CLIENT-INTAKE-01: the slice did not grow", () => {
-  it("the three unmeasured Client Profile links are still bare <Link>", () => {
-    // /clients (back to the list) and the two Edit links were NOT in the
+  it("the unmeasured Client Profile link (back to the list) is still a bare <Link>", () => {
+    // /clients (back to the list) was NOT in the
     // measured slice. Converting them would be the blanket adoption this work
     // is scoped against, and would make the PR unreviewable against its brief.
     const code = codeOnly(read(PROFILE));
     // The href is the validated directory return path (falls back to /clients): still a bare <Link>.
     expect(code).toContain('"/clients"');
     expect(code).toMatch(/<Link\s+href=\{directoryReturnTo \?\? "\/clients"\}/);
+    // HON-109 (Records): the two Edit links are no longer part of "unmeasured": see the CONVERTED row above. None may be a bare <Link> again.
     const edits = code.match(/<Link\s+href=\{`\/clients\/\$\{client\.id\}\/edit`\}/g);
-    expect(edits ?? []).toHaveLength(2);
+    expect(edits ?? []).toHaveLength(0);
+    expect(code.match(/<PendingLink\s+href=\{`\/clients\/\$\{client\.id\}\/edit`\}/g) ?? []).toHaveLength(2);
   });
 
   it("the two unmeasured Intake links are still bare <Link>", () => {

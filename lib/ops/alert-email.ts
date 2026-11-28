@@ -1,6 +1,6 @@
 import "server-only";
 import { replaceDecodedMatches, type Detector } from "@/lib/logging/encoded-match";
-import { resend, FROM_ADDRESS } from "@/lib/email/client";
+import { getResendTransport, FROM_ADDRESS } from "@/lib/email/client";
 import { SAFE_STRIPE_ID_PREFIXES } from "@/lib/ops/redact";
 
 // ===========================================================================
@@ -28,6 +28,12 @@ import { SAFE_STRIPE_ID_PREFIXES } from "@/lib/ops/redact";
 //     (with any record UUID or Stripe object id replaced), the time, the
 //     environment and the admin link: no record ids (#828 G-24), no
 //     secrets, no card data, no clinical content, no raw payloads.
+
+type TextOnlyAlertTransport = {
+  emails: {
+    send: (args: { from: string; to: string[]; subject: string; text: string }) => Promise<{ error: unknown }>;
+  };
+};
 
 export type CriticalAlertEmailInput = {
   event: string;
@@ -168,7 +174,11 @@ export async function notifyCriticalOpsAlert(
       }
       return;
     }
-    if (!resend) {
+    // HON-127: the lane's fake transport (server-only, refused in a deployed runtime) when explicitly armed, else the real Resend client, so the
+    // critical-alert email is provable in CI without pointing the SDK at a stub URL.
+    // The operator email is text-only, so the transport is viewed through the narrow shape this module actually sends (no html).
+    const transport = getResendTransport() as unknown as TextOnlyAlertTransport | null;
+    if (!transport) {
       console.warn(
         JSON.stringify({
           event: "ops_alert_email_disabled_no_resend_key",
@@ -194,7 +204,7 @@ export async function notifyCriticalOpsAlert(
       `Review and resolve: ${ADMIN_ALERTS_URL}`,
     ].join("\n");
 
-    const { error } = await resend.emails.send({
+    const { error } = await transport.emails.send({
       from: FROM_ADDRESS,
       to: recipients,
       subject: `[Hone CRITICAL] ${input.event}`,

@@ -110,7 +110,7 @@ export async function checkActiveConsentTemplatesForPortal(
     .eq("is_live", true)
     .eq("status", "active")
     .order("created_at", { ascending: true });
-  if (error) {
+  if (error || !Array.isArray(data)) {
     console.error(
       JSON.stringify({
         event: "consent_templates_for_portal_failed",
@@ -120,7 +120,7 @@ export async function checkActiveConsentTemplatesForPortal(
     );
     return { status: "unavailable" };
   }
-  return { status: "ok", templates: (data ?? []) as ConsentFormTemplateForPortal[] };
+  return { status: "ok", templates: data as ConsentFormTemplateForPortal[] };
 }
 
 export async function getActiveConsentTemplatesForPortal(
@@ -146,7 +146,7 @@ export type PortalSignatureSummary = {
 export async function getLatestSignaturesByTemplateForPortal(
   studioId: string,
   clientId: string,
-): Promise<Map<string, PortalSignatureSummary>> {
+): Promise<Map<string, PortalSignatureSummary> | null> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("client_consent_signatures")
@@ -156,7 +156,7 @@ export async function getLatestSignaturesByTemplateForPortal(
     .eq("studio_id", studioId)
     .eq("client_id", clientId)
     .order("signed_at", { ascending: false });
-  if (error) {
+  if (error || !Array.isArray(data)) {
     console.error(
       JSON.stringify({
         event: "consent_signatures_for_portal_failed",
@@ -164,10 +164,10 @@ export async function getLatestSignaturesByTemplateForPortal(
         timestamp: new Date().toISOString(),
       }),
     );
-    return new Map();
+    return null;
   }
   const map = new Map<string, PortalSignatureSummary>();
-  for (const row of data ?? []) {
+  for (const row of data) {
     const r = row as PortalSignatureSummary;
     // Order-by signed_at desc + first-write-wins gives us latest
     // per template_id in one pass; we deliberately do NOT use
