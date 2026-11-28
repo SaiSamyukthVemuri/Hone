@@ -246,6 +246,8 @@ export const BROWSER_GROUPS = {
       "waitlist-invitation-delivery-status.spec.ts",
       // The owner reaches invite-beyond-the-estimate through normal navigation, confirms once, and every chosen client is sent exactly once.
       "waitlist-over-invite.spec.ts",
+      // HON-124 item 7: the recipient chooser's six buttons show hover, pressed and focus, and are 44px under a coarse pointer. No selection is made and nothing is sent.
+      "recipient-chooser-feedback.spec.ts",
       // At an estimate of zero, Send asks first; Cancel sends nothing and Invite anyway sends one invitation (desktop and phone).
       "waitlist-invite-anyway.spec.ts",
       // SENTRY-BOOKING-ERR-01: the /book/[slug] error boundary contains a failed
@@ -326,6 +328,8 @@ export const BROWSER_GROUPS = {
     description: "owner/admin, onboarding, studio setup and capacity",
     specs: [
       "cancellation-fee-rules.spec.ts",
+      // The shared Button: a disabled one shows no hover or pressed change, an enabled one still does (Save rules, never clicked).
+      "disabled-button-feedback.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
       // Connected practitioner journey (opt-in: self-skips unless MULTI_PRACTITIONER_JOURNEY_E2E=1, so a targeted lane lists it but runs nothing).
