@@ -14,9 +14,9 @@ import { homedir, tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { execFileSync } from "node:child_process";
 import { runHosted, makeHostedClient, makeFsLedger, sha256, Refusal } from "./lib/hosted-publish.mjs";
+import { resolveProductionBranch } from "./lib/production-branch.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
 const args = process.argv.slice(2);
 const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const publish = args.includes("--publish");
@@ -46,6 +46,11 @@ function buildPlan() {
 // Only the DECLARED git/fs/tty effects; every child process gets a scrubbed environment so the key can never be inherited.
 const scrubbed = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" };
 const git = (a) => execFileSync("git", a, { cwd: root, env: scrubbed, encoding: "utf8" }).trim();
+// `main` once the production branch is renamed, else the old name: the remote answers, so a stale local ref cannot.
+const PRODUCTION_BRANCH = resolveProductionBranch({
+  override: null,
+  remoteBranchExists: (n) => { try { execFileSync("git", ["ls-remote", "--exit-code", "--heads", "origin", n], { cwd: root, env: scrubbed, stdio: "ignore" }); return true; } catch { return false; } },
+});
 const ledgerDir = join(homedir(), ".hone-publish-ledger");
 const receiptsDir = join(root, "docs/production/hosted-publication-receipts");
 function writeAtomic(dir, name, body) {

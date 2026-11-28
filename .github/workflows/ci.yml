@@ -13,7 +13,8 @@
 #
 # Triggers:
 #   * pull_request (every PR, against any base branch)
-#   * push to the default branch claude/build-hone-saas-hOex7
+#   * push to the production branch: claude/build-hone-saas-hOex7 until it is renamed, and main after (both are listed so the rename needs no CI gap;
+#     GitHub Actions filters do not follow a branch rename. The old name is removed in the post-rename cleanup PR).
 #
 # Secrets:
 #   * NONE. The job uses dummy/test env values only. See the `env`
@@ -28,6 +29,7 @@ on:
   push:
     branches:
       - claude/build-hone-saas-hOex7
+      - main
 
 # CI-HARDEN-01B. Least privilege, asserted rather than assumed.
 #
