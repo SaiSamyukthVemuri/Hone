@@ -12,7 +12,7 @@ vi.mock("@supabase/ssr", () => ({
   createServerClient: () => ({
     auth: { getUser: async () => ({ data: { user: member.signedIn ? {id: "user",email:"owner@example.test"} : null } }) },
     from: () => ({ select: () => ({ eq: () => ({ eq: async () => ({ data: [{studio_id:"studio"}] }) }) }) }),
-    rpc: async (fn: string) => ({data:fn === "my_hone_studio_canceled" ? member.paused : member.owner ? {status:"canceled"} : null}),
+    rpc: async (fn: string) => ({data:member.owner ? {status:"canceled"} : null}),
   }),
 }));
 

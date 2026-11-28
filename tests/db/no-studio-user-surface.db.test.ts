@@ -834,7 +834,6 @@ const PINNED: string[] = [
   // user is none of those. Behavioural proof: subscription-team-seats.db.test.ts (a stranger and staff get null, the owner gets a decision).
   "fn public.my_hone_billing_status(p_studio uuid)",
   "fn public.my_hone_solo_impact(p_studio uuid)",
-  "fn public.my_hone_studio_canceled(p_studio uuid)",
   "fn public.my_hone_team_seats(p_studio uuid)",
   "fn public.request_hone_subscription_change(p_studio uuid, p_target text, p_version uuid, p_team_version text)",
   "fn public.my_pending_invitation()",

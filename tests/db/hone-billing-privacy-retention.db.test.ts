@@ -74,7 +74,6 @@ describe("grants and definer settings, by function name", () => {
   const callable = [
     "my_hone_billing_status(uuid)",
     "my_hone_solo_impact(uuid)",
-    "my_hone_studio_canceled(uuid)",
     "my_hone_team_seats(uuid)",
     "request_hone_subscription_change(uuid,text,uuid,text)",
   ];

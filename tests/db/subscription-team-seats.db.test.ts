@@ -380,12 +380,10 @@ it("locks only new bookings and new unscheduled sessions once cancellation takes
   const entry = (session: string) => adminQuery("insert into public.electrolysis_entries(session_id,area) values ($1,'chin')", [session]);
   const existingBooking = (await book()).rows[0].id;
   const existingChart = (await chart()).rows[0].id;
-  const canceled = async (actor: string) => (await userQuery(actor, "select public.my_hone_studio_canceled($1) as paused", [t.studio])).rows[0].paused;
 
   // A PENDING cancellation is visible to the owner only and locks nothing.
   const change = await requestChange(t, "cancel");
   expect((await billingState(t)).status).toBe("canceling");
-  for (const actor of [t.owner, staff, desk]) expect(await canceled(actor)).toBe(false);
   expect(await requestChange(t,"cancel",null,staff)).toBeNull();
   await book(); await chart(); await entry(existingChart);
 
@@ -397,13 +395,7 @@ it("locks only new bookings and new unscheduled sessions once cancellation takes
     [randomUUID(),claim.attempt,t.owner,claim.customer,claim.subscription,randomUUID()]);
   expect((await billingState(t)).status).toBe("canceled");
   expect((await requestChange(t,"studio",change.id)).result).toBe("canceled");
-  // Staff see the operational status only once it is effective: the studio's receptionist and
-  // practitioner get true; a deactivated member, another studio's member and a no-studio user get false.
-  for (const actor of [t.owner, staff, desk]) expect(await canceled(actor)).toBe(true);
   await adminQuery("update public.studio_receptionists set active=false,deactivated_at=now() where studio_id=$1 and user_id=$2", [t.studio, desk]);
-  expect(await canceled(desk)).toBe(false);
-  expect(await canceled((await signup("studio")).owner)).toBe(false);
-  expect(await canceled(await authUser())).toBe(false);
   // Only a new booking and a new session with no earlier appointment are refused.
   await expect(book()).rejects.toThrow("subscription_canceled");
   await expect(chart()).rejects.toThrow("subscription_canceled");

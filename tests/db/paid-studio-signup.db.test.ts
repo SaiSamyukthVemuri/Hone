@@ -164,6 +164,33 @@ describe("sandbox paid signup", () => {
     },
   );
 
+  it("never provisions a second studio or owner for a second COMPLETED Checkout of the same attempt", async () => {
+    const f = await fixture("studio");
+    expect(await f.receive("evt_" + randomUUID())).toBe(200);
+    const [first] = await f.memberships();
+    const attempt = (await adminQuery("select id,customer_id,subscription_id from public.hone_signup_attempts where user_id=$1", [f.user])).rows[0];
+    // A second hosted Checkout the same person completed: a different customer, subscription and invoice.
+    const again = randomUUID();
+    const second = await adminQuery(applySql, [
+      "evt_" + again, attempt.id, f.user, "studio", "cus_" + again, "sub_" + again, "in_" + again, "initial_paid", new Date().toISOString(),
+    ]);
+    expect(second.rows[0].result).not.toBe("provisioned");
+    // And a concurrent pair of them, as two tabs or a redelivery storm would send.
+    await Promise.all([1, 2].map(() => {
+      const n = randomUUID();
+      return adminQuery(applySql, ["evt_" + n, attempt.id, f.user, "studio", "cus_" + n, "sub_" + n, "in_" + n, "initial_paid", new Date().toISOString()]).catch(() => null);
+    }));
+    const members = await f.memberships();
+    expect(members).toHaveLength(1);
+    expect(members[0]).toMatchObject({ studio_id: first.studio_id, role: "owner" });
+    expect((await adminQuery("select count(*)::int as n from public.studios where id in (select studio_id from public.practitioners where user_id=$1)", [f.user])).rows[0].n).toBe(1);
+    expect((await adminQuery("select count(*)::int as n from public.hone_signup_attempts where user_id=$1", [f.user])).rows[0].n).toBe(1);
+    // The original purchase is untouched.
+    const after = (await adminQuery("select customer_id,subscription_id,studio_id from public.hone_signup_attempts where id=$1", [attempt.id])).rows[0];
+    expect(after.customer_id).toBe(attempt.customer_id);
+    expect(after.subscription_id).toBe(attempt.subscription_id);
+  });
+
   it("restores the original studio only after collection and ignores old cancellation events", async () => {
     const f = await fixture("studio");
     const event = () => "evt_" + randomUUID();

@@ -273,18 +273,10 @@ returns boolean language sql security definer set search_path='' as $$
   select exists(select from recorded);
 $$;
 
-create function public.my_hone_studio_canceled(p_studio uuid) returns boolean
-language sql stable security definer set search_path='' as $$
-  select exists(select from public.hone_signup_attempts a where a.studio_id=p_studio
-    and a.canceled_at is not null
-    and (exists(select from public.practitioners p where p.studio_id=p_studio and p.user_id=auth.uid() and p.active)
-      or exists(select from public.studio_receptionists r where r.studio_id=p_studio and r.user_id=auth.uid() and r.active)));
-$$;
-
-revoke all on function public.my_hone_solo_impact(uuid),public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid),
+revoke all on function public.my_hone_solo_impact(uuid),public.request_hone_subscription_change(uuid,text,uuid,text),
   public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid) from public,anon,authenticated,service_role;
-grant execute on function public.my_hone_solo_impact(uuid),public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid) to authenticated;
+grant execute on function public.my_hone_solo_impact(uuid),public.request_hone_subscription_change(uuid,text,uuid,text) to authenticated;
 grant execute on function public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid) to service_role;
 

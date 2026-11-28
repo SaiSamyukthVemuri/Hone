@@ -906,7 +906,6 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   move_or_reassign_appointment: "--sD",
   my_hone_billing_status: "-u-D",
   my_hone_solo_impact: "-u-D",
-  my_hone_studio_canceled: "-u-D",
   my_hone_team_seats: "-u-D",
   my_pending_invitation: "-usD",
   observe_appointment_email_operation: "ABSENT",

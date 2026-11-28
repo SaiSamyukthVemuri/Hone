@@ -6,7 +6,7 @@ do $$ begin
     then raise exception 'subscription_change_history_present'; end if;
 end $$;
 drop function public.claim_hone_restart(uuid,uuid,uuid),public.apply_hone_restart_invoice(text,uuid,uuid,text,text,text,text,text,timestamptz,uuid);
-drop function public.read_hone_billing_provider_ids(uuid,uuid), public.my_hone_solo_impact(uuid), public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid),
+drop function public.read_hone_billing_provider_ids(uuid,uuid), public.my_hone_solo_impact(uuid), public.request_hone_subscription_change(uuid,text,uuid,text),
   public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid);
 create or replace function public.check_hone_new_work_allowed() returns trigger
