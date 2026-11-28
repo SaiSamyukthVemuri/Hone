@@ -98,7 +98,7 @@ export function OnboardingWizard({
   model: OnboardingModel;
   open: boolean;
   onDismiss: () => void;
-  onComplete: () => void;
+  onComplete: (destination?: "dashboard" | "calendar") => void;
 }) {
   const [activeStep, setActiveStep] = useState<OnboardingStepKey>(
     model.currentStep,
@@ -389,10 +389,15 @@ export function OnboardingWizard({
               type="button"
               className={PRIMARY_BTN}
               disabled={pending}
-              onClick={onComplete}
+              onClick={() => onComplete()}
             >
               Go to dashboard
             </button>
+            {model.requiredComplete && (
+              <button type="button" className={SECONDARY_BTN} disabled={pending} onClick={() => onComplete("calendar")}>
+                Open calendar
+              </button>
+            )}
             {/* A saved position can reach this step after a readiness regression, so the link needs the live gate too. */}
             {model.requiredComplete && model.publicBookingUrl && (
               <CopyLinkButton url={model.publicBookingUrl} />

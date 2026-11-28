@@ -10,6 +10,8 @@ import { getNewClientAdmissionMode } from "@/lib/booking/new-client-admission";
 import { newClientWaitlistCommitIsDurable } from "@/lib/booking/new-client-waitlist-durability-bridge";
 import { createClient } from "@/lib/supabase/server";
 import { hasActiveWaitlistEntries } from "@/lib/waitlist/operator-queue-presence";
+import { readOwnerBilling } from "@/lib/subscriptions/owner-billing";
+import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
 import type { SettingsNavContext, SettingsNavEntry } from "./nav";
 
 // The Settings rail registry (settings redesign, WS-B owns this file).
@@ -148,6 +150,20 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
       { id: "payments-fees", label: "Cancellation & no-show fees", href: "/settings/payments/fees" },
     ],
     order: 100,
+  },
+  {
+    id: "subscription",
+    group: "studio",
+    label: "Billing",
+    href: "/settings/subscription",
+    roles: OWNER,
+    visibleWhen: async ({ studio }) => {
+      if (!isSelfServeCheckoutEnabled(process.env)) return false;
+      const { billing, error } = await readOwnerBilling(studio.id);
+      return Boolean(billing || error);
+    },
+    reachableWhenHidden: false,
+    order: 105,
   },
   {
     id: "integrations",

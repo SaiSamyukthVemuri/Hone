@@ -48,6 +48,8 @@ export async function requireReceptionistWithStudio(): Promise<DeskIdentity> {
   const membership = resolveDeskMembership(identity.rows, await readSelectedStudioId());
   if (membership.kind === "none") redirect("/no-access");
   if (membership.kind === "choose") redirect("/desk/choose");
+  // Billing never blocks a receptionist from the desk: records stay open and the database refuses only
+  // NEW bookings and unscheduled sessions (0387), which the desk shows as neutral text.
   return membership.value;
 }
 

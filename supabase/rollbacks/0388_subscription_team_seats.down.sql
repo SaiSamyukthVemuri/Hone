@@ -1,0 +1,13 @@
+begin;
+set local lock_timeout = '5s';
+drop trigger hone_plan_seats_update on public.hone_signup_attempts;
+drop trigger hone_plan_seats_insert on public.hone_signup_attempts;
+drop trigger hone_invitation_seat_update on public.pending_invitations;
+drop trigger hone_invitation_seat_insert on public.pending_invitations;
+drop trigger hone_practitioner_seat_update on public.practitioners;
+drop trigger hone_practitioner_seat_insert on public.practitioners;
+drop function public.enforce_hone_team_seats();
+drop function public.my_hone_team_seats(uuid);
+drop function public.hone_team_seat_counts(uuid);
+alter table public.hone_signup_attempts drop column seat_revision;
+commit;

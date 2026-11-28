@@ -883,8 +883,11 @@ describe("0172 — no trigger or function drift", () => {
       "appointments_sync_version_bump_trg",
       "appointments_zzz_outbound_enqueue_delete_trg",
       "appointments_zzz_outbound_enqueue_trg",
+      // 0387 (paid studio signup): refuses a NEW appointment while the studio's Hone subscription is canceled or seven days unpaid. Insert only;
+      // existing appointments stay readable and editable. Writes no audit row.
+      "subscription_allows_new_booking",
     ]);
-    expect(byTable.appointments, "appointments non-internal triggers").toBe(9);
+    expect(byTable.appointments, "appointments non-internal triggers").toBe(10);
     // B5/0174 added EXACTLY TWO triggers to appointment_audit, and they are
     // named here rather than counted loosely so a third one cannot arrive
     // unnoticed. Neither writes an audit EVENT — one derives trusted FIELDS at

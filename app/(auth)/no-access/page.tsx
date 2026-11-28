@@ -1,3 +1,12 @@
+import { PaymentConfirmation } from "@/components/billing/payment-confirmation";
+import { beginStudioCheckout } from "./checkout-action";
+import {
+  isSelfServeCheckoutEnabled,
+  PLAN_KEYS,
+  parsePlanKey,
+  PLANS,
+  teamAllowance,
+} from "@/lib/subscriptions/plans";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { listActiveStudioMemberships } from "@/lib/supabase/queries";
@@ -33,14 +42,16 @@ const PALETTE = {
 export default async function NoAccessPage({
   searchParams,
 }: {
-  searchParams: Promise<{ reason?: string }>;
+  searchParams: Promise<{ reason?: string; plan?: string }>;
 }) {
-  const { reason } = await searchParams;
+  const { reason, plan: queryPlan } = await searchParams;
+  const plan = parsePlanKey(queryPlan);
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
+    if (plan && isSelfServeCheckoutEnabled(process.env)) redirect("/signup?plan=" + plan);
     redirect("/login");
   }
 
@@ -74,6 +85,19 @@ export default async function NoAccessPage({
         ? "There is more than one pending invitation for your account. Please contact the studio or Hone support so it can be resolved."
         : "Hone is currently invite-only for supervised studios. Use the email address your studio invitation was sent to, or contact Hone if you believe you should have access.";
 
+  const purchase =
+    !multiple && !inviteIssue && isSelfServeCheckoutEnabled(process.env);
+  const pending = purchase && reason === "confirming-payment";
+  const checkoutMessage: Record<string, string> = {
+    "checkout-input": "Enter your name and studio name.",
+    "checkout-open":
+      "Another plan already has an open checkout. Resume that plan or try again after it expires.",
+    "checkout-expired":
+      "Your previous checkout expired. Choose your plan again.",
+    "checkout-unavailable":
+      "Checkout is temporarily unavailable. Please try again.",
+  };
+
   return (
     <main
       style={{
@@ -95,16 +119,85 @@ export default async function NoAccessPage({
           className="font-[var(--font-fraunces)] mb-6 text-[32px] font-bold leading-[1.05]"
           style={{ letterSpacing: "-0.02em", color: PALETTE.ink }}
         >
-          {heading}
+          {pending
+            ? "Confirming your payment"
+            : purchase
+              ? "Start your studio"
+              : heading}
         </h1>
 
         <p
           className="mb-10 text-[16px] leading-[1.6]"
           style={{ color: PALETTE.muted }}
         >
-          {body}
+          {pending
+            ? "Once Stripe confirms your payment, Hone will open your studio setup automatically."
+            : purchase
+              ? "Enter your name and studio name. After payment, Hone will guide you through setup."
+              : body}
         </p>
 
+        {pending && (
+          <PaymentConfirmation />
+        )}
+        {purchase && !pending && (
+          <form
+            action={beginStudioCheckout}
+            className="mb-8 grid gap-4 text-left"
+          >
+            <label>
+              Your name
+              <input
+                className="block w-full rounded border p-2"
+                name="owner"
+                required
+                maxLength={100}
+                autoComplete="name"
+              />
+            </label>
+            <label>
+              Studio name
+              <input
+                className="block w-full rounded border p-2"
+                name="studio"
+                required
+                maxLength={100}
+                autoComplete="organization"
+              />
+            </label>
+            {plan ? <div><input type="hidden" name="plan" value={plan} />
+              <strong>{PLANS[plan].label} · US${PLANS[plan].unitAmount / 100}/month</strong>
+              <p>{teamAllowance(plan)}</p><a href="/pricing" className="underline">Change plan</a>
+            </div> : <label>
+              Monthly plan
+              <select
+                className="block w-full rounded border p-2"
+                name="plan"
+                defaultValue=""
+                required
+              >
+                <option value="" disabled>
+                  Choose a plan
+                </option>
+                {PLAN_KEYS.map((key) => (
+                  <option key={key} value={key}>
+                    {PLANS[key].label} · US${PLANS[key].unitAmount / 100}/month
+                    · {teamAllowance(key)}
+                  </option>
+                ))}
+              </select>
+            </label>}
+            {reason && checkoutMessage[reason] && (
+              <p role="alert">{checkoutMessage[reason]}</p>
+            )}
+            <button
+              className="rounded bg-neutral-900 p-3 text-white"
+              type="submit"
+            >
+              Continue to Stripe
+            </button>
+          </form>
+        )}
         {multiple && (
           <div className="mb-10 flex flex-col items-stretch gap-3">
             {memberships.map((m) => (
@@ -121,7 +214,10 @@ export default async function NoAccessPage({
                   >
                     {m.studioName}
                   </span>
-                  <span className="text-[13px]" style={{ color: PALETTE.muted }}>
+                  <span
+                    className="text-[13px]"
+                    style={{ color: PALETTE.muted }}
+                  >
                     {m.role === "owner" ? "Owner" : "Practitioner"}
                   </span>
                 </button>

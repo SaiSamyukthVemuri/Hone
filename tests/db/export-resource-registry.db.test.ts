@@ -918,7 +918,9 @@ describe("what is excluded, and on what grounds", () => {
       // derived from the two ledgers.
       // 7 -> 8 platform: waitlist_retention_runs (0326, HON-7), the cleanup job's run log: counts and times, no studio column.
       // 8 -> 10 platform: platform_rollouts and platform_rollout_studios (the platform rollout control): Hone's own release switch and pilot list, no studio content.
-      platform: 10,
+      // 10 -> 13 platform: studio_front_desk_seats (0390), Hone's own Front Desk seat grants (capacity, operator reason, expiry; keyed by studio id, no studio content), and hone_billing_events (0387, webhook idempotency ids only) and hone_subscription_notices (0387/0389, Hone's own
+      // subscription email queue state): neither holds studio, client or owner content, and no API role can read either.
+      platform: 13,
       // 7 -> 8 derived: dashboard_attention_events (0298, HELD), an owner's own dismiss/restore tidy-up of the Dashboard Needs
       // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
       // 8 -> 10 derived: waitlist_followups and waitlist_decline_owner_emails (0325, HON-7), the owner's follow-up queue and its

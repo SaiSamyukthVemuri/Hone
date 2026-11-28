@@ -1,5 +1,6 @@
-import { WAITLIST_PATH } from "@/lib/waitlist/paths";
+import { OwnerBillingNotice } from "@/lib/subscriptions/OwnerBillingNotice";
 import { PendingLink } from "@/components/pending-link";
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { PrimaryNavLink } from "./PrimaryNavLink";
 import { AppMain } from "./AppMain";
 import { HeaderCluster } from "./HeaderCluster";
@@ -236,6 +237,7 @@ export default async function AppLayout({
       </SearchProvider>
       </NotificationsProvider>
       </SignOutFlightProvider>
+      {practitioner.role === "owner" && <OwnerBillingNotice studioId={studio.id} />}
       <AppMain>{children}</AppMain>
       <AppFooter />
       {/* PR #142. Analytics mounts here (and at the other safe-tree

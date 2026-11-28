@@ -4,6 +4,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { getCurrentPractitionerWithStudio } from "@/lib/supabase/queries";
+import { getOwnerTeamSeats } from "@/lib/subscriptions/owner-team-seats";
+import { isDeskEnabled } from "@/lib/desk/flag";
+import { seatLimitMessage } from "@/lib/subscriptions/team-seats";
 import type { InvitationRole } from "@/lib/types/database";
 import { getResendTransport, FROM_ADDRESS } from "@/lib/email/client";
 import { buildInvitationEmail } from "@/lib/email/templates/invitation";
@@ -122,10 +125,10 @@ export async function invitePractitionerAction(
   const email = rawEmail.toLowerCase();
 
   const roleRaw = formData.get("role");
-  const role =
-    typeof roleRaw === "string" && VALID_ROLES.includes(roleRaw as InvitationRole)
-      ? (roleRaw as InvitationRole)
-      : "practitioner";
+  const role = roleRaw ?? "practitioner";
+  if (typeof role !== "string" || !VALID_ROLES.includes(role as InvitationRole)) {
+    return { ok: false, error: "Choose a valid team role." };
+  }
   const displayName = nullableString(formData.get("display_name"));
 
   let context: OwnerContext;
@@ -159,23 +162,20 @@ export async function invitePractitionerAction(
     };
   }
 
-  // Already on this studio's front desk? The owner reads the studio's receptionist rows under RLS (0216). Accepting a second receptionist invitation
-  // would reactivate in place, harmlessly, but it is a confusing no-op, so refuse it the way a duplicate practitioner is refused.
   if (role === "receptionist") {
-    const { data: existingDesk, error: deskErr } = await supabase
-      .from("studio_receptionists")
-      .select("id")
-      .eq("studio_id", studioId)
-      // The address is lowercased above, and a front-desk row stores the lowercased invited address, so an exact compare is enough here.
-      .eq("email", email)
-      .eq("active", true)
-      .maybeSingle();
-    if (deskErr) {
-      return { ok: false, error: "Could not check the front desk team." };
+    let seats;
+    try {
+      seats = await getOwnerTeamSeats(studioId);
+    } catch {
+      return { ok: false, error: "Could not check the studio’s team seats. Try again." };
     }
-    if (existingDesk) {
-      return { ok: false, error: `${email} is already on this studio's front desk.` };
+    if (seats && (seats.receptionist_limit === 0 || !isDeskEnabled())) {
+      return { ok: false, error: "Receptionist invitations are unavailable for this studio." };
     }
+    const { data: existingDesk, error: deskErr } = await supabase.from("studio_receptionists")
+      .select("id").eq("studio_id", studioId).eq("email", email).eq("active", true).maybeSingle();
+    if (deskErr) return { ok: false, error: "Could not check the front desk team." };
+    if (existingDesk) return { ok: false, error: "This receptionist is already active at your studio." };
   }
 
   // Already invited at this studio (still pending)?
@@ -206,6 +206,8 @@ export async function invitePractitionerAction(
   });
 
   if (error) {
+    const seatError = seatLimitMessage(error.code);
+    if (seatError) return { ok: false, error: seatError };
     if (error.code === PG_UNIQUE_VIOLATION) {
       return {
         ok: false,

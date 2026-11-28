@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, asUser, closePool } from "./helpers/harness";
+import { adminQuery, asUser, closePool, enableFrontDesk } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 
 // HON-48 simultaneous booking, MOVE versus BOOK. #1337 proves booking against booking. This file proves a move racing a booking
@@ -53,6 +53,7 @@ async function setup(capacity: boolean) {
   }
   deskUserId = randomUUID();
   await adminQuery("insert into auth.users(id,email) values ($1,$2)", [deskUserId, `desk-${deskUserId.slice(0, 8)}@harness.local`]);
+  await enableFrontDesk(B.studioId); // since 0390 a receptionist needs the studio's Front Desk switched on and a seat
   await adminQuery("insert into public.studio_receptionists(studio_id,user_id,display_name,active) values ($1,$2,'Synthetic Front Desk',true)", [B.studioId, deskUserId]);
 }
 

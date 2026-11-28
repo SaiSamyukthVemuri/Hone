@@ -230,6 +230,16 @@ beforeAll(async () => {
   );
   imageId = randomUUID();
   await adminQuery(`insert into public.treatment_images (id, studio_id, client_id, session_id, session_block_id, storage_path, content_type, size_bytes) values ($1,$2,$3,$4,$5,$6,'image/jpeg',1024)`, [imageId, A.studioId, A.clientId, sessionId, blockId, `${A.studioId}/${A.clientId}/${imageId}.jpg`]);
+  // The Hone subscription record (0387-0389) for studio A, so the owner-only commands have a real paid row to reach and the four tables below hold a row.
+  const attemptId = randomUUID();
+  await adminQuery(
+    `insert into public.hone_signup_attempts (id, user_id, plan, studio_name, owner_name, owner_email, state, customer_id, subscription_id, studio_id)
+     values ($1,$2,'studio','Surface studio','Surface owner','surface-owner@example.com','paid',$3,$4,$5)`,
+    [attemptId, A.userId, `cus_surf_${attemptId.slice(0, 8)}`, `sub_surf_${attemptId.slice(0, 8)}`, A.studioId],
+  );
+  await adminQuery(`insert into public.hone_billing_events (id) values ($1)`, [`evt_surf_${attemptId.slice(0, 8)}`]);
+  await adminQuery(`insert into public.hone_renewal_invoices (invoice_id, attempt_id) values ($1,$2)`, [`in_surf_${attemptId.slice(0, 8)}`, attemptId]);
+  await adminQuery(`insert into public.hone_subscription_notices (attempt_id, invoice_id, kind) values ($1,$2,'receipt')`, [attemptId, `in_surf_${attemptId.slice(0, 8)}`]);
   ids.recA = await authUser("surf-rec-a");
   ids.recB = await authUser("surf-rec-b");
   ids.inactive = await authUser("surf-rec-off");

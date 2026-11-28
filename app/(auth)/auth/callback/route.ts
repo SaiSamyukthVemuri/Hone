@@ -1,3 +1,4 @@
+import { invitationDestination } from "@/lib/supabase/invitation-destination";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -6,7 +7,6 @@ import {
 } from "@/lib/analytics/server";
 import { isAnalyticsUuid } from "@/lib/analytics/ids";
 import { RETURN_TO_COOKIE, returnToDestination, returnToKeyFromCookieHeader } from "@/lib/auth/return-to";
-import { isDeskEnabled } from "@/lib/desk/flag";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -40,44 +40,7 @@ export async function GET(request: Request) {
       // The self-scoped RPC links the membership (copying valid current-version
       // acceptance evidence) or routes to explicit acceptance. It must NEVER
       // block sign-in, so any failure falls through to the default destination.
-      let dest = next;
-      let clearSelection = false;
-      try {
-        const { data: rec } = await supabase.rpc(
-          "reconcile_my_pending_invitation",
-        );
-        const status =
-          rec && typeof rec === "object"
-            ? (rec as { status?: string; choose_studio?: boolean; role?: string })
-            : null;
-        if (status?.status === "acceptance_required") {
-          dest = "/accept-invitation";
-        } else if (status?.status === "conflict") {
-          dest = "/no-access?reason=invite-conflict";
-        } else if (status?.status === "ambiguous") {
-          dest = "/no-access?reason=invite-ambiguous";
-        } else if (
-          (status?.status === "linked" || status?.status === "already_linked") &&
-          status?.role === "receptionist" &&
-          isDeskEnabled()
-        ) {
-          // A front-desk membership lands on the desk; two or more desk studios go through the receptionist chooser. With the desk flag OFF this
-          // branch is skipped and the ordinary path decides.
-          dest = status.choose_studio === true ? "/desk/choose" : "/desk";
-          clearSelection = status.choose_studio === true;
-        } else if (
-          (status?.status === "linked" ||
-            status?.status === "already_linked") &&
-          status?.choose_studio === true
-        ) {
-          // Newly a multi-studio user: force a truthful chooser (clear any
-          // selection; middleware routes 2+ memberships w/o selection there).
-          dest = "/dashboard";
-          clearSelection = true;
-        }
-      } catch {
-        // Never block sign-in on reconciliation.
-      }
+      const { dest, clearSelection } = await invitationDestination(supabase, next);
 
       // Treat the caller's destination as a path, never an origin suffix.
       // URL parsing also normalizes backslashes/control characters; compare

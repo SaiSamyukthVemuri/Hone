@@ -1,5 +1,6 @@
 "use server";
 
+import { BILLING_LOCK_STAFF_MESSAGE, isBillingLockError } from "@/lib/subscriptions/lock-message";
 import { loadTreatmentTimeNameFields } from "@/lib/treatment-time/client-first-name";
 import { recordAppointmentCancelNotifications } from "@/lib/notifications/appointment-cancel-notification";
 import { CLIENT_NAME_MAX, CLIENT_NAME_TOO_LONG } from "@/lib/clients/identity";
@@ -366,6 +367,11 @@ export async function bookAppointmentForClientAction(
         error: "That time is no longer available. Please choose another time.",
         code: "slot_taken",
       };
+    }
+    // The billing lock (0387) refuses new bookings with an internal code; staff get the neutral wording.
+    if (isBillingLockError(rpcErr)) {
+      logBookingDbError("book_appointment", "billing_lock", dbErrorCode(rpcErr));
+      return { ok: false, error: BILLING_LOCK_STAFF_MESSAGE };
     }
     logBookingDbError("book_appointment", "rpc", dbErrorCode(rpcErr));
     return { ok: false, error: "Could not create the appointment. Please try again." };

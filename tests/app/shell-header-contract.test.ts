@@ -17,8 +17,12 @@ describe("app shell header contract", () => {
   });
 
   it("both providers wrap the header, so they sit above both header containers", () => {
-    const header = LAYOUT.indexOf("<header");
-    const closeHeader = LAYOUT.indexOf("</header>");
+    const cluster = LAYOUT.indexOf("<HeaderCluster");
+    expect(cluster).toBeGreaterThan(-1);
+    const header = LAYOUT.lastIndexOf("<header", cluster);
+    const closeHeader = LAYOUT.indexOf("</header>", cluster);
+    expect(header).toBeGreaterThan(-1);
+    expect(closeHeader).toBeGreaterThan(cluster);
     for (const provider of ["NotificationsProvider", "SearchProvider"]) {
       expect(LAYOUT.indexOf(`<${provider}`), `${provider} opens before the header`).toBeLessThan(header);
       expect(LAYOUT.indexOf(`</${provider}>`), `${provider} closes after the header`).toBeGreaterThan(closeHeader);

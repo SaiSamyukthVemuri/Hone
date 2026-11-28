@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, useTransition } from "react";
 import type { OnboardingModel } from "@/lib/onboarding/steps";
 import {
   absorbTransportFailure,
@@ -31,8 +32,17 @@ export function OnboardingSurface({
   model: OnboardingModel;
   initialOpen: boolean;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(initialOpen);
   const [, startTransition] = useTransition();
+  useEffect(() => {
+    // Consume the explicit return once. A subsequent dismissal still applies
+    // when the owner refreshes or copies this dashboard URL.
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("setup") !== "resume") return;
+    url.searchParams.delete("setup");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+  }, []);
   // PERF-01C. The setup surface must disappear the moment completion is
   // RECORDED, and it may not wait for the dashboard to re-render.
   //
@@ -81,7 +91,7 @@ export function OnboardingSurface({
     });
   }
 
-  function handleComplete() {
+  function handleComplete(destination: "dashboard" | "calendar" = "dashboard") {
     setOpen(false);
     startTransition(async () => {
       let res: OnboardingActionResult;
@@ -99,7 +109,10 @@ export function OnboardingSurface({
         return;
       }
       // Only on a RECORDED completion. A refusal keeps the card.
-      if (res.ok) setCompletedLocally(true);
+      if (res.ok) {
+        setCompletedLocally(true);
+        if (destination === "calendar") router.push("/calendar");
+      }
     });
   }
 

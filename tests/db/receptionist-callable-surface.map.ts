@@ -32,6 +32,10 @@ export const CLASSIFICATION: Record<string, { cls: Cls; anon?: boolean; reason: 
   "public.latest_setup_for_client/3": { cls: "gated", reason: "Refusal shown for a receptionist, gate not proven by this test: the owner gets the same outcome here (see UNPROVEN)." },
   "public.list_dismissed_attention/1": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
   "public.member_owns_scoped_timed_block/2": { cls: "helper", reason: "Refusal shown for a receptionist, gate not proven by this test: the owner gets the same outcome here (see UNPROVEN)." },
+  "public.my_hone_billing_status/1": { cls: "gated", reason: "Gated on an ACTIVE OWNER of the studio (practitioners role owner, active), in the same statement that reads the studio's Hone subscription record; returns nothing for a receptionist, a practitioner who is not the owner and any other actor." },
+  "public.my_hone_solo_impact/1": { cls: "gated", reason: "Gated on is_studio_owner (an active owner) and on a paid Studio-plan record; returns nothing for a receptionist, a practitioner who is not the owner and any other actor." },
+  "public.my_hone_team_seats/1": { cls: "gated", reason: "Gated on is_studio_owner (an active owner) in the same statement that counts the studio's seats; returns nothing for a receptionist, a practitioner who is not the owner and any other actor." },
+  "public.request_hone_subscription_change/4": { cls: "gated", reason: "Gated on is_studio_owner (an active owner) in the statement that locks the studio's paid subscription record, before any change is recorded; returns null for a receptionist, a practitioner who is not the owner and any other actor. Only the billing owner may choose Solo." },
   "public.my_pending_invitation/0": { cls: "invite", reason: "Identity-only by design (F1): acts on the caller's own verified email and pending invitation; ruled leave-as-is by Privacy." },
   "public.owner_delivery_concerns/1": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
   "public.owner_delivery_incidents/1": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
@@ -47,6 +51,7 @@ export const CLASSIFICATION: Record<string, { cls: Cls; anon?: boolean; reason: 
   "public.receptionist_cancel_appointment/3": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_create_appointment/5": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_move_appointment/6": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
+  "public.front_desk_access/0": { cls: "pure", reason: "Answers only the caller's own entitlement: derived from auth.uid() with no argument, so it cannot be pointed at another person or studio; behaviour proved in front-desk-seats.db.test.ts." },
   "public.receptionist_studio_timezone/1": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.reconcile_my_pending_invitation/0": { cls: "invite", reason: "Identity-only by design (F1): acts on the caller's own verified email and pending invitation; ruled leave-as-is by Privacy." },
   "public.record_adjusted_appointment_settlement/9": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
@@ -130,6 +135,10 @@ export const PINS: Record<string, string> = {
   "public.latest_setup_for_client/3": "emptyish",
   "public.list_dismissed_attention/1": "json-ok-false",
   "public.member_owns_scoped_timed_block/2": "false",
+  "public.my_hone_billing_status/1": "null",
+  "public.my_hone_solo_impact/1": "null",
+  "public.my_hone_team_seats/1": "null",
+  "public.request_hone_subscription_change/4": "null",
   "public.my_pending_invitation/0": "status:no_invitation",
   "public.owner_delivery_concerns/1": "error:42501|not the owner of this studio",
   "public.owner_delivery_incidents/1": "error:42501|not the owner of this studio",
@@ -186,6 +195,7 @@ export const PINS: Record<string, string> = {
 };
 // Commands whose real-id call returns the same outcome for the owner as for a receptionist, so the call does not prove which check refused. Each needs a reason; the goal is an empty list.
 export const UNPROVEN: Record<string, string> = {
+  "public.request_hone_subscription_change/4": "The probe sends placeholder text for the target, so the owner is also stopped by argument validation (null). The owner-only gate is proved against real paid records in subscription-team-seats.db.test.ts: a stranger and staff get null while the owner gets a decision.",
   "public.client_id_photo_can_read/2": "Boolean or reference helper; the feature switch is off on a fresh stack, so an owner also gets false or nothing. The receptionist's false or nothing comes from the actor check; the owner-positive path is covered by the ID-photo round-trip DB suite, not proven apart here.",
   "public.client_id_photo_enabled/1": "Boolean or reference helper; the feature switch is off on a fresh stack, so an owner also gets false or nothing. The receptionist's false or nothing comes from the actor check; the owner-positive path is covered by the ID-photo round-trip DB suite, not proven apart here.",
   "public.create_block_with_initial_setup/30": "The call needs a full machine-setup payload, so the owner is stopped by argument validation too. Gate order proven statically (assert_session_writable first); the machine-setup DB suites cover the owner path.",

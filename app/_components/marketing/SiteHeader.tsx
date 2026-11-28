@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
 import { PRIMARY_NAV, WALKTHROUGH, ANALYTICS_EVENTS } from "@/lib/marketing/content";
 import { Container, CTAButton } from "./primitives";
 import { MobileNav } from "./MobileNav";
@@ -29,6 +30,7 @@ const NAV_LINK =
   "inline-flex min-h-11 items-center text-[0.9375rem] font-medium text-ink transition-colors duration-[var(--hone-duration-ui)] hover:text-mineral focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[color:var(--color-mineral)]";
 
 export function SiteHeader({ cta = true }: { cta?: boolean } = {}) {
+  const selfServe = isSelfServeCheckoutEnabled(process.env);
   const rest = PRIMARY_NAV.filter((i) => i.label !== "Product");
 
   return (
@@ -54,18 +56,18 @@ export function SiteHeader({ cta = true }: { cta?: boolean } = {}) {
               </Link>
             ))}
 
-            {cta ? (
+            {cta || selfServe ? (
               <CTAButton
-                href={WALKTHROUGH.href}
+                href={selfServe ? "/pricing" : WALKTHROUGH.href}
                 variant="outline"
                 event={ANALYTICS_EVENTS.primaryCtaClick}
               >
-                {WALKTHROUGH.primaryLabelShort}
+                {selfServe ? "Sign up" : WALKTHROUGH.primaryLabelShort}
               </CTAButton>
             ) : null}
           </nav>
 
-          <MobileNav />
+          <MobileNav selfServe={selfServe} />
         </div>
       </Container>
     </header>

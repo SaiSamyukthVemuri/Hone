@@ -1,0 +1,11 @@
+{
+  "pr": 1878,
+  "runtime": true,
+  "migrations": [
+    "supabase/migrations/0387_sandbox_subscription_signup.sql",
+    "supabase/migrations/0388_subscription_team_seats.sql",
+    "supabase/migrations/0389_subscription_self_service.sql",
+    "supabase/migrations/0390_front_desk_rollout_and_seats.sql"
+  ],
+  "release_receipt": "01-ops/1878-release-receipt.json"
+}

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { adminQuery, asUser, closePool } from "./helpers/harness";
+import { adminQuery, asUser, closePool, enableFrontDesk } from "./helpers/harness";
 import { dropSynthStudio, seedSynthStudioB, type SynthStudio } from "./helpers/synth-fleet";
 import { randomUUID } from "node:crypto";
 
@@ -49,6 +49,8 @@ const memberships = (userId: string) =>
 
 beforeAll(async () => {
   S = await seedSynthStudioB();
+  // since 0390 a receptionist invitation needs the studio's Front Desk switched on and a seat
+  await enableFrontDesk(S.studioId, 50); // this file accumulates receptionists and invitations across tests; seat limits are proved in front-desk-seats.db.test.ts
 });
 
 afterAll(async () => {
@@ -184,6 +186,7 @@ describe("0218: conflicts and the role-aware chooser signal (Codex on #850)", ()
   it("choose_studio is TRUE when the person now works the desk at a second studio", async () => {
     const u = await seedAuthUser("two-desks");
     const other = await seedSynthStudioB();
+    await enableFrontDesk(other.studioId, 50);
     try {
       await adminQuery(`select public.add_studio_receptionist($1, $2, $3, 'Other desk', $4)`, [
         other.studioId,

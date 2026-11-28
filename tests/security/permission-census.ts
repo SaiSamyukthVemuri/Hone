@@ -393,7 +393,9 @@ export const NOT_STAFF_CLASSES: Record<string, RegExp> = {
   portal: /^app\/portal\//,
   token_link: /\[token\]/,
   cron: /^app\/api\/cron\//,
-  webhook: /^app\/api\/(stripe|twilio)\//,
+  webhook: /^app\/api\/(stripe|twilio)\/|^app\/api\/billing\/webhook\/route\.ts$/,
+  // Public sign-in establishes the actor before the app can resolve membership.
+  signup: /^app\/signup\/actions\.ts$/,
   oauth: /^app\/api\/google-calendar\//,
   // The front desk (lib/desk): a signed-in RECEPTIONIST by design, so it never reaches the practitioner-and-studio helper. Its one server action
   // re-reads the caller's active receptionist rows in the same request before it writes anything (a selected-studio cookie, nothing else).

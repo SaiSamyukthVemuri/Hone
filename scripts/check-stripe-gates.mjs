@@ -151,15 +151,63 @@ const RULES = [
     ],
     exactly: 1,
   },
+  // Owner self-service on the separate test-key-only subscription client.
+  {
+    name: "subscriptions.update",
+    pattern: /\bsubscriptions\.update\b/g,
+    allowlist: ["lib/subscriptions/billing-client.ts"],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    name: "subscriptions.cancel",
+    pattern: /\bsubscriptions\.cancel\b/g,
+    allowlist: ["lib/subscriptions/billing-client.ts"],
+    exactly: 1,
+    stripComments: true,
+  },
+  {
+    name: "billingPortal.sessions.create",
+    pattern: /billingPortal\.sessions\.create\b/g,
+    allowlist: ["lib/subscriptions/billing-client.ts"],
+    exactly: 1,
+  },
+  {
+    name: "checkout.sessions reads",
+    pattern: /checkout\.sessions\.(?:list|retrieve)\s*\(/g,
+    allowlist: ["lib/subscriptions/billing-client.ts"],
+    exactly: 2,
+  },
   {
     name: "checkout.sessions",
     // Match a real Stripe SDK access shape (`stripe.checkout.sessions`
     // or `checkout.sessions.create` etc.). The plain word "checkout"
     // appears in legitimate UI / booking copy; we only want to flag
     // the SDK namespace.
-    pattern: /checkout\.sessions/g,
-    allowlist: [],
-    exactly: 0,
+    pattern: /checkout\.sessions(?!\.(?:list|retrieve)\s*\()/g,
+    allowlist: [
+      // PROPOSED (HON-70, pending Sam's approval; see docs/13): Hone Care Inc
+      // SOFTWARE-SUBSCRIPTION Checkout. A separate Stripe account and client
+      // (HONE_BILLING_STRIPE_SECRET_KEY, test-mode key only) in its own
+      // adapter. It is NOT Connect treatment money and must never go through
+      // getStripe()/STRIPE_SECRET_KEY. Exactly one call site in exactly this
+      // file; a second site, or any other file, is a deliberate review event.
+      // tests/scripts/check-stripe-gates.test.ts pins the isolation.
+      "lib/subscriptions/billing-client.ts",
+    ],
+    exactly: 1,
+  },
+  // PROPOSED (HON-70 Insurance G-2, pending Sam): pin Stripe CLIENT
+  // CONSTRUCTION. The write rules above and the catch-all key off a receiver
+  // named `stripe`, so a second client built anywhere (or renamed) could evade
+  // them. Exactly two constructors exist: the Connect client and the separate
+  // Hone Care Inc billing adapter. A third is a deliberate review event.
+  {
+    name: "new Stripe(",
+    pattern: /new\s+Stripe\s*\(/g,
+    allowlist: ["lib/stripe/server.ts", "lib/subscriptions/billing-client.ts"],
+    exactly: 2,
+    stripComments: true,
   },
   // ------------------------------------------------------------------
   // Non-money Stripe writes (PR #309).
@@ -426,11 +474,13 @@ const STRIPE_BROWSER_WRITE_SHAPE = /\b(confirmSetup|confirmPayment|confirmCardPa
 // A write SHAPE occurrence is "classified" (already inventoried above) if its
 // matched text hits one of these. Non-global so .test() is stateless.
 const CLASSIFIED_WRITE_PATTERNS = [
+  /^stripe\.subscriptions\.(?:cancel|update)$/,
   /paymentIntents\.create/,
   /paymentIntents\.cancel/,
   /refunds\.create/,
   /charges\.create/,
   /checkout\.sessions\.create/,
+  /^stripe\.billingPortal\.sessions\.create$/,
   /customers\.create/,
   /setupIntents\.create/,
   /accounts\.createLoginLink/,

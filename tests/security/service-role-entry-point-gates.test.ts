@@ -35,6 +35,8 @@ export const GATES: Record<string, RegExp> = {
 // Entry points with no listed gate, each with the reason it is acceptable. Keyed by file; a stale entry (file gone, now gated, or no longer
 // an entry point) fails. A reason is a claim a reviewer read, not a proof; it is not enforced by this test.
 export const GATE_EXCEPTIONS: Record<string, string> = {
+  "app/(auth)/no-access/checkout-action.ts": "verified-authenticated purchaser before studio provisioning: getUser must return a confirmed email before the privileged command receives the verified user ID",
+  "app/api/billing/webhook/route.ts": "acceptBillingInvoice verifies the Stripe signature and checks sandbox subscription and invoice identity before any privileged command callback runs",
   "app/book/[slug]/page.tsx": "anonymous public booking page by design: no signed-in actor exists to gate; the studio is resolved from the public slug and no client row is read",
   "app/book/[slug]/waitlist-actions.ts": "anonymous public waitlist join for a NEW client by design: writes through the join RPC and returns only ok or a fixed failure text; rate limited; no existing-client data returned",
   "app/book/[slug]/actions.ts": "anonymous public booking command by design: no signed-in actor exists to gate; it mints the cancellation token of the appointment it creates; existing-client enumeration is closed in the command (reviewed in #1396); rate limited",
