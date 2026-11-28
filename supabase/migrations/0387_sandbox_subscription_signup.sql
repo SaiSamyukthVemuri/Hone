@@ -199,15 +199,16 @@ grant execute on function public.purge_abandoned_hone_signups(int) to service_ro
 -- The Studio plan includes ONE receptionist and Solo includes none. 0390 owns the seat model (a per-studio
 -- Front Desk switch plus seat grants); this only writes the plan's own rows in it, so 0390 alone enforces
 -- the invitation, acceptance and reactivation limits. Every write is audited with the actor 'hone-billing'
--- (ids and counts only). Billing never removes a Front Desk enrolment: a studio at zero seats seats nobody,
--- and an enrolment billing did not create (a custom agreement) must survive a plan change.
+-- (ids and counts only). Billing NEVER enrols a studio in Front Desk and never removes an enrolment: the
+-- per-studio switch (platform_rollout_studios) is an operator decision made with 0362's own commands, so
+-- moving the rollout to 'pilot' reaches only the studios an operator listed, never every paying Studio studio.
+-- Until a studio is listed the plan's seat is a grant that has no effect (front_desk_not_enabled).
 -- LOCK ORDER: the 0390 seat lock is taken first and is the only lock this takes, before any row it writes.
 -- Receptionist invitations never touch the billing row (0388 skips them), so no path takes the billing
 -- row and the seat lock in opposite orders. plpgsql, resolved when it runs.
 create function public.hone_sync_included_desk(p_studio uuid, p_plan text) returns void
 language plpgsql security definer set search_path = '' as $$
 declare
-  v_row_count int;
   v_seat uuid;
   v_before int;
   v_after int;
@@ -215,13 +216,6 @@ begin
   perform pg_advisory_xact_lock(hashtextextended('hone:front-desk-seats:' || p_studio::text, 0));
   v_before := public.front_desk_seat_limit(p_studio);
   if p_plan = 'studio' then
-    insert into public.platform_rollout_studios(rollout_key, studio_id) values ('front_desk', p_studio) on conflict do nothing;
-    get diagnostics v_row_count = row_count;
-    if v_row_count = 1 then
-      insert into public.admin_action_events(actor_email, actor_role, studio_id, target_type, target_id, action, outcome, source, metadata)
-      values ('hone-billing', 'billing', p_studio, 'front_desk_enrollment', p_studio::text, 'front_desk_enrolled', 'succeeded', 'billing',
-        jsonb_build_object('studio_id', p_studio, 'plan', p_plan));
-    end if;
     if not exists (select 1 from public.studio_front_desk_seats where studio_id=p_studio and source='plan_included' and revoked_at is null) then
       insert into public.studio_front_desk_seats(studio_id, seats, source, reason, granted_by_admin)
       values (p_studio, 1, 'plan_included', 'The Studio plan includes one receptionist', 'hone-billing') returning id into v_seat;

@@ -53,6 +53,13 @@ async function signup(plan: PlanKey) {
       [owner],
     )
   ).rows[0];
+  // An operator lists the studio with 0362's own command; billing never does (see 0387).
+  if (plan === "studio") {
+    await adminQuery(
+      "insert into public.platform_rollout_studios(rollout_key,studio_id) values ('front_desk',$1) on conflict do nothing",
+      [member.studio_id],
+    );
+  }
   return {
     owner,
     practitioner: member.id as string,
@@ -343,6 +350,9 @@ it("switches tiers once and reserves the lower limits while Stripe confirms a do
   expect(await settle(up.id)).toBe(true);
   expect(await settle(up.id)).toBe(false);
   expect(await usage(t)).toMatchObject({ plan: "studio", receptionist_limit: 1 });
+  // The upgrade writes the plan's seat but does not list the studio: Front Desk stays off until an operator does.
+  await expect(invite(t, "receptionist")).rejects.toThrow("front_desk_not_enabled");
+  await adminQuery("insert into public.platform_rollout_studios(rollout_key,studio_id) values ('front_desk',$1)", [t.studio]);
   const recipient = await invite(t, "receptionist");
   expect((await requestChange(t, "solo")).result).toBe("stale");
   const down = await requestChange(t, "solo", up.id);
