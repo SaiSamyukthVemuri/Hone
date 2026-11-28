@@ -473,6 +473,8 @@ export const BROWSER_GROUPS = {
       // /clients/** has no PATH_TO_GROUP pattern.
       "client-profile-save.spec.ts",
       "client-note-drafts.spec.ts",
+      // HON-124 item 7. The client form's buttons and links: hover, pressed, keyboard focus, 44px.
+      "client-form-feedback.spec.ts",
       "client-form-saved-inline.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
