@@ -41,6 +41,18 @@ describe("Analytics and the Desk select their own groups; the Dashboard and Chec
 });
 
 describe("FAIL-SAFE: anything the graph cannot prove still runs the extended suite", () => {
+  it("a component hosted by an UNAUDITED route is extended: its specs may live in another group (consultation-notes-card, clinical-notes.spec.ts)", () => {
+    // components/consultation-notes-card.tsx is imported only by the calendar's appointment page, yet e2e/clinical-notes.spec.ts (sessions) drives it.
+    expect(sel("components/consultation-notes-card.tsx").extended).toBe(true);
+    expect(sel("app/(app)/calendar/[id]/page.tsx").extended).toBe(false);
+  });
+  it("every selector module, alone or beside a narrow file, selects EXTENDED (a non-empty selection runs targeted and full_matrix does not widen it)", () => {
+    for (const m of ["scripts/import-graph.mjs", "scripts/browser-groups.mjs", "scripts/classify-changes.mjs", "scripts/test-dependencies.mjs"]) {
+      expect(sel(m).extended, m).toBe(true);
+      expect(sel(m, "app/(app)/calendar/CalendarToolbar.tsx").extended, `${m} + calendar file`).toBe(true);
+      expect(sel("lib/business-analytics/chart-geometry.ts", m).extended, `${m} + analytics file`).toBe(true);
+    }
+  });
   it("shared infrastructure beside a graph-derived file is still extended", () => {
     expect(sel("lib/business-analytics/chart-geometry.ts", "lib/supabase/server.ts").extended).toBe(true);
     expect(sel("lib/business-analytics/chart-geometry.ts", "e2e/helpers/seed.ts").extended).toBe(true);
@@ -66,19 +78,19 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
   it("derives the union of the groups of every entry that reaches the file", () => {
     const root = fixture({
       "lib/shared.ts": "export const a = 1;",
-      "app/(app)/calendar/page.tsx": 'import { a } from "@/lib/shared"; export default a;',
+      "app/(desk)/desk/page.tsx": 'import { a } from "@/lib/shared"; export default a;',
       "app/(app)/financials/analytics/page.tsx": 'import { a } from "@/lib/shared"; export default a;',
     });
-    expect([...derive(root, "lib/shared.ts")!].sort()).toEqual(["calendar", "owner_admin"]);
+    expect([...derive(root, "lib/shared.ts")!].sort()).toEqual(["booking", "calendar", "owner_admin"]);
   });
   it("is transitive through intermediate modules and dynamic imports", () => {
     const root = fixture({
       "lib/leaf.ts": "export const a = 1;",
       "lib/mid.ts": 'export * from "./leaf";',
       "components/x.tsx": 'export const X = () => import("@/lib/mid");',
-      "app/(app)/calendar/page.tsx": 'import "@/components/x"; export default 1;',
+      "app/(desk)/desk/page.tsx": 'import "@/components/x"; export default 1;',
     });
-    expect([...derive(root, "lib/leaf.ts")!]).toEqual(["calendar"]);
+    expect([...derive(root, "lib/leaf.ts")!].sort()).toEqual(["booking", "calendar"]);
   });
   it("is null when nothing reaches the file", () => {
     expect(derive(fixture({ "lib/orphan.ts": "export const a = 1;" }), "lib/orphan.ts")).toBeNull();
@@ -86,7 +98,7 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
   it("is null when ANY reaching entry is unattributed", () => {
     const root = fixture({
       "lib/shared.ts": "export const a = 1;",
-      "app/(app)/calendar/page.tsx": 'import "@/lib/shared";',
+      "app/(desk)/desk/page.tsx": 'import "@/lib/shared";',
       "app/(app)/mystery/page.tsx": 'import "@/lib/shared";',
     });
     expect(derive(root, "lib/shared.ts")).toBeNull();
@@ -95,7 +107,7 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
     for (const outside of ["e2e/helpers/x.ts", "e2e-payment/helpers/x.ts", "scripts/x.mjs", "playwright.config.ts", "instrumentation-client.ts", "sentry.server.config.ts", "sentry.edge.config.ts"]) {
       const root = fixture({
         "lib/shared.ts": "export const a = 1;",
-        "app/(app)/calendar/page.tsx": 'import "@/lib/shared";',
+        "app/(desk)/desk/page.tsx": 'import "@/lib/shared";',
         [outside]: 'import "../../lib/shared";'.replace("../../", outside.split("/").length === 1 ? "./" : "../".repeat(outside.split("/").length - 1)),
       });
       expect(derive(root, "lib/shared.ts"), outside).toBeNull();
@@ -119,6 +131,21 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
     expect(isEntry("components/ui/button.tsx")).toBe(false);
     expect(isEntry("app/(app)/calendar/CalendarToolbar.tsx")).toBe(false);
   });
+});
+
+// -- the route audit, proved from the specs' own URLs -----------------------------------------------------------------------------------
+describe("VERIFIED_ROUTES: every spec that visits an audited route is in a group its path rule selects", () => {
+  const specFiles = readdirSync(ROOT, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && /^e2e(-[\w]+)?$/.test(d.name))
+    .flatMap((d) => readdirSync(path.join(ROOT, d.name)).filter((f) => f.endsWith(".spec.ts")).map((f) => ({ f, text: readFileSync(path.join(ROOT, d.name, f), "utf8") })));
+  const groupsOfSpec = (spec: string) => Object.entries(BROWSER_GROUPS as Record<string, { specs: string[] }>).filter(([, d]) => d.specs.includes(spec)).map(([g]) => g);
+  const audit = (urlRe: RegExp, allowed: string[]) => {
+    const visitors = specFiles.filter((x) => urlRe.test(x.text));
+    expect(visitors.length).toBeGreaterThan(0);
+    for (const v of visitors) expect(groupsOfSpec(v.f).some((g) => allowed.includes(g)), `${v.f} visits ${urlRe} but sits in ${groupsOfSpec(v.f)}`).toBe(true);
+  };
+  it("/financials/analytics is visited only by owner_admin specs", () => audit(/\/financials\/analytics/, ["owner_admin"]));
+  it("/desk is visited only by calendar or booking specs", () => audit(/["'`]\/desk["'`/?]/, ["calendar", "booking"]));
 });
 
 // -- the independent proof against the real tree -----------------------------------------------------------------------------------------
@@ -185,7 +212,7 @@ describe("the derivation is proved against the real import graph (second, indepe
       expect(entriesOf(f).length, f).toBeGreaterThan(0);
       expect(s.groups.filter((g) => g !== "smoke").sort(), f).toEqual([...want].sort());
     }
-    expect(derivedCount).toBeGreaterThan(40);
+    expect(derivedCount).toBeGreaterThan(10);
   });
 
   it("no file imported from e2e, scripts or config is ever selected through the graph", () => {

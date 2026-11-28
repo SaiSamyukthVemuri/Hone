@@ -584,7 +584,7 @@ const SHARED_PATTERNS = [
   // full_matrix_required=true while selecting NO browser group: the lane
   // would be skipped exactly when the most caution is warranted.
   /^\.github\/workflows\//,
-  /^scripts\/(classify-changes|browser-groups|ci-plan|test-dependencies|docs-paths)\.mjs$/,
+  /^scripts\/(classify-changes|browser-groups|import-graph|ci-plan|test-dependencies|docs-paths|verify-prepush)\.mjs$/,
   /^e2e\/helpers\//,
   /^playwright\.config\./,
   /^lib\/supabase\//,
@@ -731,6 +731,8 @@ export function specsForGroups(groups) {
  * Decide which browser groups a diff affects.
  * Returns { groups, extended, reason }.
  */
+/** Routes whose VISITING specs are all in the groups their path rule names (proved from the specs by tests/ci/graph-selection.test.ts). */
+export const VERIFIED_ROUTES = [/^app\/\(app\)\/financials\/analytics\//, /^app\/\(desk\)\//];
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const graphs = new Map();
 const graphFor = (root) => {
@@ -759,6 +761,10 @@ export function deriveGroupsFromGraph(file, root = REPO_ROOT) {
   if (!graph.files.has(file)) return null;
   const { entries, outside } = reachingEntries(graph, file);
   if (outside.length > 0 || entries.length === 0) return null;
+  // An import edge proves which routes RUN the file, not which specs VISIT those routes: a spec in any group can navigate to any route, so a
+  // route's own group is the answer only where the visiting specs were audited. Every other reaching entry (the calendar, a layout, a shared
+  // component's host) stays on the extended fail-safe. tests/ci/graph-selection.test.ts re-proves the audit from the specs' own URLs.
+  if (!entries.every((e) => VERIFIED_ROUTES.some((re) => re.test(e)))) return null;
   const groups = new Set();
   for (const e of entries) {
     const g = pathGroupsOf(e);
