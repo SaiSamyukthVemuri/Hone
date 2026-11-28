@@ -3,7 +3,7 @@
   "migrations": {
     "count": 292,
     "last": "0391_retire_direct_public_lead_inserts.sql",
-    "sha256": "8370788b12a102d7fa6f018f038216e428895453689e745dee150fa2df2cda8b"
+    "sha256": "0c5818bad935f8cdd4dde80e35649ea05890e64f44d6bbcfd2106dddbbb9eba9"
   },
   "public": {
     "tables": [

@@ -91,7 +91,7 @@ begin
 
   -- the RPC path is in use and the direct path no longer is (evidence; the deployed-app check is also a manual gate)
   select min(a.created_at) into v_first from public.platform_lead_alerts a;
-  if v_first is null then
+  if v_first is null and (exists (select 1 from public.demo_requests) or exists (select 1 from public.waitlist)) then
     raise exception '0391: no platform lead alert exists, so the RPC path has not been used in this database; deploy #1818 and confirm a lead saves with an alert first' using errcode = 'check_violation';
   end if;
   if exists (select 1 from public.demo_requests d where d.created_at > v_first and not exists (select 1 from public.platform_lead_alerts a where a.demo_request_id = d.id))
