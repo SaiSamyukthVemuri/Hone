@@ -1966,6 +1966,34 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "One row recording Hone's last email delivery-event recovery sweep, live since migration 0215 (DELIVERY-VISIBILITY-01). Platform scheduler health, holding no studio data.",
   },
+  hone_billing_events: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Migration 0387 (paid studio signup). One text id per Stripe billing event Hone has already handled, kept only so a replayed webhook is applied once. It holds no studio, client or owner data and no provider payload, and no API role can read it.",
+  },
+  hone_renewal_invoices: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Migrations 0387 and 0389 (paid studio signup). Hone's own record of each subscription renewal invoice for a studio's paid plan: the provider invoice id, the failure and settlement instants, whether it was paid, and the former subscription id after a plan change. It holds no client data. Whether the owner receives their own Hone invoice history in the export (rather than through the billing portal), and in what form, is decided with the other operational records. It is not exported yet, and the provider ids must not be dumped raw.",
+  },
+  hone_signup_attempts: {
+    kind: "pending",
+    ticket: "TRUTH-01B",
+    tier: 2,
+    fieldReviewRequired: true,
+    reason:
+      "Migrations 0387 to 0389 (paid studio signup). The owner's own signup and subscription record with Hone: the chosen plan, the owner and studio names and the owner's email, the provider customer, subscription and checkout ids, the paid, canceled and pending-change state and the seat revision. It holds no client data. Whether and how the owner gets this record in the export is decided with the other operational records; it is not exported yet, and the provider ids must not be dumped raw.",
+  },
+  hone_subscription_notices: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Migrations 0387 and 0389 (paid studio signup). Hone's own queue state for the subscription receipt, warning and pause emails: the invoice id, the kind, retry and lease instants, the send time and a payload hash. It holds no message body, no client data and no address, and no API role can read it.",
+  },
   machine_profile_field_contract: {
     kind: "pending",
     ticket: "TRUTH-01B",

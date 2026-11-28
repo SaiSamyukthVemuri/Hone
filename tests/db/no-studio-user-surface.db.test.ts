@@ -829,6 +829,14 @@ const PINNED: string[] = [
   "fn public.latest_setup_for_client(p_studio_id uuid, p_client_id uuid, p_exclude_session_id uuid)",
   "fn public.list_dismissed_attention(p_studio uuid)",
   "fn public.member_owns_scoped_timed_block(p_studio_id uuid, p_practitioner_id uuid)",
+  // Paid studio signup (0387-0389). Each is executable by any signed-in account, and a stranger with no studio gets nothing back: null, or false for the
+  // member-only boolean. Reviewed: owner-only commands read the owner's own studio record inside an is_studio_owner / active-owner predicate; a no-studio
+  // user is none of those. Behavioural proof: subscription-team-seats.db.test.ts (a stranger and staff get null, the owner gets a decision).
+  "fn public.my_hone_billing_status(p_studio uuid)",
+  "fn public.my_hone_solo_impact(p_studio uuid)",
+  "fn public.my_hone_studio_canceled(p_studio uuid)",
+  "fn public.my_hone_team_seats(p_studio uuid)",
+  "fn public.request_hone_subscription_change(p_studio uuid, p_target text, p_version uuid, p_team_version text)",
   "fn public.my_pending_invitation()",
   "fn public.receptionist_cancel_appointment(p_studio_id uuid, p_appointment_id uuid, p_reason text)",
   "fn public.receptionist_create_appointment(p_studio_id uuid, p_target_practitioner_id uuid, p_client_id uuid, p_service_id uuid, p_starts_at tim",

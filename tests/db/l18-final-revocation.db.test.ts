@@ -232,7 +232,8 @@ describe("0169 — the command surface is untouched", () => {
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
     // 0214 adds the jurisdiction lock; preserve every prior clinical guard.
-    expect(byTable.sessions).toBe(5);
+    // 0387 adds subscription_allows_new_chart (refuses a NEW chart while the studio's Hone subscription is canceled or seven days unpaid; insert only).
+    expect(byTable.sessions).toBe(6);
     const sessionTriggers = await adminQuery(
       "select tgname from pg_trigger where tgrelid='public.sessions'::regclass and not tgisinternal order by tgname",
     );
@@ -242,6 +243,7 @@ describe("0169 — the command surface is untouched", () => {
       "sessions_guard_retired_finalization",
       "sessions_immutable_lineage",
       "sessions_price_jurisdiction_lock",
+      "subscription_allows_new_chart",
     ]);
     // 0232 adds treatment_images_clear_stage_without_session to the three existing guards.
     expect(byTable.treatment_images).toBe(4);
