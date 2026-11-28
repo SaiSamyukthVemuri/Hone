@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 292,
+    "count": 293,
     "last": "0398_studio_portal_presentations.sql",
-    "sha256": "9089c57233351c5b61f5fffebb12f29d0eae6f633b3682614efc519a0251c00e"
+    "sha256": "fdf365e091a6024f8127f2f9f9801e7403ec2ed80ed9d01cf6c62127baed4694"
   },
   "public": {
     "tables": [

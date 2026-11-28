@@ -3,7 +3,7 @@ import { defaultPortalPresentation } from "@/lib/portal/presentation";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 import { refused, shapeOf, vacuityPlan } from "./receptionist-callable-surface.classify";
-import { ANON_INSERT_BY_DESIGN, CLASSIFICATION, GLOBAL_REFERENCE, NO_ROW, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
+import { CLASSIFICATION, GLOBAL_REFERENCE, NO_ROW, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
 
 // D9 (Privacy): the database surface a receptionist session can reach, built from the CATALOG, not from the app's call list.
 // A receptionist is a signed-in user with no practitioners row in the studio. This proves, on a real migrated database and by DIRECT calls
@@ -425,12 +425,6 @@ describe("F3: tables that hold a row are tried for read, update and delete; empt
     for (const t of plan.staticTargets) {
       const rls = (await adminQuery(`select relrowsecurity as on from pg_class where oid = ('public."' || $1 || '"')::regclass`, [t])).rows[0] as { on: boolean };
       const open = Number((await adminQuery(`select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = $1 and permissive = 'PERMISSIVE' and (case when cmd = 'INSERT' then with_check else qual end is null or btrim(case when cmd = 'INSERT' then with_check else qual end) in ('true','(true)')) and (roles && array['authenticated','anon','public']::name[])`, [t])).rows[0].n);
-      if (t in ANON_INSERT_BY_DESIGN) {
-        // Public form: an unconditional INSERT policy is intended; nothing may let anyone read, update or delete.
-        const readable = Number((await adminQuery(`select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = $1 and cmd <> 'INSERT'`, [t])).rows[0].n);
-        if (!rls.on || readable > 0) staticOpen.push(t);
-        continue;
-      }
       if (!rls.on || open > 0) staticOpen.push(t);
     }
     expect(staticOpen, "empty tables where row-level security is off or a policy is unconditional").toEqual([]);
@@ -442,10 +436,7 @@ describe("F3: tables that hold a row are tried for read, update and delete; empt
         if (weak) weakInserts.add(t);
         const allowSel = k === "recA" && t === "studio_receptionists" ? 1 : 0;
         if (!(v.sel.kind === "error:42501" || (v.sel.kind === "ok" && v.sel.rows === allowSel) || (t in GLOBAL_REFERENCE && k !== "anon" && v.sel.kind === "ok"))) findings.push(`select ${t} as ${k}: ${v.sel.kind} ${v.sel.rows ?? ""}`);
-        // A table whose unconditional INSERT policy is intended (a public form) is allowed to accept this insert; once ANOTHER suite has left a row
-        // in it, the template insert reaches the policy and fails only on a unique key (or succeeds), which is that same by-design policy. Its reads,
-        // updates and deletes below stay required closed.
-        if (!weak && v.ins.kind !== "error:42501" && !(t in ANON_INSERT_BY_DESIGN)) findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
+        if (!weak && v.ins.kind !== "error:42501") findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
         if (!(v.upd.kind === "error:42501" || (v.upd.kind === "ok" && v.upd.rows === 0))) findings.push(`update ${t} as ${k}: ${v.upd.kind} ${v.upd.rows ?? ""}`);
         if (!(v.del.kind === "error:42501" || (v.del.kind === "ok" && v.del.rows === 0))) findings.push(`delete ${t} as ${k}: ${v.del.kind} ${v.del.rows ?? ""}`);
       }

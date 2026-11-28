@@ -206,11 +206,9 @@ export const INSERT_UNPROVEN: Record<string, string> = {
   "client_budget_context": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test.",
   "client_clinical_notes": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test.",
   "client_personal_notes": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test.",
-  "demo_requests": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test.",
   "payment_charge_attempts": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test.",
   "stripe_account_provisioning_attempts": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test.",
   "treatment_plan_stages": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test.",
-  "waitlist": "No row in this table to template an insert from on a fresh stack, so the insert is stopped by a trigger or constraint before the policy is reached. No insert succeeded; the policy itself is not shown by this test."
 };
 
 // GLOBAL_REFERENCE class. Exact grants (asserted): select for authenticated and service_role, none for anon, no write privilege for anyone. Readable by every signed-in user by design (select policy "true", for authenticated), no studio, client or person column, no write by anyone but the service role. Row counts depend on which other suites ran, so the test asserts the structure, not a count.
@@ -347,10 +345,4 @@ export const NO_ROW: Record<string, string> = {
   waitlist_invitation_bookings: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   waitlist_invitation_followups: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   waitlist_times_feedback: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy)."
-};
-
-// Anonymous insert is allowed by design (public forms); no policy lets anyone read, update or delete.
-export const ANON_INSERT_BY_DESIGN: Record<string, string> = {
-  demo_requests: "Public demo-request form: anonymous insert by design, no read.",
-  waitlist: "Public waitlist form: anonymous insert by design, no read.",
 };
