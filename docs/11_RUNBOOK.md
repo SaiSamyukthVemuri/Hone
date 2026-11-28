@@ -391,3 +391,4 @@ The DB CHECK enforces that `resolved_at` is set whenever `resolved_by_practition
 The Vercel MCP `get_project` does not expose env-var values. To check production env, use the Vercel dashboard:
 
 - Project → Settings → Environment Variables → Production. Confirm `ADMIN_EMAILS`, `NEXT_PUBLIC_APP_ORIGIN=https://hone.care`, `PORTAL_FINGERPRINT_SALT`, `CRON_SECRET`, `STRIPE_SECRET_KEY` (**live** in Production — corrected 2026-07-27; Preview/Development MUST be `sk_test_*`), `STRIPE_WEBHOOK_SECRET`, `STRIPE_ALLOW_LIVE_MODE=true` in Production (the earlier "`=false` (or unset)" expectation is superseded — live session payments are enabled for approved studios), `RESEND_API_KEY`, Twilio vars if SMS is in use.
+
