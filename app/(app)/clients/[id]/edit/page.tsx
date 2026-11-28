@@ -70,6 +70,7 @@ export default async function EditClientPage({
         hiddenFields={{ client_id: id }}
         baseline={baselineFromRow(c as unknown as Record<string, unknown>)}
         saveAnywayLabel="Save changes anyway"
+        softSave
       />
 
       {legal.ok ? (

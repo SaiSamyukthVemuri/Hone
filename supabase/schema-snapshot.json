@@ -3,7 +3,7 @@
   "migrations": {
     "count": 293,
     "last": "0398_studio_portal_presentations.sql",
-    "sha256": "fdf365e091a6024f8127f2f9f9801e7403ec2ed80ed9d01cf6c62127baed4694"
+    "sha256": "a1df239e29c86baa45433d59e3771f8b6bdd10e026e6f0c9e41576e577ca99e1"
   },
   "public": {
     "tables": [
