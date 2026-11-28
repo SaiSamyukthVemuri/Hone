@@ -25,6 +25,7 @@
 
 import { useActionState, useState } from "react";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
+import { latestDraft, seedEntry } from "@/lib/note-drafts/draft-registry";
 import { NoteDraftStatus } from "@/components/note-draft-status";
 import { targetFor, type NoteDraftFields, type NoteDraftKey, type NoteDraftSaveResult, type StoredNoteDraft } from "@/lib/note-drafts/types";
 import { useFormStatus } from "react-dom";
@@ -285,6 +286,11 @@ function KindCard({
           draftActions={draftActions}
           onSaved={handleSaved}
           onCancel={() => setOpenForm(null)}
+          onKeepAsNewNote={(fields) => {
+            if (!draftActions) return;
+            seedEntry({ clientId, kind: section.kind, target: "new" }, fields, draftActions);
+            setOpenForm({ mode: "add" });
+          }}
         />
       )}
 
@@ -390,6 +396,7 @@ function NoteForm({
   draftActions,
   onSaved,
   onCancel,
+  onKeepAsNewNote,
 }: {
   restored: StoredNoteDraft | null;
   draftActions?: DraftActions;
@@ -402,12 +409,17 @@ function NoteForm({
   action: ClinicalNoteAction;
   onSaved: (note: ClientClinicalNote, authorName: string | null) => void;
   onCancel: () => void;
+  /** A revision's draft was cleared because the note was revised elsewhere: move the text to a NEW note instead. */
+  onKeepAsNewNote?: (fields: NoteDraftFields) => void;
 }) {
   const router = useRouter();
+  const draftKey: NoteDraftKey = { clientId, kind, target: targetFor(kind, mode === "revise" && revising ? revising.id : null) };
+  // Start from the NEWEST text this tab knows (a draft held after a failed flush, or saved since the page loaded), else the page's stored draft.
+  const [start] = useState(() => (draftActions ? latestDraft(draftKey, restored) : null));
   const [areasText, setAreasText] = useState(
-    restored?.fields.areas ? restored.fields.areas.join(", ") : revising ? revising.areas.join(", ") : "",
+    start?.fields.areas ? start.fields.areas.join(", ") : revising ? revising.areas.join(", ") : "",
   );
-  const [body, setBody] = useState(restored?.fields.body ?? (mode === "revise" && revising ? revising.body : ""));
+  const [body, setBody] = useState(start?.fields.body ?? (mode === "revise" && revising ? revising.body : ""));
   // The textarea stays UNCONTROLLED (defaultValue, as before): a controlled textarea mirrors its text into the DOM, which made the typed text
   // match page-level text queries before the save returned. A reset (discard, use theirs) remounts it with a new key.
   const [bodyInit, setBodyInit] = useState(body);
@@ -417,10 +429,9 @@ function NoteForm({
     setBodyInit(next);
     setBodyKey((k) => k + 1);
   }
-  const [occurredAt, setOccurredAt] = useState(restored?.fields.occurred_at ?? todayISODate());
-  const draftKey: NoteDraftKey = { clientId, kind, target: targetFor(kind, mode === "revise" && revising ? revising.id : null) };
+  const [occurredAt, setOccurredAt] = useState(start?.fields.occurred_at ?? todayISODate());
   const draft = useNoteDraft(draftKey, restored, draftActions ?? NO_DRAFT_ACTIONS);
-  const [restoredAt, setRestoredAt] = useState<string | null>(restored ? restored.savedAt : null);
+  const [restoredAt, setRestoredAt] = useState<string | null>(start && !start.unsaved ? start.savedAt : null);
   function applyTheirs(t: NoteDraftFields) {
     // Keep what the person typed visible until they dismiss it; adopt the other window's text.
     setYourVersion(body);
@@ -538,13 +549,14 @@ function NoteForm({
           restoredAt={restoredAt}
           onRetry={draft.retry}
           onKeepMine={draft.keepMine}
-          onKeepAsNew={draft.keepAsNew}
+          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => { const f = draft.latest(); if (f) { draft.settle(); onKeepAsNewNote(f); } } : draft.keepAsNew}
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) applyTheirs(t);
           }}
+          discardFailed={draft.discardFailed}
           onDiscard={async () => {
-            await draft.discard();
+            if (!(await draft.discard())) return; // failed: the editor stays exactly as it was and the status says so
             setRestoredAt(null);
             resetBody(mode === "revise" && revising ? revising.body : "");
             setAreasText(revising ? revising.areas.join(", ") : "");

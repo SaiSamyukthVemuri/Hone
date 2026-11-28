@@ -276,8 +276,61 @@ describe("one transaction: saving the record clears the draft", () => {
     const tabB = await save(a.userId, a, "consultation", "new", { body: "older text" }, first.revision);
     expect(tabB.status).toBe("cleared");
     expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toBeNull();
-    // A deliberate NEW draft (expected revision 0) reuses the cleared row.
-    expect((await save(a.userId, a, "consultation", "new", { body: "fresh" }, 0)).status).toBe("ok");
+    // A FIRST write (expected revision 0) never revives a tombstone: it comes back cleared WITH the tombstone's revision...
+    const fresh = await save(a.userId, a, "consultation", "new", { body: "fresh" }, 0);
+    expect(fresh.status).toBe("cleared");
+    expect(fresh.revision).toBeGreaterThan(first.revision);
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toBeNull();
+    // ...and only a write AT that revision (a deliberate new draft) revives it.
+    const revived = await save(a.userId, a, "consultation", "new", { body: "fresh" }, fresh.revision);
+    expect(revived.status).toBe("ok");
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toEqual({ body: "fresh" });
+  });
+
+  it("P1 (late FIRST autosave): the record is saved while no draft row exists yet; the in-flight first write (revision 0) cannot recreate the text", async () => {
+    await wipe();
+    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "just saved", null]));
+    const tombstone = await draftRow(a, a.practitionerId, "consultation", "new");
+    expect(tombstone.fields).toBeNull(); // the Save left a text-free tombstone, only ids and a revision
+    expect(tombstone.cleared_at).not.toBeNull();
+    const late = await save(a.userId, a, "consultation", "new", { body: "just saved" }, 0);
+    expect(late.status).toBe("cleared");
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toBeNull();
+    const visible = await asUser(a.userId, async (q) => (await q(`select count(*)::int n from public.client_note_drafts where client_id = $1`, [a.clientId])).rows[0].n);
+    expect(visible).toBe(0); // the author's own read shows no draft either
+  });
+
+  it("every Save bumps the tombstone: a revival that was based on an older tombstone is refused", async () => {
+    await wipe();
+    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "one", null]));
+    const t1 = (await draftRow(a, a.practitionerId, "consultation", "new")).revision as number;
+    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "two", null]));
+    const t2 = (await draftRow(a, a.practitionerId, "consultation", "new")).revision as number;
+    expect(t2).toBeGreaterThan(t1);
+    expect((await save(a.userId, a, "consultation", "new", { body: "stale" }, t1)).status).toBe("cleared");
+  });
+
+  it("tombstones exist only for an ENABLED studio, and Discard leaves a tombstone in place", async () => {
+    await wipe();
+    await adminQuery(`delete from public.client_note_draft_enabled_studios where studio_id = $1`, [a.studioId]);
+    try {
+      await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "autosave off", null]));
+      expect(await draftRow(a, a.practitionerId, "consultation", "new")).toBeUndefined();
+    } finally {
+      await adminQuery(`insert into public.client_note_draft_enabled_studios (studio_id) values ($1) on conflict do nothing`, [a.studioId]);
+    }
+    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "autosave on", null]));
+    await asUser(a.userId, (q) => q(`select public.discard_client_note_draft($1,$2,'consultation','new')`, [a.studioId, a.clientId]));
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).cleared_at).not.toBeNull();
+  });
+
+  it("a revise target that already has its revision answers cleared with revision 0 (the text can only live as a NEW note)", async () => {
+    await wipe();
+    const base = await asUser(a.userId, async (q) => (await q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "base2", null])).rows[0].id as string);
+    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "rev2", base]));
+    const r = await save(a.userId, a, "consultation", base, { body: "late revise draft" }, 0);
+    expect(r).toMatchObject({ status: "cleared", revision: expect.anything() });
+    expect(await save(a.userId, a, "consultation", "new", { body: "kept as a new note" }, 0)).toBeTruthy();
   });
 
   it("the budget upsert clears only that author's budget draft", async () => {

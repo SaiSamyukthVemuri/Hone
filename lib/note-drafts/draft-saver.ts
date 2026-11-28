@@ -32,26 +32,56 @@ export type DraftSaverOptions = {
 export class DraftSaver {
   private revision: number;
   private pending: NoteDraftFields | null = null;
+  /** The fields of the request currently in flight (so a timed-out unmount can still hold them). */
+  private inFlightFields: NoteDraftFields | null = null;
+  /** True once any write was acknowledged or a stored draft was restored: the difference between a fresh session and a stale one. */
+  private everAcked: boolean;
+  /** Quiesced for a discard: nothing new is sent until resume() or settle(). */
+  private paused = false;
   private inFlight = false;
   private timer: unknown = null;
   private failures = 0;
   private disposed = false;
+  private lastAcked: NoteDraftFields | null = null;
   /** True after THIS tab saved the real record (settle): a late write of ours coming back cleared is expected and silent. */
   private selfSettled = false;
   private state: DraftState = { phase: "idle", savedAt: null, theirs: null };
   private idleWaiters: Array<() => void> = [];
   private readonly o: Required<Omit<DraftSaverOptions, "initialRevision">>;
+  private listener: (state: DraftState) => void;
 
   constructor(options: DraftSaverOptions) {
     this.revision = options.initialRevision ?? 0;
+    this.everAcked = (options.initialRevision ?? 0) > 0;
+    this.listener = options.onState;
     this.o = {
       send: options.send,
-      onState: options.onState,
+      onState: (state) => this.listener(state),
       debounceMs: options.debounceMs ?? 1500,
       retryMs: options.retryMs ?? [2000, 4000, 8000, 16000, 30000],
       setTimer: options.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
       clearTimer: options.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>)),
     };
+  }
+
+  /** Start from a draft the server already holds (a restored one), so its text counts as the latest. */
+  adopt(fields: NoteDraftFields) {
+    this.lastAcked = fields;
+    this.everAcked = true;
+  }
+
+  /** Point state updates at a new listener (a remounted component re-attaches to the same saver). */
+  setListener(fn: (state: DraftState) => void) {
+    this.listener = fn;
+  }
+
+  snapshot(): DraftState {
+    return this.state;
+  }
+
+  /** The revision the server last acknowledged (0 = none). */
+  currentRevision(): number {
+    return this.revision;
   }
 
   private set(next: Partial<DraftState>) {
@@ -70,24 +100,60 @@ export class DraftSaver {
     this.pending = fields;
     this.selfSettled = false;
     if (this.state.phase === "conflict" || this.state.phase === "cleared") return; // keep their text; resolution is explicit
+    if (this.paused) return; // quiesced for a discard: the text is held, nothing is scheduled
     this.set({ phase: this.inFlight ? "saving" : "unsaved" });
     this.clear();
     this.timer = this.o.setTimer(() => void this.run(), this.o.debounceMs);
   }
 
-  /** Save now (blur, tab hidden, section or client switch). Resolves when nothing is pending or in flight. */
-  async flush(): Promise<void> {
+  /**
+   * Save now (blur, tab hidden, section or client switch). Resolves when nothing is in flight, with TRUE only if everything typed was
+   * acknowledged by the server. After a failure, a conflict or a clear it resolves FALSE and the text is still held (see unsavedWork()):
+   * the caller must keep it recoverable, never treat the flush as a save.
+   */
+  async flush(): Promise<boolean> {
     this.clear();
     await this.run();
     if (this.inFlight) await new Promise<void>((r) => this.idleWaiters.push(r));
+    return this.pending == null && !this.inFlight;
+  }
+
+  /** The newest text the server has NOT acknowledged (queued or in flight), with the revision to continue from; null when none. */
+  unsavedWork(): { fields: NoteDraftFields; revision: number } | null {
+    const fields = this.pending ?? this.inFlightFields;
+    return fields ? { fields, revision: this.revision } : null;
+  }
+
+  /** The newest text this saver knows of (acknowledged or not). */
+  latestFields(): NoteDraftFields | null {
+    return this.pending ?? this.inFlightFields ?? this.lastAcked;
+  }
+
+  /** Stop sending and wait for an in-flight request to finish, keeping the queued text. Pair with resume() or settle(). */
+  async quiesce(): Promise<void> {
+    this.paused = true;
+    this.clear();
+    if (this.inFlight) await new Promise<void>((r) => this.idleWaiters.push(r));
+  }
+
+  /** A discard failed: send again what was queued. */
+  resume() {
+    if (!this.paused) return;
+    this.paused = false;
+    if (this.pending != null) {
+      this.set({ phase: "error" });
+      this.failures = 0;
+      void this.run();
+    }
   }
 
   private async run(): Promise<void> {
     this.clear();
-    if (this.inFlight || this.pending == null || this.disposed) return;
+    if (this.inFlight || this.pending == null || this.disposed || this.paused) return;
     if (this.state.phase === "conflict" || this.state.phase === "cleared") return;
     const fields = this.pending;
     this.pending = null;
+    this.inFlightFields = fields;
     this.inFlight = true;
     this.set({ phase: "saving" });
     let result: NoteDraftSaveResult;
@@ -97,8 +163,11 @@ export class DraftSaver {
       result = { status: "error" };
     }
     this.inFlight = false;
+    this.inFlightFields = null;
     if (result.status === "ok") {
       this.revision = result.revision;
+      this.everAcked = true;
+      this.lastAcked = fields;
       this.failures = 0;
       if (this.pending != null) {
         this.set({ phase: "saving" });
@@ -112,14 +181,22 @@ export class DraftSaver {
       this.pending = this.pending ?? fields;
       this.set({ phase: "conflict", theirs: result.fields });
     } else if (result.status === "cleared") {
-      this.revision = 0;
       if (this.selfSettled) {
         // This tab's own Save cleared the draft and a late autosave of ours came back: expected, silent, writes nothing.
+        this.revision = 0;
         this.pending = null;
         this.set({ phase: "idle", savedAt: null, theirs: null });
+      } else if (result.revision > 0 && !this.everAcked) {
+        // A FRESH session (nothing of ours was ever stored or restored) met the tombstone of an earlier Save of this key: continue from the
+        // tombstone's revision. This is also what stops a late first autosave from recreating a draft of text that was just saved.
+        this.revision = result.revision;
+        this.pending = this.pending ?? fields;
+        void this.run();
+        return;
       } else {
-        // ANOTHER window saved the record (or the revised note already has its revision). KEEP this tab's text, never reset the
-        // form, and ask: keep it as a new draft or discard it.
+        // ANOTHER window saved the record (or the revised note already has its revision). KEEP this tab's text, never reset the form,
+        // and ask: keep it as a new draft or discard it. A revision of 0 means the revise target itself is gone: only a NEW note can hold it.
+        this.revision = result.revision;
         this.pending = this.pending ?? fields;
         this.set({ phase: "cleared", theirs: null });
       }
@@ -155,10 +232,13 @@ export class DraftSaver {
     void this.run();
   }
 
-  /** Cleared by another window: keep our text as a NEW draft (expected revision 0). */
+  /**
+   * Cleared by another window: keep our text as a draft again. Continues from the tombstone's revision. When the cleared key was a REVISION
+   * of a note that now has its revision, the caller moves the text to a NEW-note key instead (see `retarget` in the hook): this saver is
+   * then disposed and the new key's saver starts from revision 0.
+   */
   keepAsNew() {
     if (this.state.phase !== "cleared") return;
-    this.revision = 0;
     this.set({ phase: "unsaved" });
     void this.run();
   }
@@ -167,6 +247,7 @@ export class DraftSaver {
   useTheirs(): NoteDraftFields | null {
     const theirs = this.state.theirs;
     this.pending = null;
+    this.lastAcked = theirs;
     this.set({ phase: "saved", theirs: null });
     return theirs;
   }
@@ -174,7 +255,10 @@ export class DraftSaver {
   /** The real record was saved or the draft discarded: nothing more to send. */
   settle() {
     this.selfSettled = true;
+    this.paused = false;
+    this.everAcked = false; // the next typing is a FRESH session: it continues from the tombstone's revision instead of prompting
     this.pending = null;
+    this.lastAcked = null;
     this.clear();
     this.revision = 0;
     this.set({ phase: "idle", savedAt: null, theirs: null });

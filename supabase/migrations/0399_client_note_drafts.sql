@@ -301,22 +301,11 @@ begin
     exception when unique_violation then
       null; -- a racing first save: fall through to the conflict / reuse path below
     end;
-    -- A CLEARED row of this key (record saved earlier) is reused for a genuinely new draft.
+  else
     update public.client_note_drafts d
        set fields = p_fields, revision = d.revision + 1, writer = p_writer, cleared_at = null
      where d.practitioner_id = v_practitioner and d.client_id = p_client_id
-       and d.kind = p_kind and d.target = p_target and d.cleared_at is not null
-    returning d.* into v_row;
-    if found then
-      return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at;
-      return;
-    end if;
-  else
-    update public.client_note_drafts d
-       set fields = p_fields, revision = d.revision + 1, writer = p_writer
-     where d.practitioner_id = v_practitioner and d.client_id = p_client_id
        and d.kind = p_kind and d.target = p_target and d.revision = p_expected_revision
-       and d.cleared_at is null
     returning d.* into v_row;
     if found then
       return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at;
@@ -329,13 +318,13 @@ begin
     and d.kind = p_kind and d.target = p_target;
   if not found then
     return query select 'gone'::text, 0, '{}'::jsonb, null::timestamptz;
-  elsif v_row.cleared_at is not null and p_expected_revision > 0 then
+  elsif v_row.cleared_at is not null then
+    -- The record was saved (a tombstone): ONLY a write at exactly the tombstone's revision revives it. A first write (expected 0) or a stale one
+    -- gets 'cleared' plus that revision, never a recreated draft of text that was just saved.
     return query select 'cleared'::text, v_row.revision, '{}'::jsonb, null::timestamptz;
   elsif v_row.writer is not null and v_row.writer = p_writer and v_row.fields = p_fields then
     -- A retry of a write that already applied (its response was lost): acknowledged success, not a conflict.
     return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at;
-  elsif v_row.cleared_at is not null then
-    return query select 'gone'::text, 0, '{}'::jsonb, null::timestamptz;
   else
     return query select 'conflict'::text, v_row.revision, v_row.fields, v_row.updated_at;
   end if;
@@ -367,7 +356,8 @@ begin
   end if;
   delete from public.client_note_drafts d
   where d.practitioner_id = v_practitioner and d.client_id = p_client_id
-    and d.studio_id = p_studio_id and d.kind = p_kind and d.target = p_target;
+    and d.studio_id = p_studio_id and d.kind = p_kind and d.target = p_target
+    and d.cleared_at is null; -- a tombstone (the record was saved) stays: it is what makes a late first autosave come back 'cleared'
   get diagnostics v_n = row_count;
   return v_n > 0;
 end;
@@ -417,11 +407,25 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_target text := coalesce(new.supersedes_note_id::text, 'new');
 begin
-  update public.client_note_drafts d
-     set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null
-   where d.practitioner_id = new.practitioner_id and d.client_id = new.client_id and d.kind = new.kind
-     and d.target = coalesce(new.supersedes_note_id::text, 'new') and d.cleared_at is null;
+  -- A CLEAR is a TOMBSTONE: the key's row is emptied and its revision bumped on EVERY save of the record (also a second save, and also when
+  -- no draft row existed yet), so a first autosave that was already in flight when Save committed (expected revision 0) finds a row at
+  -- revision >= 1 and comes back 'cleared' instead of recreating a draft of the text that was just saved. Rows are created only for an
+  -- ENABLED studio (autosave off leaves no row at all) and hold no text, only ids and a revision; the sweep removes them after a day.
+  if exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = new.studio_id)
+     and new.kind in ('consultation', 'skin_hair_analysis') then
+    insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, target_note_id, fields, writer, cleared_at)
+    values (new.studio_id, new.client_id, new.practitioner_id, new.kind, v_target, new.supersedes_note_id, null, null, pg_catalog.now())
+    on conflict (practitioner_id, client_id, kind, target)
+    do update set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null;
+  else
+    update public.client_note_drafts d
+       set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null
+     where d.practitioner_id = new.practitioner_id and d.client_id = new.client_id and d.kind = new.kind
+       and d.target = v_target;
+  end if;
   return new;
 exception when others then
   raise exception 'note draft could not be cleared' using errcode = 'HN130';
@@ -441,10 +445,18 @@ security definer
 set search_path = ''
 as $$
 begin
-  update public.client_note_drafts d
-     set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null
-   where d.practitioner_id = new.updated_by_practitioner_id and d.client_id = new.client_id
-     and d.kind = 'budget' and d.target = 'current' and d.cleared_at is null;
+  -- Same tombstone rule as notes (see client_note_drafts_clear_on_note): every save bumps the key's revision.
+  if exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = new.studio_id) then
+    insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, fields, writer, cleared_at)
+    values (new.studio_id, new.client_id, new.updated_by_practitioner_id, 'budget', 'current', null, null, pg_catalog.now())
+    on conflict (practitioner_id, client_id, kind, target)
+    do update set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null;
+  else
+    update public.client_note_drafts d
+       set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null
+     where d.practitioner_id = new.updated_by_practitioner_id and d.client_id = new.client_id
+       and d.kind = 'budget' and d.target = 'current';
+  end if;
   return new;
 exception when others then
   raise exception 'note draft could not be cleared' using errcode = 'HN130';

@@ -21,8 +21,11 @@ export function NoteDraftStatus({
   onUseTheirs,
   onDiscard,
   onKeepAsNew,
+  discardFailed = false,
 }: {
   onKeepAsNew?: () => void;
+  /** The last Discard did not go through: the draft is still stored and the editor is unchanged. */
+  discardFailed?: boolean;
   state: DraftState;
   restoredAt: string | null;
   onRetry: () => void;
@@ -46,6 +49,10 @@ export function NoteDraftStatus({
     line = DRAFT_COPY.conflict;
     tone = "text-red-700";
   } else if (restoredAt) line = draftRestoredLabel(hhmm(restoredAt));
+  if (discardFailed) {
+    line = DRAFT_COPY.discardFailed;
+    tone = "text-red-700";
+  }
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="note-draft-status">

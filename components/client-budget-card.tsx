@@ -24,6 +24,7 @@
 // app/api/stripe/*.
 
 import { useActionState, useEffect, useRef, useState } from "react";
+import { latestDraft } from "@/lib/note-drafts/draft-registry";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
 import { NoteDraftStatus } from "@/components/note-draft-status";
 import type { NoteDraftFields, NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "@/lib/note-drafts/types";
@@ -91,11 +92,14 @@ export function ClientBudgetCard({
     formData: FormData,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
+  const draftKey: NoteDraftKey = { clientId, kind: "budget", target: "current" };
+  // Start from the NEWEST text this tab knows (held after a failed flush, or saved since the page loaded), else the page's stored draft.
+  const [start] = useState(() => (draftActions ? latestDraft(draftKey, restored) : null));
   const [level, setLevel] = useState<ClientBudgetLevel | null>(
-    (restored?.fields.budget_level as ClientBudgetLevel | undefined) ?? initial.budgetLevel,
+    (start?.fields.budget_level as ClientBudgetLevel | undefined) ?? initial.budgetLevel,
   );
   // HON-130: budget draft. The saved record is written only by the Save button; the same transaction clears the draft.
-  const [budgetText, setBudgetText] = useState(restored?.fields.budget_notes ?? initial.budgetNotes);
+  const [budgetText, setBudgetText] = useState(start?.fields.budget_notes ?? initial.budgetNotes);
   // Uncontrolled textarea (defaultValue, as before); a reset remounts it with a new key.
   const [notesInit, setBudgetInit] = useState(budgetText);
   const [notesKey, setNotesKey] = useState(0);
@@ -104,9 +108,8 @@ export function ClientBudgetCard({
     setBudgetInit(next);
     setNotesKey((k) => k + 1);
   }
-  const draftKey: NoteDraftKey = { clientId, kind: "budget", target: "current" };
   const draft = useNoteDraft(draftKey, restored, draftActions ?? { save: async () => ({ status: "error" }), discard: async () => ({ ok: false }) });
-  const [restoredAt, setRestoredAt] = useState<string | null>(restored ? restored.savedAt : null);
+  const [restoredAt, setRestoredAt] = useState<string | null>(start && !start.unsaved ? start.savedAt : null);
   // A chip change is a draft change too (the chips keep their original one-line handlers; this effect reports the change).
   const levelSeen = useRef(level);
   useEffect(() => {
@@ -229,17 +232,23 @@ export function ClientBudgetCard({
           onRetry={draft.retry}
           onKeepMine={draft.keepMine}
           onKeepAsNew={draft.keepAsNew}
+          discardFailed={draft.discardFailed}
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) {
               if (t.budget_notes !== undefined) resetBudgetText(t.budget_notes);
-              if (t.budget_level !== undefined) setLevel((t.budget_level || null) as ClientBudgetLevel | null);
+              if (t.budget_level !== undefined) {
+                const next = (t.budget_level || null) as ClientBudgetLevel | null;
+                levelSeen.current = next; // adopting the other window's level is not a typed change
+                setLevel(next);
+              }
             }
           }}
           onDiscard={async () => {
-            await draft.discard();
+            if (!(await draft.discard())) return; // failed: the card stays exactly as it was and the status says so
             setRestoredAt(null);
             resetBudgetText(initial.budgetNotes);
+            levelSeen.current = initial.budgetLevel; // a reset is not a typed change: it must not start an autosave
             setLevel(initial.budgetLevel);
           }}
         />

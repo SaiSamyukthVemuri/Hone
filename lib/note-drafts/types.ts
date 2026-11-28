@@ -25,7 +25,8 @@ export type NoteDraftSaveResult =
   | { status: "ok"; revision: number; savedAt: string }
   | { status: "conflict"; revision: number; fields: NoteDraftFields; savedAt: string }
   | { status: "gone" }
-  | { status: "cleared" }
+  /** The record was saved (a tombstone). `revision` is the tombstone's revision (0 when the revise target already has its revision). */
+  | { status: "cleared"; revision: number }
   | { status: "refused" }
   | { status: "disabled" }
   | { status: "invalid" }
@@ -46,6 +47,7 @@ export const DRAFT_COPY = {
   conflict: "Another window changed this draft.",
   cleared: "This note was saved in another window. Your text is still here.",
   discard: "Discard draft",
+  discardFailed: "Couldn't discard the draft. It is still saved.",
 } as const;
 
 export function draftSavedLabel(hhmm: string): string {

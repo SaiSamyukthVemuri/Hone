@@ -119,7 +119,7 @@ describe("DraftSaver", () => {
     saver.change({ body: "autosave in flight" });
     await vi.advanceTimersByTimeAsync(1500);
     saver.settle(); // THIS tab saved the record while that autosave was still in flight
-    release({ status: "cleared" });
+    release({ status: "cleared", revision: 5 });
     await vi.advanceTimersByTimeAsync(0);
     expect(last().phase).toBe("idle"); // silent: expected, nothing more written
     expect(send).toHaveBeenCalledTimes(1);
@@ -127,7 +127,7 @@ describe("DraftSaver", () => {
   });
 
   it("another window saved the record: this tab KEEPS its text and offers keep-as-new or discard, never resets", async () => {
-    const send = vi.fn<(f: { body?: string }, r: number) => Promise<NoteDraftSaveResult>>().mockResolvedValueOnce({ status: "cleared" }).mockResolvedValueOnce(ok(1));
+    const send = vi.fn<(f: { body?: string }, r: number) => Promise<NoteDraftSaveResult>>().mockResolvedValueOnce({ status: "cleared", revision: 6 }).mockResolvedValueOnce(ok(7));
     const { saver, last } = setup(send, 4);
     saver.change({ body: "tab A text" });
     await vi.advanceTimersByTimeAsync(1500);
@@ -138,7 +138,7 @@ describe("DraftSaver", () => {
     expect(send).toHaveBeenCalledTimes(1); // nothing is written while the question is open
     saver.keepAsNew();
     await vi.advanceTimersByTimeAsync(0);
-    expect(send.mock.calls[1]).toEqual([{ body: "tab A more" }, 0]);
+    expect(send.mock.calls[1]).toEqual([{ body: "tab A more" }, 6]); // continues from the tombstone's revision
     expect(last().phase).toBe("saved");
   });
 
@@ -157,5 +157,93 @@ describe("DraftSaver", () => {
     await saver.flush();
     expect(send).toHaveBeenCalledTimes(1);
     expect(saver.hasUnsavedWork()).toBe(false);
+  });
+
+  // ---- Codex findings on #1879 ----
+
+  it("P1: a flush that FAILS resolves false and the text is still held, never treated as saved", async () => {
+    const send = vi.fn(async () => ({ status: "error" }) as NoteDraftSaveResult);
+    const { saver } = setup(send);
+    saver.change({ body: "typed during an outage" });
+    const saved = await saver.flush();
+    expect(saved).toBe(false);
+    expect(saver.unsavedWork()).toEqual({ fields: { body: "typed during an outage" }, revision: 0 });
+    expect(saver.hasUnsavedWork()).toBe(true);
+  });
+
+  it("P1: a flush that succeeds resolves true and holds nothing", async () => {
+    const { saver } = setup(async () => ok(1));
+    saver.change({ body: "fine" });
+    expect(await saver.flush()).toBe(true);
+    expect(saver.unsavedWork()).toBeNull();
+  });
+
+  it("P1: a request still in flight keeps its text recoverable (a timed-out unmount flush)", async () => {
+    const send = vi.fn(() => new Promise<NoteDraftSaveResult>(() => undefined));
+    const { saver } = setup(send);
+    saver.change({ body: "in flight" });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(saver.unsavedWork()?.fields).toEqual({ body: "in flight" });
+  });
+
+  it("P1: a FIRST write (revision 0) that meets a tombstone continues from the tombstone's revision and is saved once", async () => {
+    const send = vi.fn<(f: { body?: string }, r: number) => Promise<NoteDraftSaveResult>>().mockResolvedValueOnce({ status: "cleared", revision: 3 }).mockResolvedValueOnce(ok(4));
+    const { saver, last } = setup(send, 0);
+    saver.change({ body: "new note after an earlier save" });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(send.mock.calls.map((c) => c[1])).toEqual([0, 3]);
+    expect(last().phase).toBe("saved");
+  });
+
+  it("P1: a late FIRST autosave of THIS tab after its own Save comes back cleared and writes nothing more", async () => {
+    let release!: (r: NoteDraftSaveResult) => void;
+    const send = vi.fn(() => new Promise<NoteDraftSaveResult>((r) => (release = r)));
+    const { saver, last } = setup(send, 0);
+    saver.change({ body: "typed, first autosave in flight" });
+    await vi.advanceTimersByTimeAsync(1500);
+    saver.settle(); // Save committed meanwhile
+    release({ status: "cleared", revision: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(last().phase).toBe("idle");
+    expect(saver.unsavedWork()).toBeNull();
+  });
+
+  it("P1: Discard waits for the request in flight before it may delete, so a late save cannot recreate the draft", async () => {
+    let release!: (r: NoteDraftSaveResult) => void;
+    const send = vi.fn(() => new Promise<NoteDraftSaveResult>((r) => (release = r)));
+    const { saver } = setup(send);
+    saver.change({ body: "x" });
+    await vi.advanceTimersByTimeAsync(1500);
+    let quiesced = false;
+    void saver.quiesce().then(() => (quiesced = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(quiesced).toBe(false); // the in-flight save has not answered yet
+    release(ok(1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(quiesced).toBe(true);
+    saver.change({ body: "typed while discarding" });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(send).toHaveBeenCalledTimes(1); // nothing new is sent while quiesced
+  });
+
+  it("P2: a discard that fails keeps the queued text and sends it again on resume", async () => {
+    const send = vi.fn(async () => ok(1));
+    const { saver } = setup(send);
+    saver.change({ body: "keep me" });
+    await saver.quiesce();
+    saver.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledWith({ body: "keep me" }, 0);
+  });
+
+  it("P2: after a SUCCESSFUL discard (settle) nothing queued is ever sent", async () => {
+    const send = vi.fn(async () => ok(1));
+    const { saver } = setup(send);
+    saver.change({ body: "typed" });
+    await saver.quiesce();
+    saver.settle();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(send).not.toHaveBeenCalled();
   });
 });

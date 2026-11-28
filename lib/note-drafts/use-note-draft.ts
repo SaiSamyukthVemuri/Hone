@@ -1,38 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { DraftSaver, type DraftState } from "./draft-saver";
-import type { NoteDraftFields, NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "./types";
+import { useCallback, useEffect, useState } from "react";
+import { acquireEntry, markNone, type DraftActions, type DraftEntry } from "./draft-registry";
+import type { DraftState } from "./draft-saver";
+import type { NoteDraftFields, NoteDraftKey, StoredNoteDraft } from "./types";
 
-// Client hook: one DraftSaver per (client, kind, target) key. The component using it is keyed by that key, so a client or
-// section switch remounts it; the old saver flushes (with a timeout) and its responses can only reach itself.
-type Actions = {
-  save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string }) => Promise<NoteDraftSaveResult>;
-  discard: (key: NoteDraftKey) => Promise<{ ok: boolean }>;
-};
-
+// Client hook: attaches this editor to the key's DraftSaver (see draft-registry.ts). Unmounting DETACHES, it never discards: a flush that
+// fails (or conflicts, or is cleared) leaves the text held in the saver for the remount, and the failure is shown there. A flush is never
+// treated as a save unless it says so.
 const FLUSH_TIMEOUT_MS = 5000;
 
-export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: Actions) {
+export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions) {
   const [state, setState] = useState<DraftState>({ phase: "idle", savedAt: null, theirs: null });
-  const writer = useRef<string>("");
-  if (!writer.current) writer.current = crypto.randomUUID();
-  const saverRef = useRef<DraftSaver | null>(null);
-  const keyRef = useRef(key);
-  const actionsRef = useRef(actions);
-  actionsRef.current = actions;
-
-  if (!saverRef.current) {
-    saverRef.current = new DraftSaver({
-      initialRevision: restored?.revision ?? 0,
-      onState: setState,
-      send: (fields, expectedRevision) =>
-        actionsRef.current.save({ key: keyRef.current, fields, expectedRevision, writer: writer.current }),
-    });
-  }
-  const saver = saverRef.current;
+  const [discardFailed, setDiscardFailed] = useState(false);
+  const [entry] = useState<DraftEntry>(() => acquireEntry(key, restored, actions, () => undefined));
+  const saver = entry.saver;
+  entry.actions = actions;
 
   useEffect(() => {
+    // (Re)attach: take over state updates and show the saver's real state (a held failure is visible again, not forgotten).
+    saver.setListener((s) => {
+      entry.floor = Math.max(entry.floor, saver.currentRevision());
+      setState(s);
+    });
+    setState(saver.snapshot());
+    const unsaved = saver.unsavedWork();
+    if (unsaved && saver.snapshot().phase === "idle") saver.change(unsaved.fields); // text held by a detached saver goes out again
     const hide = () => {
       if (document.visibilityState === "hidden") void saver.flush();
     };
@@ -49,25 +42,51 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
       document.removeEventListener("visibilitychange", hide);
       window.removeEventListener("pagehide", hide);
       window.removeEventListener("beforeunload", leave);
-      // Section/client switch: flush what is pending, bounded by a timeout; the saver keeps the text in memory meanwhile.
-      void Promise.race([saver.flush(), new Promise((r) => setTimeout(r, FLUSH_TIMEOUT_MS))]).then(() => saver.dispose());
+      // Section/client switch: detach and try to save what is pending, bounded by a timeout. Whatever is still unsaved after that STAYS in
+      // the saver (and keeps retrying quietly); the remount re-attaches to it. Nothing is disposed.
+      saver.setListener(() => undefined);
+      void Promise.race([saver.flush(), new Promise<boolean>((r) => setTimeout(() => r(false), FLUSH_TIMEOUT_MS))]);
     };
-  }, [saver]);
+  }, [saver, entry]);
 
   const change = useCallback((fields: NoteDraftFields) => saver.change(fields), [saver]);
   return {
     state,
+    discardFailed,
     change,
     flush: () => saver.flush(),
     retry: () => saver.retry(),
     keepMine: () => saver.keepMine(),
     keepAsNew: () => saver.keepAsNew(),
     useTheirs: () => saver.useTheirs(),
-    /** The real record was saved (its transaction already cleared the draft): stop sending. */
-    settle: () => saver.settle(),
-    discard: async () => {
+    /** The newest text of this key (acknowledged or not), for moving it to another key. */
+    latest: () => saver.latestFields(),
+    /** The real record was saved (its transaction already cleared the draft): stop sending and remember the draft is gone. */
+    settle: () => {
       saver.settle();
-      await actionsRef.current.discard(keyRef.current);
+      markNone(key);
+    },
+    /**
+     * Delete the stored draft. Stops sending first and waits for any request in flight, so a late save cannot recreate the draft. TRUE only when
+     * the server confirmed the delete; on failure the queued text is kept and sending resumes, and `discardFailed` says so.
+     */
+    discard: async (): Promise<boolean> => {
+      await saver.quiesce();
+      let ok = false;
+      try {
+        ok = (await entry.actions.discard(key)).ok;
+      } catch {
+        ok = false;
+      }
+      if (ok) {
+        saver.settle();
+        markNone(key);
+        setDiscardFailed(false);
+        return true;
+      }
+      saver.resume();
+      setDiscardFailed(true);
+      return false;
     },
   };
 }

@@ -71,7 +71,9 @@ describe("switch ON for this studio", () => {
   it("a conflict returns the stored draft sanitised; cleared / gone / refused pass through as closed codes", async () => {
     rpc.mockResolvedValueOnce({ data: [{ status: "conflict", revision: 4, fields: { body: "theirs", evil: 1 }, updated_at: "t" }], error: null });
     expect(await saveNoteDraftAction(input)).toEqual({ status: "conflict", revision: 4, fields: { body: "theirs" }, savedAt: "t" });
-    for (const status of ["cleared", "gone", "refused"]) {
+    rpc.mockResolvedValueOnce({ data: [{ status: "cleared", revision: 7, fields: {}, updated_at: null }], error: null });
+    expect(await saveNoteDraftAction(input)).toEqual({ status: "cleared", revision: 7 }); // the tombstone's revision, so a fresh session can continue from it
+    for (const status of ["gone", "refused"]) {
       rpc.mockResolvedValueOnce({ data: [{ status, revision: 0, fields: {}, updated_at: null }], error: null });
       expect(await saveNoteDraftAction(input)).toEqual({ status });
     }

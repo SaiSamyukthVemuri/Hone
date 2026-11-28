@@ -196,3 +196,133 @@ test("saving the real note clears the draft: nothing is restored afterwards and 
   await page.reload();
   await expect(card(page, "Consultation notes").getByText(/Draft restored/)).toHaveCount(0);
 });
+
+// ---- Codex findings on #1879 (each was a way to lose text or recreate a saved draft) ----
+const goTab = (page: Page, label: string) =>
+  page.getByRole("navigation", { name: "Client profile sections" }).getByText(label, { exact: true }).first().dispatchEvent("click");
+const isSave = (route: { request(): { postData(): string | null } }) => (route.request().postData() ?? "").includes("expectedRevision");
+
+test("P1: text typed while saves fail survives switching section and back, with the failure shown; it saves when the network returns", async ({ page }) => {
+  test.setTimeout(150_000);
+  await login(page);
+  await page.goto(treatment(clientId));
+  // A draft restored from an earlier test: discard it and wait until the discard has finished (it resets the form when the server answers).
+  const skin = card(page, "Skin & hair analysis");
+  if (await skin.getByText(/Draft restored/).first().isVisible().catch(() => false)) {
+    await skin.getByRole("button", { name: "Discard draft" }).click();
+    await expect(skin.getByText(/Draft restored/)).toHaveCount(0, { timeout: T });
+  }
+  let failing = true;
+  await page.route("**/clients/**", (route) => (failing && route.request().method() === "POST" && isSave(route) ? route.abort() : route.continue()));
+  const box = card(page, "Skin & hair analysis").locator("textarea[name=body]");
+  if (!(await box.isVisible().catch(() => false))) await openNoteForm(page, "Skin & hair analysis");
+  const text = `typed during an outage ${Date.now()}`;
+  await box.fill(text);
+  await goTab(page, "Overview"); // client-side navigation: the editor unmounts while the save has not reached the server
+  await goTab(page, "Treatment");
+  const back = card(page, "Skin & hair analysis").locator("textarea[name=body]");
+  await expect(back).toHaveValue(text, { timeout: T });
+  await expect(card(page, "Skin & hair analysis").getByText("Couldn't save the draft. Your text is still here.")).toBeVisible({ timeout: 30_000 });
+  failing = false;
+  await card(page, "Skin & hair analysis").getByRole("button", { name: "Retry" }).click();
+  await expect(card(page, "Skin & hair analysis").getByText(/Draft saved \d\d:\d\d/)).toBeVisible({ timeout: T });
+  const rows = await sql<{ body: string }>(`select fields->>'body' as body from public.client_note_drafts where client_id = $1 and kind = 'skin_hair_analysis' and fields is not null`, [clientId]);
+  expect(rows.map((r) => r.body)).toContain(text);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("P1: Discard while an autosave is in flight leaves NO draft behind", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await page.goto(treatment(clientId));
+  const c = card(page, "Consultation notes");
+  const box = c.locator("textarea[name=body]");
+  if (!(await box.isVisible().catch(() => false))) await openNoteForm(page, "Consultation notes");
+  await page.route("**/clients/**", async (route) => {
+    if (route.request().method() === "POST" && isSave(route)) await new Promise((r) => setTimeout(r, 2500)); // a slow save
+    return route.continue();
+  });
+  await box.fill(`discard me ${Date.now()}`);
+  await expect(c.getByText("Saving draft…")).toBeVisible({ timeout: T });
+  await c.getByRole("button", { name: "Discard draft" }).click(); // while that save is still in flight
+  await expect(c.locator("textarea[name=body]")).toHaveValue("", { timeout: 30_000 });
+  await page.waitForTimeout(4000); // any late save would have landed by now
+  const live = await sql<{ n: string }>(`select count(*)::text as n from public.client_note_drafts where client_id = $1 and kind = 'consultation' and fields is not null`, [clientId]);
+  expect(live[0].n).toBe("0");
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("P2: a Discard that fails keeps the editor and says so", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await page.goto(treatment(clientId));
+  const c = card(page, "Consultation notes");
+  const box = c.locator("textarea[name=body]");
+  if (!(await box.isVisible().catch(() => false))) await openNoteForm(page, "Consultation notes");
+  const text = `keep me ${Date.now()}`;
+  await box.fill(text);
+  await expect(c.getByText(/Draft saved \d\d:\d\d/)).toBeVisible({ timeout: T });
+  await page.route("**/clients/**", (route) => (route.request().method() === "POST" && !isSave(route) ? route.abort() : route.continue()));
+  await c.getByRole("button", { name: "Discard draft" }).click();
+  await expect(c.getByText("Couldn't discard the draft. It is still saved.")).toBeVisible({ timeout: T });
+  await expect(c.locator("textarea[name=body]")).toHaveValue(text);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("P2: Discard on the budget card does not start an autosave of the reset", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await page.goto(treatment(clientId));
+  const form = page.locator("form", { has: page.locator("#client-budget-notes") });
+  await form.getByRole("button", { name: /^somewhat limited$/i }).click();
+  await expect(form.getByText(/Draft saved \d\d:\d\d/)).toBeVisible({ timeout: T });
+  await form.getByRole("button", { name: "Discard draft" }).click();
+  await expect(form.getByText(/Draft saved \d\d:\d\d/)).toHaveCount(0, { timeout: T });
+  await page.waitForTimeout(4000);
+  const live = await sql<{ n: string }>(`select count(*)::text as n from public.client_note_drafts where client_id = $1 and kind = 'budget' and fields is not null`, [clientId]);
+  expect(live[0].n).toBe("0");
+});
+
+test("P2: Cancel then Add note reopens with the LATEST draft", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await page.goto(treatment(clientId));
+  const c = card(page, "Skin & hair analysis");
+  const box = c.locator("textarea[name=body]");
+  if (!(await box.isVisible().catch(() => false))) await openNoteForm(page, "Skin & hair analysis");
+  const first = `first ${Date.now()}`;
+  await box.fill(first);
+  await expect(c.getByText(/Draft saved \d\d:\d\d/)).toBeVisible({ timeout: T });
+  const second = `${first} and more`;
+  await box.fill(second);
+  await c.getByRole("button", { name: "Cancel" }).click(); // closes the form; the second text may still be in flight
+  await c.getByRole("button", { name: "Add note" }).click();
+  await expect(c.locator("textarea[name=body]")).toHaveValue(second, { timeout: T });
+});
+
+test("P2: Keep as new on a revision whose note was revised elsewhere moves the text to a NEW note draft", async ({ page }) => {
+  test.setTimeout(150_000);
+  const tag = Math.random().toString(36).slice(2, 8);
+  const note = await sql<{ id: string; practitioner_id: string }>(
+    `insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body)
+     select $1, $2, p.id, 'consultation', $3 from public.practitioners p where p.studio_id = $2 limit 1 returning id, practitioner_id`,
+    [clientId, seed.studioId, `base ${tag}`],
+  );
+  await login(page);
+  await page.goto(treatment(clientId));
+  const c = card(page, "Consultation notes");
+  await c.getByRole("button", { name: "Revise current" }).click();
+  const box = c.locator("textarea[name=body]");
+  const text = `revision text ${tag}`;
+  await box.fill(text);
+  await expect(c.getByText(/Draft saved \d\d:\d\d/)).toBeVisible({ timeout: T });
+  // Another window saves a revision of that same note.
+  await sql(`insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body, supersedes_note_id) values ($1, $2, $3, 'consultation', $4, $5)`, [clientId, seed.studioId, note[0].practitioner_id, `elsewhere ${tag}`, note[0].id]);
+  await box.fill(`${text} more`);
+  await expect(c.getByText("This note was saved in another window. Your text is still here.")).toBeVisible({ timeout: 30_000 });
+  await c.getByRole("button", { name: "Keep as new draft" }).click();
+  await expect(c.locator("textarea[name=body]")).toHaveValue(`${text} more`, { timeout: T });
+  await expect(c.getByText(/Draft saved \d\d:\d\d/)).toBeVisible({ timeout: T });
+  const rows = await sql<{ target: string }>(`select target from public.client_note_drafts where client_id = $1 and kind = 'consultation' and fields->>'body' = $2`, [clientId, `${text} more`]);
+  expect(rows.map((r) => r.target)).toEqual(["new"]);
+});
