@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 // @ts-expect-error - .mjs utilities ship without type declarations
 import { NEW_PRODUCTION_BRANCH, OLD_PRODUCTION_BRANCH, resolveProductionBranch } from "../../scripts/lib/production-branch.mjs";
@@ -37,4 +39,22 @@ describe("the CI push trigger lists BOTH names (Actions filters do not follow a 
     expect(read("scripts/publish-machine-contracts-hosted.mjs")).not.toMatch(/PRODUCTION_BRANCH = "claude/);
     expect(read("scripts/publish-machine-contracts-hosted.mjs")).toMatch(/resolveProductionBranch/);
   });
+});
+
+describe("the hosted publisher's dry run (and no-argument usage) makes NO network call", () => {
+  it("a --dry-run and a bare invocation never run `git ls-remote` or `git fetch` (branch resolution is deferred past the dry-run return)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prodbranch-"));
+    try {
+      const real = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      const log = join(dir, "git.log");
+      const shim = join(dir, "git");
+      writeFileSync(shim, `#!/bin/sh\necho "$@" >> '${log}'\nexec '${real}' "$@"\n`);
+      chmodSync(shim, 0o755);
+      const env = { PATH: `${dir}:${process.env.PATH}`, HOME: process.env.HOME ?? "" } as unknown as NodeJS.ProcessEnv;
+      execFileSync("node", ["scripts/publish-machine-contracts-hosted.mjs", "--dry-run"], { cwd: ROOT, env, encoding: "utf8" });
+      try { execFileSync("node", ["scripts/publish-machine-contracts-hosted.mjs", "--bogus"], { cwd: ROOT, env, encoding: "utf8", stdio: "pipe" }); } catch { /* usage exit 2 */ }
+      const calls = existsSync(log) ? readFileSync(log, "utf8") : "";
+      expect(calls).not.toMatch(/\b(ls-remote|fetch|pull|clone)\b/);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 120_000);
 });

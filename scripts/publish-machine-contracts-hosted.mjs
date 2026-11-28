@@ -46,11 +46,13 @@ function buildPlan() {
 // Only the DECLARED git/fs/tty effects; every child process gets a scrubbed environment so the key can never be inherited.
 const scrubbed = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" };
 const git = (a) => execFileSync("git", a, { cwd: root, env: scrubbed, encoding: "utf8" }).trim();
-// `main` once the production branch is renamed, else the old name: the remote answers, so a stale local ref cannot.
-const PRODUCTION_BRANCH = resolveProductionBranch({
+// `main` once the production branch is renamed, else the old name: the remote answers, so a stale local ref cannot. LAZY and memoised: a dry run (or no arguments) must make
+// no network call, so nothing asks the remote until the publish path actually needs the name (after the dry-run return in runHosted).
+let productionBranchMemo = null;
+const productionBranch = () => (productionBranchMemo ??= resolveProductionBranch({
   override: null,
   remoteBranchExists: (n) => { try { execFileSync("git", ["ls-remote", "--exit-code", "--heads", "origin", n], { cwd: root, env: scrubbed, stdio: "ignore" }); return true; } catch { return false; } },
-});
+}));
 const ledgerDir = join(homedir(), ".hone-publish-ledger");
 const receiptsDir = join(root, "docs/production/hosted-publication-receipts");
 function writeAtomic(dir, name, body) {
@@ -68,7 +70,7 @@ try {
     execArgv: process.execArgv,
     stdinTTY: Boolean(process.stdin.isTTY),
     stdoutTTY: Boolean(process.stdout.isTTY),
-    productionBranch: PRODUCTION_BRANCH,
+    get productionBranch() { return productionBranch(); },
     expectTokenSha256: flag("expect-token-sha256"),
     now: () => Date.now(),
     stdout: (s) => console.log(s),
@@ -90,8 +92,8 @@ try {
     },
     git: (a) => (a[0] === "status" ? git(["status", "--porcelain", "--untracked-files=all"]) : git(a)),
     isAncestorOfProduction: (head) => {
-      git(["fetch", "--quiet", "origin", PRODUCTION_BRANCH]);
-      try { git(["merge-base", "--is-ancestor", head, `origin/${PRODUCTION_BRANCH}`]); return true; } catch { return false; }
+      git(["fetch", "--quiet", "origin", productionBranch()]);
+      try { git(["merge-base", "--is-ancestor", head, `origin/${productionBranch()}`]); return true; } catch { return false; }
     },
     systemRef: () => readFileSync(join(root, "supabase/.temp/project-ref"), "utf8").trim(),
     declaredMigrationMax: () => JSON.parse(readFileSync(join(root, "docs/production/migration-state.json"), "utf8")).hosted_migration_max,
