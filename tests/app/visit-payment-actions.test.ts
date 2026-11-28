@@ -20,17 +20,25 @@ const S = vi.hoisted(() => ({
   refundCalls: [] as unknown[],
   refundOutcome: { outcome: "succeeded", message: "Refund recorded." } as { outcome: string; message: string },
   quote: 10000 as number | null,
+  attemptMode: false as boolean | null,
+  attemptReadable: true,
+  injectAttempt: false,
+  liveDeployment: false,
 }));
 vi.mock("@/lib/billing/appointment-settlement", () => ({ resolveAppointmentQuotedAmountCents: async () => S.quote }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false, getStripe: () => { S.stripeCalls += 1; throw new Error("Stripe must not be called"); } }));
+vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => S.liveDeployment, getStripe: () => { S.stripeCalls += 1; throw new Error("Stripe must not be called"); } }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "pr1", role: S.role }, studio: { id: "11111111-1111-4111-8111-111111111111", timezone: "UTC" } }),
 }));
 vi.mock("@/lib/billing/visit-payments", () => ({
   splitPaymentsEnabled: async () => S.enabled,
-  loadVisitLedger: async () => ({ ok: true, ledger: S.ledger }),
+  loadVisitLedger: async () => {
+    const l = S.ledger as { cards: unknown[] };
+    // the refund tests read the payment's persisted mode through the ledger (test = stripe_livemode is not true)
+    return { ok: true, ledger: S.injectAttempt && S.attemptReadable ? { ...l, cards: [...l.cards, { kind: "card", id: "44444444-4444-4444-8444-444444444444", amountCents: 10000, status: "succeeded", at: "t", platformFeeCents: null, test: S.attemptMode !== true }] } : S.ledger };
+  },
   readRefundRow: async (studioId: string, id: string) => ({ id, studioId, attemptId: "44444444-4444-4444-8444-444444444444", amountCents: 4000, status: "pending_stripe", source: "hone" }),
   callCommand: async (fn: string, args: Record<string, unknown>) => { S.commandCalls.push([fn, args]); return S.command; },
 }));
@@ -52,9 +60,9 @@ vi.mock("@/lib/supabase/admin-server", () => ({
       const chain: Record<string, unknown> = {};
       const self = () => chain;
       // sessions behaves like the table: .is("deleted_at", null) keeps live rows, .order("created_at"/"id", desc) sorts, maybeSingle takes the first.
-      let liveOnly = false;
+      let liveOnly = false; let cols = "";
       Object.assign(chain, {
-        select: self, eq: self, not: self, limit: self, order: self,
+        select: (c?: string) => { cols = c ?? ""; return chain; }, eq: self, not: self, limit: self, order: self,
         is: (col: string, v: unknown) => { if (col === "deleted_at" && v === null) liveOnly = true; return chain; },
         maybeSingle: async () => {
           if (table !== "sessions") return { data: S.prior, error: null };
@@ -79,6 +87,7 @@ const PAY = "44444444-4444-4444-8444-444444444444";
 const form = (o: Record<string, string>) => { const f = new FormData(); for (const [k, v] of Object.entries(o)) f.set(k, v); return f; };
 
 beforeEach(() => {
+  S.attemptMode = false; S.attemptReadable = true; S.liveDeployment = false; S.injectAttempt = false;
   S.role = "owner"; S.enabled = true; S.command = { result: "recorded", id: "p1", state: "confirmed" }; S.commandCalls = [];
   S.executeResult = null; S.sessions = [{ id: "s1", deleted_at: null, created_at: "2026-11-01T00:00:00Z" }]; S.insertError = null; S.inserts = []; S.stripeCalls = 0; S.executeCalls = 0; S.prior = null; S.refundCalls = []; S.refundOutcome = { outcome: "succeeded", message: "Refund recorded." };
   S.ledger = { bill: { id: "b", totalCents: 22500, currency: "cad", referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "x" }, cards: [], externals: [], refunds: [] };
@@ -264,6 +273,7 @@ describe("a refused re-check is not proof of 'not charged' while Stripe may have
 });
 
 describe("partial card refund", () => {
+  beforeEach(() => { S.injectAttempt = true; });
   const f = (o: Record<string, string> = {}) => form({ appointment_id: APPT, attempt_id: PAY, kind: "payment_reversal", amount_dollars: "40.00", reason: "client unhappy", submission_id: SUB, ...o });
 
   it("a non-owner never reaches the database or Stripe", async () => {
@@ -277,6 +287,33 @@ describe("partial card refund", () => {
     const out = await refundCardPaymentAction(f({ amount_dollars: "75.00" }));
     expect(out).toMatchObject({ ok: false, code: "exceeds_refundable" });
     expect(S.refundCalls).toEqual([]);
+  });
+  // Codex P2 on #1827: a live deployment cannot refund a Stripe TEST payment; the refusal comes BEFORE any refund row exists (no pending row, no reserved capacity, no bill change).
+  it("a live deployment and a TEST-card payment: refused with a fixed sentence, NO command (so no refund row, bill unchanged), Stripe never asked", async () => {
+    S.liveDeployment = true; S.attemptMode = false;
+    S.command = { result: "requested", id: "refund-row-1", state: "pending_stripe" };
+    const before = JSON.stringify(S.ledger);
+    for (const kind of ["payment_reversal", "price_reduction"]) {
+      const out = await refundCardPaymentAction(f({ kind }));
+      expect(out).toMatchObject({ ok: false, code: "payment_mode_mismatch" });
+      expect(out.note.message).toBe("This payment was made in Stripe test mode, so it cannot be refunded from the live account. Nothing was changed.");
+    }
+    expect(S.commandCalls).toEqual([]);
+    expect(S.refundCalls).toEqual([]);
+    expect(S.stripeCalls).toBe(0);                              // Stripe is never touched
+    expect(JSON.stringify(S.ledger)).toBe(before);              // the visit's ledger (balance, pending refunds, refundable) is byte-identical
+  });
+  it("a live deployment and a LIVE-card payment follows the existing path", async () => {
+    S.liveDeployment = true; S.attemptMode = true;
+    S.command = { result: "requested", id: "refund-row-1", state: "pending_stripe" };
+    expect(await refundCardPaymentAction(f())).toMatchObject({ ok: true, refundId: "refund-row-1" });
+    expect(S.commandCalls[0][0]).toBe("request_payment_refund");
+    expect(S.refundCalls).toHaveLength(1);
+  });
+  it("an unreadable payment mode is refused before any command (never guessed)", async () => {
+    S.attemptReadable = false;
+    expect(await refundCardPaymentAction(f())).toMatchObject({ ok: false, code: "unavailable" });
+    expect(S.commandCalls).toEqual([]);
   });
   it("a $40 refund is recorded by the command first, then sent to Stripe ONCE for that refund row", async () => {
     S.command = { result: "requested", id: "refund-row-1", state: "pending_stripe" };

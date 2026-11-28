@@ -25,7 +25,7 @@ async function owner() {
   try {
     const { practitioner, studio } = await getCurrentPractitionerWithStudio();
     if (practitioner.role !== "owner") return null;
-    return { studioId: studio.id, timezone: studio.timezone };
+    return { studioId: studio.id, timezone: studio.timezone, isOwner: practitioner.role === "owner" };
   } catch {
     return null;
   }
@@ -59,7 +59,7 @@ export async function startSplitBillAction(formData: FormData): Promise<SplitAct
   // The fee the owner reviewed must still be the current quote: otherwise the bill would be made at a price they never saw (Codex P2). Required, so a bare post cannot skip it.
   const seen = /^\d{1,7}$/.test(str(formData.get("reference_fee_cents"))) ? Number(str(formData.get("reference_fee_cents"))) : 0;
   if (seen <= 0) return refuse("invalid_input");
-  if ((await resolveAppointmentQuotedAmountCents(who.studioId, appointmentId, who.timezone, true)) !== seen) return refuse("fee_changed");
+  if ((await resolveAppointmentQuotedAmountCents(who.studioId, appointmentId, who.timezone, who.isOwner)) !== seen) return refuse("fee_changed");
   const finalRaw = str(formData.get("final_amount_dollars"));
   let finalCents: number | null = null;
   if (finalRaw !== "") {
@@ -297,6 +297,12 @@ export async function refundCardPaymentAction(formData: FormData): Promise<CardR
   const reason = str(formData.get("reason"));
   if (!UUID.test(appointmentId) || !UUID.test(attemptId) || !UUID.test(submissionId) || cents === null || reason === "" || reason.length > 500
       || (kind !== "price_reduction" && kind !== "payment_reversal")) return refuse("invalid_input");
+  // The payment's persisted mode must be the one this deployment can refund, BEFORE any refund row exists and before Stripe: refundCardPaymentPartial refuses a payment of the other
+  // mode without settling, which would leave a pending row that reserves refundable capacity (and, as a price reduction, lowers the bill) with no refund ever sent. Unreadable = refused.
+  const seen = await loadVisitLedger(who.studioId, appointmentId);
+  const payment = seen.ok ? seen.ledger.cards.find((c) => c.id === attemptId) : undefined;
+  if (!payment) return refuse("unavailable");
+  if ((payment.test !== true) !== inferStripeLivemode()) return refuse("payment_mode_mismatch"); // test = stripe_livemode is not true (the statement's own signal)
   const row = await callCommand("request_payment_refund", {
     p_studio_id: who.studioId, p_appointment_id: appointmentId, p_attempt_id: attemptId, p_external_payment_id: null,
     p_amount_cents: cents, p_kind: kind, p_reason: reason, p_submission_id: submissionId,

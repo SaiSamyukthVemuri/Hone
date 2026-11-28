@@ -51,3 +51,23 @@ describe("a test card still holds the bill until the studio's first real card", 
     expect(host!.querySelector('[data-testid="split-test-card-holds"]')).toBeNull();
   });
 });
+
+describe("the refund selector in a live deployment (Codex P2: a test payment cannot be refunded from the live account)", () => {
+  const toggle = () => [...host!.querySelectorAll("button")].find((b) => /Refund or reduce a payment/.test(b.textContent ?? ""));
+  const refundOptions = () => {
+    act(() => { toggle()?.click(); });
+    return [...host!.querySelectorAll('[data-testid="split-refund-form"] option')].map((o) => o.textContent ?? "");
+  };
+  it("a succeeded TEST card is not offered; a live card is; in a test deployment the test card still is", () => {
+    const live = { kind: "card" as const, id: "l", amountCents: 5000, status: "succeeded", at: "2026-11-27T00:00:00Z", platformFeeCents: null };
+    const test = { ...live, id: "t", test: true };
+    mount(ledger({ cards: [test], cardAssumesLive: true }));
+    expect(toggle()).toBeUndefined();                                                // nothing refundable: no refund control at all
+    act(() => root?.unmount()); host?.remove();
+    mount(ledger({ cards: [test, live], cardAssumesLive: true }));
+    expect(refundOptions().filter((t) => /Card/.test(t))).toHaveLength(1);
+    act(() => root?.unmount()); host?.remove();
+    mount(ledger({ cards: [test], cardAssumesLive: false }));
+    expect(refundOptions().filter((t) => /Card/.test(t))).toHaveLength(1);
+  });
+});

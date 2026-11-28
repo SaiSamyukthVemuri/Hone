@@ -183,8 +183,9 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   // Choose ONE payment to refund against. Cash and transfers are recorded at once; a card refund asks Stripe (and may say "Checking refund status").
   const stillRefundable = (match: (r: (typeof ledger.refunds)[number]) => boolean, total: number) =>
     total - ledger.refunds.filter((r) => r.status !== "failed" && match(r)).reduce((n, r) => n + r.amountCents, 0);
+  // A live deployment cannot refund a Stripe TEST payment (the server refuses it before any refund row exists), so it is not offered.
   const refundable = [
-    ...ledger.cards.filter((c) => c.status === "succeeded").map((c) => ({ key: `card:${c.id}`, label: "Card", cents: stillRefundable((r) => r.attemptId === c.id, c.amountCents), id: c.id, card: true })),
+    ...ledger.cards.filter((c) => c.status === "succeeded" && !(ledger.cardAssumesLive === true && c.test === true)).map((c) => ({ key: `card:${c.id}`, label: "Card", cents: stillRefundable((r) => r.attemptId === c.id, c.amountCents), id: c.id, card: true })),
     ...ledger.externals.filter((e) => e.state === "confirmed").map((e) => ({ key: `ext:${e.id}`, label: methodLabel(e.method), cents: stillRefundable((r) => r.externalPaymentId === e.id, e.amountCents), id: e.id, card: false })),
   ].filter((r) => r.cents > 0 && !ledger.reviewOpen);
   const tenderLabel = tender === "card" ? "Charge card" : tender === "paid_cash" ? "Record cash received" : "Record transfer";

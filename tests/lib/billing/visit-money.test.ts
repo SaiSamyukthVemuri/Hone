@@ -79,3 +79,32 @@ describe("the statement and checkout agree on the $225 case", () => {
     expect([a.collectedCents, a.refundedCents, a.netCents]).toEqual([b.collectedCents, b.refundedCents, b.netCents]);
   });
 });
+
+// Sam, 28 Nov 2026: in a LIVE studio the visit's Collected / Refunded / Net are REAL money only; test entries stay listed (labelled) but are in no total.
+describe("visitMoneySummary in a live studio: the mixed example ($100 test charge, $40 test refund, $50 cash, $75 transfer)", () => {
+  const bill = { id: "b", totalCents: 12500, currency: "cad" as const, referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "t" };
+  const mixed = (studioLive?: boolean): VisitLedger => ({
+    studioLive, bill,
+    cards: [{ kind: "card", id: "c", amountCents: 10000, status: "succeeded", at: "t", platformFeeCents: null, test: true }],
+    externals: [
+      { id: "e1", method: "paid_cash", amountCents: 5000, state: "confirmed", at: "t" },
+      { id: "e2", method: "paid_e_transfer", amountCents: 7500, state: "confirmed", at: "t" },
+    ] as never,
+    refunds: [{ id: "r", amountCents: 4000, kind: "payment_reversal", status: "succeeded", attemptId: "c", externalPaymentId: null, reason: "x", at: "t", platformFeeReturnedCents: null, test: true }],
+  });
+  it("live studio: Collected $125, Refunded $0, Net $125", () => {
+    expect(visitMoneySummary(mixed(true))).toMatchObject({ collectedCents: 12500, refundedCents: 0, netCents: 12500 });
+  });
+  it("a studio that is not live yet (a trial): everything counts, as before ($225 / $40 / $185)", () => {
+    for (const live of [false, undefined]) expect(visitMoneySummary(mixed(live))).toMatchObject({ collectedCents: 22500, refundedCents: 4000, netCents: 18500 });
+  });
+  it("a LIVE card and its refund in a live studio count in full", () => {
+    const l = mixed(true);
+    l.cards = [{ ...l.cards[0], test: undefined }]; l.refunds = [{ ...l.refunds[0], test: undefined }];
+    expect(visitMoneySummary(l)).toMatchObject({ collectedCents: 22500, refundedCents: 4000, netCents: 18500 });
+  });
+  it("a pending TEST refund in a live studio is not 'refund pending' either", () => {
+    const l = mixed(true); l.refunds = [{ ...l.refunds[0], status: "pending_stripe" }];
+    expect(visitMoneySummary(l)).toMatchObject({ refundPendingCents: 0, final: true });
+  });
+});

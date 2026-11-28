@@ -38,14 +38,17 @@ export type VisitMoneySummary = {
 /** The summary of one visit's split-payments ledger (checkout and the visit page). */
 export function visitMoneySummary(ledger: VisitLedger): VisitMoneySummary {
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  // Sam, 28 Nov 2026: in a LIVE studio the totals are REAL money only. A Stripe TEST payment or refund stays visible (labelled) but is in none of Collected, Refunded or Net.
+  // In a studio that is not live yet (a trial), everything counts, as before.
+  const real = (x: { test?: boolean }) => !(ledger.studioLive === true && x.test === true);
   const collectedCents = sum(ledger.externals.filter((e) => e.state === "confirmed").map((e) => e.amountCents))
-    + sum(ledger.cards.filter((c) => c.status === "succeeded").map((c) => c.amountCents));
-  const refundedCents = sum(ledger.refunds.filter((r) => r.status === "succeeded").map((r) => r.amountCents));
+    + sum(ledger.cards.filter((c) => c.status === "succeeded" && real(c)).map((c) => c.amountCents));
+  const refundedCents = sum(ledger.refunds.filter((r) => r.status === "succeeded" && real(r)).map((r) => r.amountCents));
   // An open review is a refund Stripe reports that Hone has not recorded: the money may already be gone, so it is pending too, never kept and never yet refunded.
-  const refundPendingCents = sum(ledger.refunds.filter((r) => r.status === "pending_stripe").map((r) => r.amountCents))
+  const refundPendingCents = sum(ledger.refunds.filter((r) => r.status === "pending_stripe" && real(r)).map((r) => r.amountCents))
     + sum((ledger.reviews ?? []).map((rv) => rv.amountCents));
   const waitingCents = sum(ledger.externals.filter((e) => e.state === "pending_confirmation").map((e) => e.amountCents));
-  const cardPendingCents = sum(ledger.cards.filter((c) => c.status === "pending_stripe").map((c) => c.amountCents));
+  const cardPendingCents = sum(ledger.cards.filter((c) => c.status === "pending_stripe" && real(c)).map((c) => c.amountCents));
   const reviewOpen = ledger.reviewOpen === true || (ledger.reviews ?? []).length > 0;
   return {
     collectedCents, refundedCents, netCents: collectedCents - refundedCents,
