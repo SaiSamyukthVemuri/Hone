@@ -78,7 +78,7 @@ export default async function SubscriptionPage({ searchParams }: {
       : query.error === "change" ? "We couldn’t complete that change. Review your billing details and try again."
       : "We couldn’t open billing. Please try again."}</p>}
     {query.notice === "restarting" && billing.status === "active" && <p role="status" className="my-4">Your studio is open. <a href="/dashboard" className="underline">Open dashboard</a></p>}
-    {query.notice === "settling" && billing.invoice && <p role="status" className="my-4 text-sm">Check your invoice history for the latest payment.</p>}
+    {query.notice === "settling" && billing.overdue && <p role="status" className="my-4 text-sm">Check your invoice history for the latest payment.</p>}
     <section aria-label="Current plan" className="py-6">
       <div className={split}>
         <div className="flex items-start gap-3">

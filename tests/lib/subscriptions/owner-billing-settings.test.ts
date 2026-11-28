@@ -124,7 +124,7 @@ it("opens the verified invoice, only while it has a payable balance", async () =
   await expect(payOutstandingInvoice(studio.id)).rejects.toThrow(path + "?notice=settling");
   h.invoice.mockRejectedValue(new Error("unavailable"));
   await expect(payOutstandingInvoice(studio.id)).rejects.toThrow(path + "?error=invoice");
-  h.rpc.mockResolvedValue({ data: { ...billing, invoice: null } });
+  h.ids.mockResolvedValue({ data: { customer: billing.customer, subscription: billing.subscription, invoice: null } });
   h.invoice.mockClear();
   await expect(payOutstandingInvoice(studio.id)).rejects.toThrow("redirect " + path);
   expect(h.invoice).not.toHaveBeenCalled();
