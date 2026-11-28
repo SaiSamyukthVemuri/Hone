@@ -29,6 +29,8 @@ import { Spinner } from "./spinner";
 export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger";
 export type ButtonSize = "sm" | "md";
 
+// A DISABLED (or pending) button must not react: every variant restores its RESTING fill under `disabled:hover:` / `disabled:active:`, because CONTROL_DISABLED only dims
+// the control and the hover and pressed fills below would otherwise still paint on it.
 const VARIANT: Record<ButtonVariant, string> = {
   // Solid action. `active:` is a DISTINCT step, not a repeat of the hover fill.
   //
@@ -39,12 +41,14 @@ const VARIANT: Record<ButtonVariant, string> = {
   // painted and saw nothing at all. Each family now has its own third step —
   // accent 900->800->700, danger 600->700->800 — so the press is visible on
   // both input methods, with or without motion.
-  primary: "bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-active",
+  primary:
+    "bg-accent text-on-accent hover:bg-accent-hover active:bg-accent-active disabled:hover:bg-accent disabled:active:bg-accent",
   secondary:
-    "border border-line-strong bg-surface text-fg hover:bg-surface-sunken active:bg-line",
-  quiet: "text-fg-muted hover:bg-surface-sunken hover:text-fg active:bg-line active:text-fg",
+    "border border-line-strong bg-surface text-fg hover:bg-surface-sunken active:bg-line disabled:hover:bg-surface disabled:active:bg-surface",
+  quiet:
+    "text-fg-muted hover:bg-surface-sunken hover:text-fg active:bg-line active:text-fg disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:active:bg-transparent disabled:active:text-fg-muted",
   danger:
-    "bg-danger-solid text-on-accent hover:bg-danger-solid-hover active:bg-danger-solid-active",
+    "bg-danger-solid text-on-accent hover:bg-danger-solid-hover active:bg-danger-solid-active disabled:hover:bg-danger-solid disabled:active:bg-danger-solid",
 };
 
 const SIZE: Record<ButtonSize, string> = {
