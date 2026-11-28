@@ -358,6 +358,8 @@ export const BROWSER_GROUPS = {
       // 0339 (owner-only writes on services and consent wording): the owner still edits services and consent wording
       // through the shipped actions; a practitioner is shown no edit control.
       "owner-only-catalog-edit.spec.ts",
+      // HON-124 item 7. The client profile's links: hover, pressed, keyboard focus, tap size. Follows none of them.
+      "client-profile-feedback.spec.ts",
       // HON-100: the owner's Statements month controls (arrow, picker, Back/Forward, reload) all name the same month. Owner-only read surface.
       "statements-month-navigation.spec.ts",
       // HON-124 (print): the statement, the record-keeping sections and the clinical-notes export print as the document alone, unclipped and readable, on Letter and A4.
