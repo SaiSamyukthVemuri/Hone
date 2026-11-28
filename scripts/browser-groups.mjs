@@ -328,6 +328,8 @@ export const BROWSER_GROUPS = {
     description: "owner/admin, onboarding, studio setup and capacity",
     specs: [
       "cancellation-fee-rules.spec.ts",
+      // The shared Button: a disabled one shows no hover or pressed change, an enabled one still does (Save rules, never clicked).
+      "disabled-button-feedback.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
       // Connected practitioner journey (opt-in: self-skips unless MULTI_PRACTITIONER_JOURNEY_E2E=1, so a targeted lane lists it but runs nothing).
