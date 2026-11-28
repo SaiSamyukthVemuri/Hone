@@ -190,7 +190,11 @@ export function withSentryEgressGuard(existing: string | undefined): string {
 // Environment for the Next dev server under test. Mirrors the fast
 // CI lane's dummy/test-safe values, with Supabase pointed at the
 // LOCAL stack. Nothing here is a real secret.
+// HON-130: autosaved note drafts are OFF everywhere except this ONE synthetic studio id, in the disposable local browser stack only.
+export const E2E_NOTE_DRAFTS_STUDIO_ID = "d0d0d0d0-1300-4130-8130-000000000130";
+
 export const E2E_WEB_SERVER_ENV: Record<string, string> = {
+  HONE_NOTE_DRAFTS_STUDIO_IDS: E2E_NOTE_DRAFTS_STUDIO_ID,
   // Exercise the receptionist route in the disposable local browser stack.
   HONE_RECEPTIONIST_DESK_ENABLED: "true",
   // HELD portrait policy: OFF unless the outer process explicitly enables it

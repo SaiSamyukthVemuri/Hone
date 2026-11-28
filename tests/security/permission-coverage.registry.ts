@@ -85,6 +85,11 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   "app/(app)/clients/[id]/budget-context-actions.ts": {
     updateClientBudgetContextAction: "staff",
   },
+  "app/(app)/clients/[id]/note-draft-actions.ts": {
+    saveNoteDraftAction: "staff",
+    discardNoteDraftAction: "staff",
+    peekNoteDraftAction: "staff",
+  },
   "app/(app)/clients/[id]/clinical-notes-actions.ts": {
     addClinicalNoteAction: "staff",
     reviseClinicalNoteAction: "staff",
@@ -453,6 +458,9 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   "app/api/cron/no-show-check/route.ts": {
     GET: "not_staff(cron)",
   },
+  "app/api/cron/sweep-note-drafts/route.ts": {
+    GET: "not_staff(cron)+admin",
+  },
   "app/api/cron/stuck-fee-sweep/route.ts": {
     GET: "not_staff(cron)+admin",
   },
@@ -572,6 +580,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
 export const RPC_NAMES: readonly string[] = [
   "edit_studio_portal_presentation",
   "acknowledge_waitlist_times_feedback",
+  "add_client_clinical_note",
   "add_electrolysis_pass",
   "admin_accept_pending_invitation",
   "admin_complete_onboarding",
@@ -583,6 +592,7 @@ export const RPC_NAMES: readonly string[] = [
   "begin_waitlist_invitation_proof",
   "calendar_event_link_transition",
   "claim_calendar_sync_op",
+  "discard_client_note_draft",
   "claim_conversion_delivery",
   "claim_email_send",
   "claim_new_client_waitlist_entries",
@@ -710,6 +720,9 @@ export const RPC_NAMES: readonly string[] = [
   "revert_appointment_outcome",
   "run_waitlist_retention_cleanup",
   "save_client_card_on_file_ordered",
+  "save_client_note_draft",
+  "upsert_client_budget_context",
+  "sweep_client_note_drafts",
   "save_weekly_availability",
   "set_appointment_notes",
   "set_client_portrait",
@@ -772,6 +785,11 @@ export const RPC_NAMES: readonly string[] = [
 export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   edit_studio_portal_presentation: "-u-D",
   acknowledge_waitlist_times_feedback: "--sD",
+  add_client_clinical_note: "-u-I",
+  discard_client_note_draft: "-u-D",
+  save_client_note_draft: "-u-D",
+  sweep_client_note_drafts: "--sD",
+  upsert_client_budget_context: "-u-I",
   add_electrolysis_pass: "-u-D",
   admin_accept_pending_invitation: "--sD",
   admin_complete_onboarding: "--sD",

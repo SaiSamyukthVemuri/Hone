@@ -21,6 +21,10 @@
       "schedule": "0 11 * * *"
     },
     {
+      "path": "/api/cron/sweep-note-drafts",
+      "schedule": "0 4 * * *"
+    },
+    {
       "path": "/api/cron/lead-alerts",
       "schedule": "0 13 * * *"
     }

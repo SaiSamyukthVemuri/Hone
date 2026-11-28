@@ -2,6 +2,11 @@ export type Cls = "gated" | "desk" | "invite" | "pure" | "platform" | "helper";
 export const CLASSIFICATION: Record<string, { cls: Cls; anon?: boolean; reason: string }> = {
   "graphql_public.graphql/4": { cls: "platform", anon: true, reason: "Supabase GraphQL entry point; reads only through table privileges and row-level security, covered by the table-closure test." },
   "public.add_electrolysis_pass/26": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
+  "public.add_client_clinical_note/7": { cls: "gated", reason: "Invoker wrapper: needs the caller's own ACTIVE practitioner row in the client's studio (42501 otherwise), and the insert is then decided by the table's own row-level security; refuses a receptionist." },
+  "public.client_note_draft_retention/0": { cls: "pure", reason: "Pure function returning a constant interval; no table access and nothing about any studio." },
+  "public.discard_client_note_draft/5": { cls: "gated", reason: "Gated on an active practitioner row of the studio the data belongs to, before any data access; refuses a receptionist. Returns true (nothing to keep) or false and never reads or returns any text." },
+  "public.save_client_note_draft/8": { cls: "gated", reason: "Gated on an active practitioner row of the studio the data belongs to, before any data access; refuses a receptionist. Answers the closed status refused with no text." },
+  "public.upsert_client_budget_context/4": { cls: "gated", reason: "Invoker wrapper: needs the caller's own ACTIVE practitioner row in the client's studio (42501 otherwise), and the upsert is then decided by the table's own row-level security; refuses a receptionist." },
   "public.appointment_transition_allowed/2": { cls: "pure", anon: true, reason: "Pure function of its arguments with no table access; returns nothing about any studio." },
   "public.archive_treatment_image/2": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
   "public.audit_actor_is_caller/2": { cls: "helper", reason: "Boolean membership or ownership helper keyed on the caller's active practitioner row; returns false for a receptionist." },
@@ -103,6 +108,7 @@ export const CLASSIFICATION: Record<string, { cls: Cls; anon?: boolean; reason: 
 export const PINS: Record<string, string> = {
   "public.add_electrolysis_pass/26": "error:23514|Session not found or not writable by this practitioner.",
   "public.archive_treatment_image/2": "null",
+  "public.add_client_clinical_note/7": "error:22P02|malformed array literal: \"[]\"",
   "public.audit_actor_is_caller/2": "false",
   "public.can_read_client_legal_identity/1": "false",
   "public.can_use_client_legal_identity/1": "false",
@@ -117,6 +123,7 @@ export const PINS: Record<string, string> = {
   "public.create_session_block_with_areas/4": "error:P0001|not authorized for studio <id>",
   "public.create_treatment_image_metadata/9": "error:23514|That client is not available.",
   "public.dismiss_attention_item/3": "json-ok-false",
+  "public.discard_client_note_draft/5": "false",
   "public.edit_client_pinned_note/5": "false",
   "public.edit_session_started_at/3": "error:23514|Session not found or not writable by this practitioner.",
   "public.edit_studio_portal_presentation/4": "error:42501|Owner access required",
@@ -177,15 +184,18 @@ export const PINS: Record<string, string> = {
   "public.start_session/5": "error:23514|Inactive practitioners cannot edit sessions.",
   "public.supersede_appointment_settlement/7": "error:23514|Inactive practitioners cannot edit sessions.",
   "public.update_block_with_entry/29": "error:23514|Session not found or not writable by this practitioner.",
+  "public.save_client_note_draft/8": "status:refused",
   "public.update_client_profile_if_unchanged/4": "null",
   "public.update_own_practitioner_profile/3": "null",
   "public.update_session_block_with_areas/6": "error:P0001|not authorized for studio <id>",
+  "public.upsert_client_budget_context/4": "error:42501|not available",
   "public.waive_appointment_fee/5": "error:23514|Inactive practitioners cannot edit sessions.",
   "public.whole_session_copy_source_descriptor/2": "error:HN001|not authorized",
   "public.withdraw_client_id_photo_consent/1": "error:23514|ID photos are not available for this client."
 };
 // Commands whose real-id call returns the same outcome for the owner as for a receptionist, so the call does not prove which check refused. Each needs a reason; the goal is an empty list.
 export const UNPROVEN: Record<string, string> = {
+  "public.add_client_clinical_note/7": "The test's generic arguments (an empty-array literal for the areas) are rejected by argument parsing for the owner too, so this call does not reach the gate. The gate (the caller's own active practitioner row in the client's studio, 42501 otherwise) and the saved note are proven in tests/db/client-note-save-rpc.db.test.ts, for owner, colleague, receptionist and stranger.",
   "public.client_id_photo_can_read/2": "Boolean or reference helper; the feature switch is off on a fresh stack, so an owner also gets false or nothing. The receptionist's false or nothing comes from the actor check; the owner-positive path is covered by the ID-photo round-trip DB suite, not proven apart here.",
   "public.client_id_photo_enabled/1": "Boolean or reference helper; the feature switch is off on a fresh stack, so an owner also gets false or nothing. The receptionist's false or nothing comes from the actor check; the owner-positive path is covered by the ID-photo round-trip DB suite, not proven apart here.",
   "public.create_block_with_initial_setup/30": "The call needs a full machine-setup payload, so the owner is stopped by argument validation too. Gate order proven statically (assert_session_writable first); the machine-setup DB suites cover the owner path.",
@@ -220,6 +230,8 @@ export const GLOBAL_REFERENCE: Record<string, string> = {
 // Tables with no row on a fresh stack: their zero-read, update and delete checks are vacuous. Kept as small as possible; each needs a reason. Separate from INSERT_UNPROVEN.
 export const NO_ROW: Record<string, string> = {
   admin_action_events: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
+  client_note_draft_enabled_studios: "No row on a fresh stack (autosave is OFF by default; the allow-list is empty); closure is shown from the catalog (row-level security on, no policy, no grant to authenticated).",
+  client_note_drafts: "No row on a fresh stack (autosave is OFF by default, so nothing is written); closure is shown from the catalog (row-level security on, author-only SELECT policy, no write grant).",
   appointment_audit: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   appointment_payments: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   appointment_policy_acknowledgements: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",

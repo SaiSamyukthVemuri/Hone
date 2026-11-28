@@ -135,6 +135,15 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "app/api/cron/sweep-note-drafts/route.ts",
+    purpose: "HON-130: scheduled retention sweep of autosaved note drafts (expired drafts and cleared rows).",
+    why:
+      "Rejects any request without the CRON_SECRET bearer (isAuthorizedCronRequest, a constant-time compare) before building a client, then calls the " +
+      "service_role-only sweep_client_note_drafts() command, which deletes by updated_at in small skip-locked batches and returns a COUNT. It never reads " +
+      "or returns draft text and never touches the clinical or budget tables.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
     path: "app/api/cron/stuck-fee-sweep/route.ts",
     purpose: "Monitoring for the manual-fee feature: a non-mutating sweep that raises the critical ops alert for a stuck fee attempt.",
     why:

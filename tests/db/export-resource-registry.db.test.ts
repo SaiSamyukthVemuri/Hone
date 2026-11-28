@@ -918,12 +918,14 @@ describe("what is excluded, and on what grounds", () => {
       // derived from the two ledgers.
       // 7 -> 8 platform: waitlist_retention_runs (0326, HON-7), the cleanup job's run log: counts and times, no studio column.
       // 8 -> 10 platform: platform_rollouts and platform_rollout_studios (the platform rollout control): Hone's own release switch and pilot list, no studio content.
-      platform: 10,
+      // 10 -> 11 platform: client_note_draft_enabled_studios (0399, HON-130), Hone's own switch for autosaved drafts: studio ids and an enable time, no studio content.
+      platform: 11,
       // 7 -> 8 derived: dashboard_attention_events (0298, HELD), an owner's own dismiss/restore tidy-up of the Dashboard Needs
       // attention list. View state, not studio content; every reminder it hides is recomputed from records that ARE exported.
       // 8 -> 10 derived: waitlist_followups and waitlist_decline_owner_emails (0325, HON-7), the owner's follow-up queue and its
       // delivery ledger. Operational; the client's own answers are exported through export_waitlist_decline_answers.
-      derived: 10,
+      // 10 -> 11 derived: client_note_drafts (0399, HON-130), transient author-private autosaved text; the saved record is exported from its own table.
+      derived: 11,
       // 2 -> 3 deliberate_privacy: waitlist_erase_records (0325), ids and dates only, kept 30 days.
       deliberate_privacy: 3,
     });

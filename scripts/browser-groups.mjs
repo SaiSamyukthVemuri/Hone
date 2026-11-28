@@ -472,6 +472,7 @@ export const BROWSER_GROUPS = {
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
       "client-profile-save.spec.ts",
+      "client-note-drafts.spec.ts",
       // HON-124 item 7. The client form's buttons and links: hover, pressed, keyboard focus, 44px.
       "client-form-feedback.spec.ts",
       "client-form-saved-inline.spec.ts",

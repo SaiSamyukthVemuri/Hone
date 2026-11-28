@@ -141,6 +141,10 @@ import {
 import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
 import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
+import { noteDraftsEnabledFor } from "@/lib/note-drafts/enabled";
+import { draftScope } from "@/lib/note-drafts/scope";
+import { discardNoteDraftAction, peekNoteDraftAction, saveNoteDraftAction } from "./note-draft-actions";
+import { loadNoteDrafts } from "@/lib/note-drafts/load-drafts";
 import { ClinicalNotesSummary } from "@/components/clinical-notes-summary";
 import { updateClientBudgetContextAction } from "./budget-context-actions";
 import { getClientBudgetContext } from "@/lib/budget/queries";
@@ -379,6 +383,7 @@ export default async function ClientCheatSheetPage({
     importedMemory,
     portalAccessEvents,
     overviewVisitAppointments,
+    noteDrafts,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -466,6 +471,10 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
+    // HON-130: this practitioner's own autosaved note drafts (author-only RLS; empty while the server-side switch is off). Treatment tab only.
+    needsConsultationNotes
+      ? loadNoteDrafts(client.id, studio.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof loadNoteDrafts>>),
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -1839,6 +1848,8 @@ export default async function ClientCheatSheetPage({
           sections={clinicalNoteSections}
           addAction={addClinicalNoteAction}
           reviseAction={reviseClinicalNoteAction}
+          drafts={noteDrafts}
+          draftActions={noteDraftsEnabledFor(studio.id) ? { scope: draftScope(practitioner.id, studio.id), save: saveNoteDraftAction, discard: discardNoteDraftAction, peek: peekNoteDraftAction } : undefined}
           printHref={`/clients/${client.id}/clinical-notes/print`}
         />
       )}
@@ -1873,6 +1884,8 @@ export default async function ClientCheatSheetPage({
                   : "",
             }}
             action={updateClientBudgetContextAction}
+            draft={noteDrafts.find((d) => d.key.kind === "budget") ?? null}
+            draftActions={noteDraftsEnabledFor(studio.id) ? { scope: draftScope(practitioner.id, studio.id), save: saveNoteDraftAction, discard: discardNoteDraftAction, peek: peekNoteDraftAction } : undefined}
           />
         )}
 

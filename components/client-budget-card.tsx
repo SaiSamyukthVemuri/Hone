@@ -23,7 +23,11 @@
 // app/intake/*, app/cancel/*, app/reschedule/*, app/api/cron/* or
 // app/api/stripe/*.
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
+import { latestDraft, type DraftActions } from "@/lib/note-drafts/draft-registry";
+import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
+import { NoteDraftStatus } from "@/components/note-draft-status";
+import type { NoteDraftFields, NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "@/lib/note-drafts/types";
 import { useFormStatus } from "react-dom";
 import {
   CLIENT_BUDGET_LEVELS,
@@ -71,7 +75,11 @@ export function ClientBudgetCard({
   clientId,
   initial,
   action,
+  draft: restored = null,
+  draftActions,
 }: {
+  draft?: StoredNoteDraft | null;
+  draftActions?: DraftActions;
   clientId: string;
   initial: {
     budgetLevel: ClientBudgetLevel | null;
@@ -81,17 +89,52 @@ export function ClientBudgetCard({
     formData: FormData,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
+  const draftKey: NoteDraftKey = { clientId, kind: "budget", target: "current" };
+  // Start from the NEWEST text this tab knows (held after a failed flush, or saved since the page loaded), else the page's stored draft.
+  const [start] = useState(() => (draftActions ? latestDraft(draftKey, restored, draftActions.scope) : null));
   const [level, setLevel] = useState<ClientBudgetLevel | null>(
-    initial.budgetLevel,
+    (start?.fields.budget_level as ClientBudgetLevel | undefined) ?? initial.budgetLevel,
   );
+  // HON-130: budget draft. The saved record is written only by the Save button; the same transaction clears the draft.
+  const [budgetText, setBudgetText] = useState(start?.fields.budget_notes ?? initial.budgetNotes);
+  // Uncontrolled textarea (defaultValue, as before); a reset remounts it with a new key.
+  const [notesInit, setBudgetInit] = useState(budgetText);
+  const [notesKey, setNotesKey] = useState(0);
+  function resetBudgetText(next: string) {
+    setBudgetText(next);
+    setBudgetInit(next);
+    setNotesKey((k) => k + 1);
+  }
+  const draft = useNoteDraft(draftKey, restored, draftActions ?? { scope: "none", save: async () => ({ status: "error" }), discard: async () => ({ ok: false }), peek: async () => ({ ok: false, draft: null }) }, Boolean(draftActions));
+  const [restoredAt, setRestoredAt] = useState<string | null>(start && !start.unsaved ? start.savedAt : null);
+  // Use theirs replaces the card with the other window's draft: what the person had typed stays on screen here until they dismiss it.
+  const [yourVersion, setYourVersion] = useState<{ level: ClientBudgetLevel | null; notes: string } | null>(null);
+  // A chip change is a draft change too, reported from the PRESS handler (never from an effect on `level`): a programmatic reset (a discard, or adopting
+  // the other window's level) changes `level` without being a typed change and must never start an autosave that would bring the draft back.
+  function chooseLevel(next: ClientBudgetLevel | null) {
+    setLevel(next);
+    touch({ level: next });
+  }
+  // The card's CURRENT values, kept fresh every render, for the moment a failed Discard resumes (its closure is older than the typing).
+  const currentFields = useRef<NoteDraftFields>({ budget_level: level ?? "", budget_notes: budgetText });
+  currentFields.current = { budget_level: level ?? "", budget_notes: budgetText };
+  function touch(next: { level?: ClientBudgetLevel | null; notes?: string }) {
+    // While the real Save is pending the card is locked (below). An edit that still arrives (a script, an assistive tool) is not taken: it would
+    // reach the draft but not the submitted FormData, and the settle that follows a successful Save would then delete it unseen.
+    if (!draftActions || savePending || draft.discarding) return;
+    setRestoredAt(null);
+    const l = next.level !== undefined ? next.level : level;
+    draft.change({ budget_level: l ?? "", budget_notes: next.notes ?? budgetText });
+  }
 
-  const [state, formAction] = useActionState(
+  const [state, formAction, savePending] = useActionState(
     async (
       _prev: BudgetCardActionState,
       formData: FormData,
     ): Promise<BudgetCardActionState> => {
       const r = await action(formData);
       if (!r.ok) return { status: "error", message: r.error };
+      draft.settle(); // the save cleared the draft in its own transaction
       return { status: "saved", at: Date.now() };
     },
     INITIAL_STATE,
@@ -108,6 +151,8 @@ export function ClientBudgetCard({
           buttons. An empty string means "no broad level recorded"; the
           server action treats absent and empty identically. */}
       <input type="hidden" name="budget_level" value={level ?? ""} />
+      {/* The draft lifecycle this Save ends (same transaction). Empty when autosave is off. */}
+      <input type="hidden" name="draft_generation" value={draft.generation() ?? ""} />
 
       <header className="flex flex-col gap-1">
         <h2
@@ -135,7 +180,8 @@ export function ClientBudgetCard({
                 key={value}
                 type="button"
                 aria-pressed={selected}
-                onClick={() => setLevel(selected ? null : value)}
+                disabled={savePending || draft.discarding}
+                onClick={() => chooseLevel(selected ? null : value)}
                 // min-h-11 == 44px: the iPad/phone touch-target floor.
                 className={
                   selected
@@ -152,7 +198,8 @@ export function ClientBudgetCard({
           <div>
             <button
               type="button"
-              onClick={() => setLevel(null)}
+              disabled={savePending || draft.discarding}
+              onClick={() => chooseLevel(null)}
               className="text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-900 dark:hover:text-neutral-100"
             >
               Clear budget level
@@ -171,13 +218,63 @@ export function ClientBudgetCard({
         <textarea
           id="client-budget-notes"
           name="budget_notes"
-          defaultValue={initial.budgetNotes}
+          key={notesKey}
+          readOnly={savePending || draft.discarding}
+          defaultValue={notesInit}
+          onChange={(e) => {
+            setBudgetText(e.target.value);
+            touch({ notes: e.target.value });
+          }}
           rows={5}
           maxLength={MAX_BUDGET_NOTE_LENGTH}
           placeholder="Anything that shapes how you plan: preferred spend per visit, saving for a specific area, wants to spread sessions out…"
           className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
       </div>
+
+      {yourVersion !== null && (
+        <div className="rounded-md border border-neutral-300 p-2 text-xs" data-testid="budget-draft-your-version">
+          <p className="font-medium">Your version (not saved in the draft)</p>
+          <p>{yourVersion.level ? CLIENT_BUDGET_LEVEL_LABELS[yourVersion.level] : "No level"}</p>
+          <pre className="whitespace-pre-wrap">{yourVersion.notes}</pre>
+          <button type="button" onClick={() => setYourVersion(null)} className="min-h-[44px] underline">
+            Dismiss
+          </button>
+        </div>
+      )}
+      {draftActions && (
+        <NoteDraftStatus
+          state={draft.state}
+          restoredAt={restoredAt}
+          onRetry={draft.retry}
+          onKeepMine={draft.keepMine}
+          onKeepAsNew={draft.keepAsNew}
+          discardFailed={draft.discardFailed}
+          discarding={draft.discarding}
+          onUseTheirs={() => {
+            const t = draft.useTheirs();
+            if (t) {
+              setYourVersion({ level, notes: budgetText });
+              if (t.budget_notes !== undefined) resetBudgetText(t.budget_notes);
+              if (t.budget_level !== undefined) {
+                setLevel((t.budget_level || null) as ClientBudgetLevel | null); // adopting the other window's level is not a typed change
+              }
+            }
+          }}
+          onDiscard={async () => {
+            if (!(await draft.discard())) {
+              // Failed: the card stays exactly as it was and the status says so. Text that reached the form in the one frame before the lock
+              // rendered never reached the saver (edits are ignored while a Discard is out): hand the CURRENT values over so they are sent.
+              const cur = currentFields.current;
+              if (JSON.stringify(cur) !== JSON.stringify(draft.latest())) draft.change(cur);
+              return;
+            }
+            setRestoredAt(null);
+            resetBudgetText(initial.budgetNotes);
+            setLevel(initial.budgetLevel); // a reset is not a typed change: nothing reports it, so it cannot start an autosave
+          }}
+        />
+      )}
 
       <footer className="flex flex-wrap items-center justify-end gap-3">
         {state.status === "error" && (

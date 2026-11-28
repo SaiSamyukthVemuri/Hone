@@ -66,7 +66,11 @@ describe("clinical-notes server actions — trust boundary", () => {
 
   it("force the author + studio from auth (never trust the form's practitioner/studio)", () => {
     expect(src).toMatch(/getCurrentPractitionerWithStudio/);
-    expect(src).toMatch(/practitioner_id: practitioner\.id/);
+    // HON-130: the insert is the SECURITY INVOKER command add_client_clinical_note, which takes the author and studio from the SESSION inside the
+    // database. The action therefore must NOT pass a practitioner or studio argument at all (nothing for a forged form to reach).
+    const call = src.slice(src.indexOf('rpc("add_client_clinical_note"'), src.indexOf('rpc("add_client_clinical_note"') + 500);
+    expect(call).toContain("p_client_id");
+    expect(call).not.toMatch(/p_practitioner|p_studio|practitioner_id|studio_id/);
   });
 
   it("verify the persisted row with a SEPARATE read-back before reporting success", () => {

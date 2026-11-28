@@ -838,11 +838,32 @@ describe("append-only clinical notes — exactly one reviewed INSERT writer", ()
   const siteKey = (s: { file: string; fn: string; op: string }) =>
     `${s.file}#${s.fn}.${s.op}`;
 
-  it("H1. exactly ONE runtime write site exists, at the reviewed identity", () => {
+  // HON-130 (D2): the one INSERT now goes through the SECURITY INVOKER command `add_client_clinical_note`, which performs the SAME insert under the
+  // caller's own RLS. So the direct table write is GONE from the app, and the reviewed writer is the command call below. Re-introducing any direct
+  // table write (a second path that would skip the draft-clearing transaction) fails here.
+  const COMMAND = "add_client_clinical_note";
+  const commandCalls = () => {
+    const out: string[] = [];
+    for (const dir of ["app", "lib", "components"]) {
+      const stack = [join(process.cwd(), dir)];
+      while (stack.length) {
+        const d = stack.pop()!;
+        for (const e of readdirSync(d, { withFileTypes: true })) {
+          const p = join(d, e.name);
+          if (e.isDirectory()) stack.push(p);
+          else if (/\.(ts|tsx)$/.test(e.name) && readFileSync(p, "utf8").includes(`rpc("${COMMAND}"`)) out.push(p.replace(process.cwd() + "/", ""));
+        }
+      }
+    }
+    return out.sort();
+  };
+
+  it("H1. NO direct runtime write site remains; the one reviewed writer is the invoker command call", () => {
     expect(
       sites.map(siteKey).sort(),
-      `client_clinical_notes writers changed:\n${sites.map(siteKey).join("\n")}`,
-    ).toEqual([siteKey(APPEND_ONLY_WRITER)]);
+      `client_clinical_notes direct writers appeared:\n${sites.map(siteKey).join("\n")}`,
+    ).toEqual([]);
+    expect(commandCalls()).toEqual([APPEND_ONLY_WRITER.file]);
   });
 
   it("H2. that writer is an INSERT — never update, delete or upsert", () => {
@@ -884,35 +905,19 @@ describe("append-only clinical notes — exactly one reviewed INSERT writer", ()
     ).toEqual([]);
   });
 
-  it("H3c. the INSERT receiver is the value that factory produced, unreassigned", () => {
-    const flow = insertReceiverProof(
-      APPEND_ONLY_WRITER.file,
-      APPEND_ONLY_TABLE,
-    );
-    expect(flow.receiver, JSON.stringify(flow, null, 2)).toBe("supabase");
-    // Its initializer is `await createClient()` — the authenticated factory.
-    expect(flow.initializerCallee).toBe("createClient");
-    // Nothing rebinds it between creation and the INSERT.
-    expect(flow.reassigned).toBe(false);
-    // And there is exactly ONE Supabase client in the module, so the write
-    // cannot be hanging off a second one.
-    expect(flow.distinctClientFactories).toEqual(["createClient"]);
+  it("H3c. the command call is made on the client the AUTHENTICATED factory produced, unreassigned", () => {
+    const src = readFileSync(join(process.cwd(), APPEND_ONLY_WRITER.file), "utf8");
+    expect(src.match(/const supabase = await createClient\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(src).not.toMatch(/^\s*supabase\s*=[^=]/m); // never reassigned (the declaration is `const supabase = ...`)
+    expect(src).toMatch(/supabase\.rpc\(\s*"add_client_clinical_note"/);
   });
 
-  it("H4. no OTHER file writes the table, and reads elsewhere stay reads", () => {
-    const writers = new Set(sites.map((s) => s.file));
-    expect([...writers]).toEqual([APPEND_ONLY_WRITER.file]);
+  it("H4. no OTHER file writes the table (reads elsewhere stay reads)", () => {
+    expect(new Set(sites.map((s) => s.file))).toEqual(new Set());
   });
 
-  it("H5. the table is not silently absent — the census can actually see it", () => {
-    // ANTI-VACUITY. If the scanner stopped matching (a refactor to a variable
-    // table expression, a chained factory, a renamed helper), H1-H4 would all
-    // pass on an empty set and prove nothing. At least one site must be found.
-    expect(
-      sites.length,
-      "the append-only census found ZERO sites — the scanner has gone blind, " +
-        "not the writer away. Check for a variable/computed .from() shape.",
-    ).toBeGreaterThan(0);
+  it("H5. anti-vacuity: the command call IS found, so an empty direct-write set means the writer moved, not that the scanner went blind", () => {
+    expect(commandCalls().length).toBeGreaterThan(0);
   });
 
   it("H6. no unanalyzable DML shape hides a writer in the notes module", () => {

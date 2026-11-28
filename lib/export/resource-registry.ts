@@ -1049,6 +1049,20 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
       "An owner's own tidy-up of the Dashboard Needs attention list (dismiss and restore events). View state, not studio content: it holds record identifiers (client, appointment, session ids) and, for unpaid reminders, the dismissed outstanding amount; no names, free text or clinical content. Every reminder it hides is recomputed from records that ARE exported.",
   },
 
+  // HON-130: transient autosaved note drafts. Author-private, never part of the clinical record, swept after retention.
+  client_note_draft_enabled_studios: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "The server-side allow-list that switches autosaved note drafts on for a studio. Operations configuration, not studio content: it holds studio ids and an enable time only, is writable by the service role alone, and is never shown to a studio.",
+  },
+  client_note_drafts: {
+    kind: "excluded",
+    category: "derived",
+    reason:
+      "Transient autosaved text on its way to a note or budget record. Author-private, expires after the retention period and is swept; the saved record is exported from its own table. A draft is never the record and is not exported, searched or shared.",
+  },
+
   // security
   calendar_connection_secrets: {
     kind: "excluded",
