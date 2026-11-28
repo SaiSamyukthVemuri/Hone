@@ -445,8 +445,9 @@ export function storagePolicyDeps(root) {
   for (let depth = 0; depth < 2 && frontier.length; depth++) {
     const next = [];
     for (const n of frontier) {
-      if (fns.has(n) || !fnBody.has(n)) continue;
-      fns.add(n);
+      if (fns.has(n)) continue;
+      fns.add(n); // in the set BEFORE its definition is parsed: a function whose body cannot be found is still watched
+      if (!fnBody.has(n)) continue;
       const r = refsIn(fnBody.get(n));
       r.tables.forEach((x) => tables.add(x));
       r.fns.forEach((x) => next.push(x));
@@ -457,10 +458,24 @@ export function storagePolicyDeps(root) {
   storageDepsCache.set(root, out);
   return out;
 }
+// Matches DDL on a derived function or table: define, drop, alter, or change who may run or read it (grant, revoke), and policies or triggers on a
+// derived table. KNOWN LIMIT (documented, not solved): a function called WITHOUT the `public.` qualifier inside a policy is not seen by the
+// derivation, and `grant ... on all functions in schema public` names no function. Both would need a SQL parser; the lane's other triggers
+// (storage words, the full matrix on shared infrastructure) still cover the usual cases.
 export function touchesStorageDeps(text, deps) {
-  const fn = deps.fns.length && new RegExp(`(?:create(?:\\s+or\\s+replace)?|drop|alter)\\s+function\\s+(?:if\\s+exists\\s+)?(?:public\\.)?(?:${deps.fns.join("|")})\\b`, "i");
-  const tb = deps.tables.length && new RegExp(`(?:create|drop|alter)\\s+table\\s+(?:if\\s+(?:not\\s+)?exists\\s+)?(?:only\\s+)?(?:public\\.)?(?:${deps.tables.join("|")})\\b`, "i");
-  return Boolean((fn && fn.test(text)) || (tb && tb.test(text)));
+  const fnNames = deps.fns.join("|");
+  const tbNames = deps.tables.join("|");
+  const res = [];
+  if (fnNames) {
+    res.push(new RegExp(`(?:create(?:\\s+or\\s+replace)?|drop|alter)\\s+function\\s+(?:if\\s+exists\\s+)?(?:public\\.)?(?:${fnNames})\\b`, "i"));
+    res.push(new RegExp(`\\b(?:grant|revoke)\\b[^;]*?\\bon\\s+function\\s+(?:public\\.)?(?:${fnNames})\\b`, "i"));
+  }
+  if (tbNames) {
+    res.push(new RegExp(`(?:create|drop|alter)\\s+table\\s+(?:if\\s+(?:not\\s+)?exists\\s+)?(?:only\\s+)?(?:public\\.)?(?:${tbNames})\\b`, "i"));
+    res.push(new RegExp(`\\b(?:grant|revoke)\\b[^;]*?\\bon\\s+(?:table\\s+)?(?:public\\.)?(?:${tbNames})\\b`, "i"));
+    res.push(new RegExp(`(?:create(?:\\s+constraint)?|alter|drop)\\s+(?:policy|trigger)\\b[^;]*?\\bon\\s+(?:only\\s+)?(?:public\\.)?(?:${tbNames})\\b`, "i"));
+  }
+  return res.some((re) => re.test(text));
 }
 
 function laneSurfaces(list, full, dbDeps) {

@@ -109,3 +109,49 @@ describe("storage_photos: a migration that redefines what the storage policies c
     expect(r.webkit_surface).toBe(true);
   });
 });
+
+describe("storage_photos: grant hardening, policies and triggers on what the storage policies depend on", () => {
+  const real = storagePolicyDeps(process.cwd()) as { fns: string[]; tables: string[] };
+  const STORAGE_WORDS = /storage\.|\bbucket|treatment_image|photo|signed/i;
+
+  it("REVOKE EXECUTE ON FUNCTION public.is_studio_member starts storage_photos", () => {
+    const t = "revoke execute on function public.is_studio_member(uuid) from anon;";
+    expect(STORAGE_WORDS.test(t)).toBe(false);
+    expect(touchesStorageDeps(t, real)).toBe(true);
+    expect(touchesStorageDeps("grant execute on function public.is_studio_member(uuid) to authenticated;", real)).toBe(true);
+  });
+
+  it("GRANT and REVOKE on a derived table, and policies and triggers on one, start it; the same on an unrelated table do not", () => {
+    for (const t of [
+      "revoke insert, update, delete on public.appointments from authenticated;",
+      "grant select on table public.practitioners to authenticated;",
+      'create policy "x" on public.practitioners for select using (true);',
+      'drop policy if exists "x" on public.practitioners;',
+      "create constraint trigger t after insert on public.studio_receptionists deferrable initially deferred for each row execute function public.f();",
+      "alter table public.practitioners disable trigger all;",
+    ]) expect(touchesStorageDeps(t, real), t).toBe(true);
+    for (const t of [
+      "revoke insert on public.unrelated_widgets from authenticated;",
+      'create policy "x" on public.unrelated_widgets for select using (true);',
+      "revoke execute on function public.unrelated_fn(uuid) from anon;",
+    ]) expect(touchesStorageDeps(t, real), t).toBe(false);
+  });
+
+  it("a real grant-hardening migration (0172, revokes DML on appointments) starts the lane through classify with no storage word in it", async () => {
+    const { readFileSync } = await import("node:fs");
+    expect(STORAGE_WORDS.test(readFileSync("supabase/migrations/0172_revoke_authenticated_appointment_dml.sql", "utf8"))).toBe(false);
+    expect(c("supabase/migrations/0172_revoke_authenticated_appointment_dml.sql").storage_photos).toBe(true);
+  });
+
+  it("a function a policy calls is in the set BEFORE its definition is parsed: an unparseable or undefined one is still watched", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "storage-deps-"));
+    mkdirSync(path.join(root, "supabase/migrations"), { recursive: true });
+    const w = (n: string, t: string) => writeFileSync(path.join(root, "supabase/migrations", n), t);
+    // can_see_blob has no `$$ ... $$` body anywhere (defined by a tool, or in a form the parser does not read); the policy still calls it.
+    w("0001_a.sql", 'create policy "p" on storage.objects for select using (public.can_see_blob(owner::uuid));');
+    const d = storagePolicyDeps(root) as { fns: string[]; tables: string[] };
+    expect(d.fns).toEqual(["can_see_blob"]);
+    expect(touchesStorageDeps("revoke execute on function public.can_see_blob(uuid) from anon;", d)).toBe(true);
+    expect(touchesStorageDeps("create or replace function public.can_see_blob(x uuid) returns boolean as 'select true' language sql;", d)).toBe(true);
+  });
+});
