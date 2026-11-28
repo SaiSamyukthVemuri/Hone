@@ -29,8 +29,8 @@ const PRINT = read("app/(app)/records/print/page.tsx");
 const EXPORT = read("app/(app)/settings/data/actions.ts");
 
 describe("manufacturer dropdown", () => {
-  it("offers Protec / Ballet / Sterex + Other", () => {
-    expect(FORMS).toMatch(/MANUFACTURER_OPTIONS\s*=\s*\[\s*"Protec",\s*"Ballet",\s*"Sterex"\s*\]/);
+  it("offers Protec, Ballet, Sterex, Velona and Other", () => {
+    expect(FORMS).toMatch(/MANUFACTURER_OPTIONS\s*=\s*\[\s*"Protec",\s*"Ballet",\s*"Sterex",\s*"Velona"\s*\]/);
     expect(FORMS).toMatch(/Other \(type a name\)/);
     expect(FORMS).toMatch(/function ManufacturerPicker/);
   });

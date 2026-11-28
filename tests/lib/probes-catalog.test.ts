@@ -141,9 +141,27 @@ describe("the pre-existing catalog is preserved byte-for-byte", () => {
     }
   });
 
-  it("adds exactly three options and removes none", () => {
+  it("preserves all 87 options from the three original brands", () => {
     expect(KEYS_AT_F73BA414.length).toBe(84);
-    expect(PROBE_OPTIONS.length).toBe(KEYS_AT_F73BA414.length + 3);
+    expect(PROBE_OPTIONS.filter(o => o.brand !== "Velona")).toHaveLength(87);
+  });
+});
+
+describe("Velona one-piece F-shank catalogue", () => {
+  it("offers exactly the four supplier sizes in each verified finish", () => {
+    expect(getMaterialsForBrand("Velona")).toEqual(["Stainless steel", "Gold", "Insulated"]);
+    for (const material of ["Stainless steel", "Gold", "Insulated"] as const) {
+      const options = getProbeOptionsFor("Velona", material);
+      expect(options.map(o => o.label)).toEqual(["F2", "F3", "F4", "F5"]);
+      for (const option of options) {
+        expect(option.pieceType).toBe("One-piece");
+        expect(option.shank).toBe("F");
+        expect(option.length).toBeNull();
+        expect(findProbeOptionByKey(option.key)?.displayLabel)
+          .toBe(`Velona · ${material} · One-piece · ${option.label}`);
+      }
+    }
+    expect(isValidProbeOptionKey("velona-insulated-one-piece-f4-na")).toBe(true);
   });
 });
 

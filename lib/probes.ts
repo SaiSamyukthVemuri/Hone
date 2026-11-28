@@ -19,7 +19,7 @@
 // Deferred (intentionally NOT in this catalog): Sterex F10 Regular,
 // Ballet size 12, and all blemish-removal probes.
 
-export type ProbeBrand = "Sterex" | "Ballet" | "Pro-Tec";
+export type ProbeBrand = "Sterex" | "Ballet" | "Pro-Tec" | "Velona";
 export type ProbeMaterial =
   | "Stainless steel"
   | "Gold"
@@ -81,7 +81,7 @@ const STEREX_TWO_PIECE_GOLD_SIZES: ReadonlyArray<SizeSpec> = [
   { size: "4", lengths: ["Regular", "Short"] },
   { size: "5", lengths: ["Regular", "Short"] },
 ];
-const STEREX_ONE_PIECE_SIZES: ReadonlyArray<SizeSpec> = [
+const F2_TO_F5_NO_LENGTH: ReadonlyArray<SizeSpec> = [
   { size: "2", lengths: [null] },
   { size: "3", lengths: [null] },
   { size: "4", lengths: [null] },
@@ -113,7 +113,7 @@ const STEREX: BrandSpec = {
       material: "Stainless steel",
       pieceType: "One-piece",
       shank: "F",
-      sizes: STEREX_ONE_PIECE_SIZES,
+      sizes: F2_TO_F5_NO_LENGTH,
     },
   ],
 };
@@ -143,14 +143,14 @@ const BALLET_SHAPES: ReadonlyArray<{
   { shank: "F", size: "6", length: "Regular" },
   { shank: "K", size: "6", length: "Regular" },
 ];
-const BALLET_MATERIALS: ReadonlyArray<ProbeMaterial> = [
+const STEEL_GOLD_INSULATED: ReadonlyArray<ProbeMaterial> = [
   "Stainless steel",
   "Gold",
   "Insulated",
 ];
 
 function balletVariants(): ReadonlyArray<VariantSpec> {
-  return BALLET_MATERIALS.flatMap((material) =>
+  return STEEL_GOLD_INSULATED.flatMap((material) =>
     BALLET_SHAPES.map((shape) => ({
       material,
       pieceType: "One-piece" as const,
@@ -191,7 +191,18 @@ const PROTEC: BrandSpec = {
   variants: protecVariants(),
 };
 
-const BRAND_SPECS: ReadonlyArray<BrandSpec> = [STEREX, BALLET, PROTEC];
+// Aesthe Source lists one-piece F2–F5 in each finish: https://aesthesource.com/en/brands/velona-en/
+const VELONA: BrandSpec = {
+  brand: "Velona",
+  variants: STEEL_GOLD_INSULATED.map((material) => ({
+    material,
+    pieceType: "One-piece",
+    shank: "F",
+    sizes: F2_TO_F5_NO_LENGTH,
+  })),
+};
+
+const BRAND_SPECS: ReadonlyArray<BrandSpec> = [STEREX, BALLET, PROTEC, VELONA];
 
 // Ordered list of brands for the picker (matches BRAND_SPECS order).
 export const PROBE_BRANDS: ReadonlyArray<ProbeBrand> = BRAND_SPECS.map(

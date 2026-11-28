@@ -8,6 +8,7 @@ import {
   getSavedBlockSetup,
   updateProbeInventoryLotNumber,
   updateProbeInventoryProbeKey,
+  sql,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -33,6 +34,58 @@ async function selectF3Probe(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "Gold", exact: true }).click();
   await page.getByRole("button", { name: "F3 Short", exact: true }).click();
 }
+
+test("Velona inventory registration, chart save and next-visit recall keep the confirmed lot", async ({ page }) => {
+  const studio = await seedE2eStudio();
+  const { clientId, sessionId } = await seedE2eDraftElectrolysisSession(studio);
+  const key = "velona-insulated-one-piece-f4-na";
+  const lot = "VELONA-TEST-F4";
+  await loginAsOwner(page, studio);
+  await page.goto("/records?section=sterile&view=add");
+  await page.getByLabel("Date purchased").fill("2025-01-01");
+  await page.getByLabel("Item description").fill("Synthetic Velona F4 insulated stock");
+  await page.getByTestId("sterile-probe-key").selectOption(key);
+  await page.getByLabel("Manufacturer (optional)").selectOption("Velona");
+  await page.getByLabel("Lot #").fill(lot);
+  await page.getByRole("button", { name: "Add sterile item record" }).click();
+  await expect(page.getByText("Record saved.", { exact: true })).toBeVisible({ timeout: T });
+  const [item] = await sql<{ id: string; manufacturer_name: string }>(
+    "select id, manufacturer_name from public.record_keeping_sterile_items where studio_id = $1 and probe_key = $2 and lot_number = $3",
+    [studio.studioId, key, lot],
+  );
+  expect(item?.manufacturer_name).toBe("Velona");
+
+  const pickForVisit = async (visitId: string) => {
+    await page.goto(`/clients/${clientId}/sessions/${visitId}`);
+    await page.getByTestId("add-settings-block-cta").click({ timeout: T });
+    await page.getByRole("button", { name: "Chin", exact: true }).click();
+    for (const name of ["Velona", "Insulated", "F4"]) {
+      await page.getByRole("button", { name, exact: true }).click();
+    }
+    await expect(page.getByTestId("probe-lot-input")).toHaveValue(lot, { timeout: T });
+    await expect(page.getByTestId("probe-lot-linked")).toBeVisible();
+  };
+  await pickForVisit(sessionId);
+  await page.getByRole("button", { name: "Confirm lot/batch" }).click();
+  await page.getByTestId("save-treatment-area").click();
+  await expect.poll(() => getSavedBlockSetup(sessionId), { timeout: T })
+    .toMatchObject({ probe_key: key, probe_lot_number: lot, probe_lot_confirmed: true });
+  expect(await getSessionBlockInventoryLinks(sessionId)).toEqual([{ lot, itemId: item.id }]);
+  await page.reload();
+  await page.getByTestId(/^edit-area-/).first().click();
+  await expect(page.getByTestId("probe-lot-input")).toHaveValue(lot);
+  await expect(page.getByText("Velona · Insulated · One-piece · F4", { exact: true }).first()).toBeVisible();
+
+  // Two eligible lots on the next visit distinguish history recall from a single-stock default.
+  await seedE2eProbeInventoryItem(studio, { probeKey: key, lotNumber: "DIFFERENT-F4" });
+  const [nextVisit] = await sql<{ id: string }>(
+    `insert into public.sessions (studio_id, client_id, practitioner_id, modality)
+     select studio_id, client_id, practitioner_id, modality from public.sessions where id = $1 returning id`,
+    [sessionId],
+  );
+  await pickForVisit(nextVisit.id);
+  await expect(page.getByRole("button", { name: "Confirm lot/batch" })).toBeVisible();
+});
 
 test("inventory-backed probe lot: auto-fill active, confirm, save, edit+reload preserves link, probe switch re-resolves", async ({
   page,
