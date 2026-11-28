@@ -11,6 +11,7 @@ import {
   selectedIds,
   type Candidate,
 } from "@/lib/waitlist/recipient-chooser";
+import { buttonClasses } from "@/components/ui/button";
 
 // The over-invite recipient chooser: search, a bounded page, and a selection that survives both. Presentational: it reads nothing, calls no command
 // and is placed on no page yet. Every selected id is posted as a hidden `entryId` input, so the form carries the whole selection (all pages, any
@@ -39,7 +40,7 @@ export function RecipientChooser({
   const pageIds = view.items.map((c) => c.entryId);
   const matching = filtered.length;
   const selectedMatching = selectedAmong(filtered, state.selected);
-  const btn = "min-h-11 rounded-md border px-3 text-sm";
+  const btn = buttonClasses({ variant: "secondary" });
   return (
     <fieldset className="flex flex-col gap-2 text-sm" data-testid="recipient-chooser">
       <legend className="font-medium">Choose who to invite</legend>
