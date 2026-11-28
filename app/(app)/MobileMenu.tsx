@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "./dashboard/actions";
+import { endIdentity } from "@/lib/note-drafts/draft-registry";
 import { SignOutMenuItem } from "./SignOutMenuItem";
 import { useSetSignOutInFlight, useSignOutInFlight } from "./signout-flight";
 import { SignOutFlightReporter } from "./SignOutFlightReporter";
@@ -336,6 +337,9 @@ export function MobileMenu({
           }
           submitted.current = true;
           setSignOutInFlight(true);
+          // HON-130: the signed-in identity is ending, so every autosave entry ends with it (timers stopped, unsent text dropped). An EVENT, not an
+          // unmount effect: it detaches nothing and does not touch the native submission.
+          endIdentity();
         }}
       >
         <SignOutFlightReporter />

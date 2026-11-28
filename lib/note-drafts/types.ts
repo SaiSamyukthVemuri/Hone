@@ -23,7 +23,8 @@ export type NoteDraftKey = {
 
 export type NoteDraftSaveResult =
   | { status: "ok"; revision: number; savedAt: string }
-  | { status: "conflict"; revision: number; fields: NoteDraftFields; savedAt: string }
+  /** The stored draft is live but differs: another revision, or ANOTHER lifecycle (`generation` is theirs). Always the caller's own draft. */
+  | { status: "conflict"; revision: number; fields: NoteDraftFields; savedAt: string; generation: string }
   | { status: "gone" }
   /** The record was saved (a tombstone). `revision` is the tombstone's revision (0 when the revise target already has its revision). */
   | { status: "cleared"; revision: number }
@@ -37,6 +38,8 @@ export type StoredNoteDraft = {
   fields: NoteDraftFields;
   revision: number;
   savedAt: string;
+  /** The draft lifecycle that owns this text (a client-minted uuid). Every save and discard names it; a stale tab can never touch a newer draft. */
+  generation: string;
 };
 
 /** Fixed wording (Privacy condition 8). Draft text never appears in any message. */
@@ -46,6 +49,7 @@ export const DRAFT_COPY = {
   unsaved: "Unsaved changes",
   conflict: "Another window changed this draft.",
   cleared: "This note was saved in another window. Your text is still here.",
+  revised: "This note was revised since you started this draft. Your text is still here.",
   discard: "Discard draft",
   discardFailed: "Couldn't discard the draft. It is still saved.",
 } as const;

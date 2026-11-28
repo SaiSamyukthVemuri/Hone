@@ -22,8 +22,11 @@ export function NoteDraftStatus({
   onDiscard,
   onKeepAsNew,
   discardFailed = false,
+  revised = false,
 }: {
   onKeepAsNew?: () => void;
+  /** The note being revised has ALREADY been revised since this draft was written: the text can only live as a NEW note. */
+  revised?: boolean;
   /** The last Discard did not go through: the draft is still stored and the editor is unchanged. */
   discardFailed?: boolean;
   state: DraftState;
@@ -41,6 +44,9 @@ export function NoteDraftStatus({
   else if (state.phase === "saved") line = draftSavedLabel(hhmm(state.savedAt));
   else if (state.phase === "error") {
     line = DRAFT_COPY.failure;
+    tone = "text-red-700";
+  } else if (revised) {
+    line = DRAFT_COPY.revised;
     tone = "text-red-700";
   } else if (state.phase === "cleared") {
     line = DRAFT_COPY.cleared;
@@ -66,7 +72,7 @@ export function NoteDraftStatus({
           Retry
         </button>
       )}
-      {state.phase === "cleared" && (
+      {(state.phase === "cleared" || revised) && (
         <>
           <button type="button" onClick={onKeepAsNew} className="min-h-[44px] px-2 font-medium underline">
             Keep as new draft
@@ -97,7 +103,7 @@ export function NoteDraftStatus({
           />
         </>
       )}
-      {(restoredAt || state.phase === "saved") && (
+      {!revised && (restoredAt || state.phase === "saved") && (
         <button type="button" onClick={onDiscard} className="min-h-[44px] px-2 font-medium underline">
           {DRAFT_COPY.discard}
         </button>

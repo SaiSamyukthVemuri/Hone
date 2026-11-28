@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { acquireEntry, latestDraft, markNone, resetDraftRegistry, seedEntry, type DraftActions } from "@/lib/note-drafts/draft-registry";
+import { acquireEntry, endIdentity, heldText, latestDraft, resetDraftRegistry, seedEntry, type DraftActions } from "@/lib/note-drafts/draft-registry";
 import type { NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "@/lib/note-drafts/types";
 
 // HON-130 (Codex on #1879): the saver outlives the editor, so text typed during an outage is held for the remount, a reopened form shows the
@@ -8,10 +8,11 @@ import type { NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "@/lib/n
 const SCOPE_A = "practitioner-a:studio-1";
 const SCOPE_B = "practitioner-b:studio-1";
 const key: NoteDraftKey = { clientId: "c1", kind: "consultation", target: "new" };
-const stored = (revision: number, body: string): StoredNoteDraft => ({ key, fields: { body }, revision, savedAt: "2026-11-28T10:00:00.000Z" });
+const GEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const stored = (revision: number, body: string): StoredNoteDraft => ({ key, fields: { body }, revision, savedAt: "2026-11-28T10:00:00.000Z", generation: GEN });
 const ok = (revision: number): NoteDraftSaveResult => ({ status: "ok", revision, savedAt: "2026-11-28T10:02:00.000Z" });
 function actions(save: DraftActions["save"], scope = SCOPE_A): DraftActions {
-  return { scope, save, discard: async () => ({ ok: true }) };
+  return { scope, save, discard: async () => ({ ok: true }), peek: async () => ({ ok: true, draft: null }) };
 }
 
 describe("draft registry", () => {
@@ -40,12 +41,11 @@ describe("draft registry", () => {
     expect(latestDraft(key, stored(2, "old text from page load"), SCOPE_A)).toMatchObject({ fields: { body: "newer text" }, revision: 5, unsaved: false });
   });
 
-  it("a draft that is gone (saved or discarded) is not brought back by the page's stale prop; a NEWER server draft is", () => {
+  it("once an entry exists it is the ONLY answer: a settled (saved or discarded) draft is not brought back by the page's stale prop", () => {
     const entry = acquireEntry(key, stored(2, "old"), actions(async () => ok(3)), () => undefined);
     entry.saver.settle();
-    markNone(key, SCOPE_A);
     expect(latestDraft(key, stored(2, "old"), SCOPE_A)).toBeNull();
-    expect(latestDraft(key, stored(9, "written elsewhere later"), SCOPE_A)).toMatchObject({ fields: { body: "written elsewhere later" } });
+    expect(latestDraft(key, stored(9, "written elsewhere later"), SCOPE_A)).toBeNull(); // the entry decides; a reload is what reads the server again
   });
 
   it("seedEntry holds text for a NEW key and sends it from revision 0 (Keep as new note)", async () => {
@@ -53,7 +53,7 @@ describe("draft registry", () => {
     const newKey: NoteDraftKey = { ...key, target: "new" };
     seedEntry(newKey, { body: "moved text" }, actions(save));
     await vi.advanceTimersByTimeAsync(1500);
-    expect(save).toHaveBeenCalledWith(expect.objectContaining({ key: newKey, fields: { body: "moved text" }, expectedRevision: 0 }));
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ key: newKey, fields: { body: "moved text" }, expectedRevision: 0, generation: expect.stringMatching(/^[0-9a-f-]{36}$/) }));
   });
 
   // ---- Privacy: the registry must not outlive an identity ----
@@ -102,13 +102,29 @@ describe("draft registry", () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ scope: SCOPE_A }));
   });
 
-  it("with autosave off (register=false) the entry is private and never stored", () => {
-    const save = vi.fn(async () => ok(1));
-    const off = acquireEntry(key, null, actions(save), () => undefined, false);
-    off.saver.change({ body: "typed while off" });
-    expect(latestDraft(key, null, SCOPE_A)).toBeNull();
-    const on = acquireEntry(key, null, actions(save), () => undefined);
-    expect(on.saver).not.toBe(off.saver);
+  it("Strict Mode: a detach and re-attach (cleanup, then the same acquire) is a no-op: same saver, text and state kept, nothing disposed", async () => {
+    const save = vi.fn(async () => ({ status: "error" }) as NoteDraftSaveResult);
+    const first = acquireEntry(key, null, actions(save), () => undefined);
+    first.saver.change({ body: "typed" });
+    await vi.advanceTimersByTimeAsync(1500);
+    first.saver.setListener(() => undefined); // the effect cleanup: detach only
+    const second = acquireEntry(key, null, actions(save), () => undefined); // the replayed effect
+    expect(second.saver).toBe(first.saver);
+    expect(second.saver.unsavedWork()?.fields).toEqual({ body: "typed" });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(save).toHaveBeenCalledTimes(2); // the background retry is still alive
+  });
+
+  it("the identity is compared on READ too: a different scope asking via latestDraft or heldText ends the earlier identity's entries", async () => {
+    const save = vi.fn(async () => ({ status: "error" }) as NoteDraftSaveResult);
+    const a = acquireEntry(key, null, actions(save, SCOPE_A), () => undefined);
+    a.saver.change({ body: "A's text" });
+    expect(heldText(key, SCOPE_A)).toEqual({ body: "A's text" });
+    expect(heldText(key, SCOPE_B)).toBeNull(); // another identity reads: A's entries are ended, nothing is returned
+    expect(latestDraft(key, null, SCOPE_B)).toBeNull();
+    expect(heldText(key, SCOPE_A)).toBeNull(); // and A's text is gone from the registry
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(save).not.toHaveBeenCalled();
   });
 
   it("the unload guard stays armed while ANY registry entry holds unsent text, even with no editor mounted, and drops once it is saved", async () => {
@@ -125,12 +141,9 @@ describe("draft registry", () => {
     expect(clean.defaultPrevented).toBe(false);
   });
 
-  it("a private saver (autosave off) never schedules a timer, even for a failing send", async () => {
-    const save = vi.fn(async () => ({ status: "error" }) as NoteDraftSaveResult);
-    const off = acquireEntry(key, null, actions(save), () => undefined, false);
-    off.saver.change({ body: "x" });
-    await vi.advanceTimersByTimeAsync(600_000);
-    expect(save).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
+  it("endIdentity is an event and a no-op on an empty registry", () => {
+    endIdentity();
+    endIdentity();
+    expect(latestDraft(key, null, SCOPE_A)).toBeNull();
   });
 });

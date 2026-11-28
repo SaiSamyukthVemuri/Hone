@@ -55,7 +55,13 @@ const UNIQUE_VIOLATION = "23505";
 
 export type ClinicalNoteActionResult =
   | { ok: true; note: ClientClinicalNote; author_name: string | null }
-  | { ok: false; code: "invalid" | "not_found" | "stale_revision" | "error"; error: string };
+  | { ok: false; code: "invalid" | "not_found" | "stale_revision" | "draft_ended" | "error"; error: string };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A draft generation is optional: a missing or malformed value is simply no generation, and never fails a clinical Save. */
+function readUuidOrNull(value: unknown): string | null {
+  return typeof value === "string" && UUID_RE.test(value.trim()) ? value.trim().toLowerCase() : null;
+}
 
 function readKind(value: FormDataEntryValue | null): ClinicalNoteKind | null {
   return typeof value === "string" && VALID_KINDS.includes(value as ClinicalNoteKind)
@@ -119,6 +125,16 @@ const SAVE_FAILED_COPY =
   "We couldn't save this clinical note. Please try again.";
 const VERIFY_FAILED_COPY =
   "Saved note could not be confirmed. Please reload and check before re-entering.";
+// HON-130: the save goes through the database command add_client_clinical_note (a SECURITY INVOKER wrapper of the same insert). If that command is
+// not there (the migration is not applied yet) the action FAILS CLOSED with this fixed sentence: nothing is written, the text stays on screen.
+const SAVE_UNAVAILABLE_COPY =
+  "Saving is temporarily unavailable. Your text is still here; please reload and try again.";
+// A Save of a draft that was already saved or discarded from another window (SQLSTATE HN131): no second note is created.
+const DRAFT_ENDED_COPY =
+  "This note was already saved from another window. Your text is still here; reload to see the saved note.";
+const DRAFT_ENDED_CODE = "HN131";
+// PostgREST says PGRST202 for an unknown function; Postgres says 42883 (undefined_function) when it is reached some other way.
+const MISSING_COMMAND_CODES = ["PGRST202", "42883"];
 const CLIENT_LOOKUP_FAILED_COPY =
   "We couldn't open this client's record. Please reload and try again.";
 
@@ -155,8 +171,11 @@ async function insertClinicalNote(params: {
   areas: string[];
   occurredAt: string | null;
   supersedesNoteId: string | null;
+  /** The draft lifecycle this Save ends (HON-130). Optional and untrusted: anything that is not a uuid is dropped, never a failed Save. */
+  draftGeneration?: string | null;
 }): Promise<ClinicalNoteActionResult> {
   const { clientId, kind, body, areas, occurredAt, supersedesNoteId } = params;
+  const draftGeneration = readUuidOrNull(params.draftGeneration ?? null);
 
   if (readBody(body).trim().length === 0) {
     return { ok: false, code: "invalid", error: "Note text is required." };
@@ -193,27 +212,35 @@ async function insertClinicalNote(params: {
   }
   if (!client) return { ok: false, code: "not_found", error: "Client not found." };
 
-  // studio_id passed for documentation; the BEFORE INSERT trigger overwrites it
-  // from the parent client. practitioner_id is the signed-in practitioner.
-  // occurred_at is the clinical event date (optional; DB defaults to now()).
-  const insertRow: Record<string, unknown> = {
-    client_id: clientId,
-    studio_id: studio.id,
-    practitioner_id: practitioner.id,
-    kind,
-    body,
-    areas,
-    supersedes_note_id: supersedesNoteId,
-  };
-  if (occurredAt) insertRow.occurred_at = occurredAt;
-
-  const { data: inserted, error } = await supabase
-    .from("client_clinical_notes")
-    .insert(insertRow)
-    .select("id")
-    .single();
+  // The save command is the SAME insert as before, run with the caller's own rights (RLS, the append-only history, the studio-derive and
+  // attribution triggers and the one-revision index all decide as they did). Studio and practitioner come from the session inside it.
+  // `draftGeneration` is handed to the clear trigger so the matching draft is ended in the same transaction.
+  const { data: insertedId, error } = await supabase.rpc("add_client_clinical_note", {
+    p_client_id: clientId,
+    p_kind: kind,
+    p_body: body,
+    p_areas: areas,
+    p_occurred_at: occurredAt,
+    p_supersedes_note_id: supersedesNoteId,
+    p_generation: draftGeneration,
+  });
+  const inserted = typeof insertedId === "string" ? { id: insertedId } : null;
 
   if (error) {
+    if (error.code === DRAFT_ENDED_CODE) {
+      return { ok: false, code: "draft_ended", error: DRAFT_ENDED_COPY };
+    }
+    if (error.code && MISSING_COMMAND_CODES.includes(error.code)) {
+      logNoteFailure("clinical_note_command_missing", {
+        code: error.code === "42883" ? "42883" : "PGRST202", // a closed pair, never the raw error value
+        kind,
+        clientId,
+        studioId: studio.id,
+        practitionerId: practitioner.id,
+        isRevision: supersedesNoteId !== null,
+      });
+      return { ok: false, code: "error", error: SAVE_UNAVAILABLE_COPY };
+    }
     if (error.code === UNIQUE_VIOLATION && supersedesNoteId) {
       return {
         ok: false,
@@ -301,6 +328,7 @@ export async function addClinicalNoteAction(
     areas: kind === "skin_hair_analysis" ? areas : [],
     occurredAt: occurredAt.value,
     supersedesNoteId: null,
+    draftGeneration: readUuidOrNull(formData.get("draft_generation")),
   });
 }
 
@@ -338,5 +366,6 @@ export async function reviseClinicalNoteAction(
     areas: kind === "skin_hair_analysis" ? areas : [],
     occurredAt: occurredAt.value,
     supersedesNoteId,
+    draftGeneration: readUuidOrNull(formData.get("draft_generation")),
   });
 }

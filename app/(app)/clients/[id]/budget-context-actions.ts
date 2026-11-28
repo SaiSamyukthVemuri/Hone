@@ -97,20 +97,24 @@ export async function updateClientBudgetContextAction(
   }
   if (!client) return { ok: false, error: "Client not found." };
 
-  // Upsert keyed on the unique(client_id) constraint from migration 0183.
-  // studio_id is passed for documentation; the BEFORE trigger overwrites it
-  // from the parent client row so callers cannot drift it.
-  const { error } = await supabase.from("client_budget_context").upsert(
-    {
-      client_id: clientId,
-      studio_id: studio.id,
-      budget_level: budgetLevel,
-      budget_notes: budgetNotes,
-      updated_by_practitioner_id: practitioner.id,
-    },
-    { onConflict: "client_id" },
-  );
+  // The upsert is now the database command upsert_client_budget_context (a SECURITY INVOKER wrapper of the same insert-or-update keyed on client_id):
+  // the caller's own rights, the BEFORE trigger deriving the studio, the same checks. It also hands the draft generation to the clear trigger.
+  // If the command is not there (migration not applied yet) the action FAILS CLOSED with a fixed sentence and writes nothing.
+  const draftGenerationRaw = formData.get("draft_generation");
+  const draftGeneration =
+    typeof draftGenerationRaw === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(draftGenerationRaw.trim())
+      ? draftGenerationRaw.trim().toLowerCase()
+      : null;
+  const { error } = await supabase.rpc("upsert_client_budget_context", {
+    p_client_id: clientId,
+    p_budget_level: budgetLevel,
+    p_budget_notes: budgetNotes,
+    p_generation: draftGeneration,
+  });
   if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") {
+      return { ok: false, error: "Saving is temporarily unavailable. Your text is still here; please reload and try again." };
+    }
     return { ok: false, error: userFacingDbFailure("save the budget", error, "budget_context_save_failed") };
   }
 

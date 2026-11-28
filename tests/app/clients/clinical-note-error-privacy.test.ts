@@ -145,7 +145,8 @@ describe("operator logging is a safe classification, never PHI", () => {
     // Only the CALL sites (`logNoteFailure("event", { ... })`), not the
     // declaration — a non-greedy match from the declaration would run past it.
     const calls = [...CODE.matchAll(/logNoteFailure\(\s*"[a-z_]+",[\s\S]*?\}\);/g)];
-    expect(calls.length).toBe(3);
+    // HON-130: a fourth call site, the closed "command missing" signal (code, kind and ids only).
+    expect(calls.length).toBe(4);
     for (const m of calls) {
       expect(m[0]).not.toMatch(/\bbody\b/);
       expect(m[0]).not.toMatch(/\bareas\b/);

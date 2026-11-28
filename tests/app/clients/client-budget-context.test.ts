@@ -37,9 +37,31 @@ const state: DbState = { clients: [], budget: [], failUpsertWith: null };
 
 // Supports exactly the chains the action uses:
 //   clients:               .select(cols).eq().eq().maybeSingle()
-//   client_budget_context: .upsert(row, { onConflict: "client_id" })
+//   client_budget_context: rpc("upsert_client_budget_context", ...)  (HON-130: the SECURITY INVOKER wrapper of the same upsert)
 function makeFakeSupabase(db: DbState) {
   return {
+    // The wrapper's behaviour, modelled: the practitioner and the studio come from the SESSION and the client row, never from an argument.
+    async rpc(name: string, args: Row) {
+      if (name !== "upsert_client_budget_context") throw new Error(`fake supabase: unexpected rpc ${name}`);
+      if (db.failUpsertWith) {
+        const err = db.failUpsertWith;
+        db.failUpsertWith = null;
+        return { data: null, error: err };
+      }
+      const parent = db.clients.find((c) => c.id === args.p_client_id);
+      if (!parent) return { data: null, error: { code: "42501", message: "not available" } };
+      const next = {
+        client_id: args.p_client_id,
+        studio_id: parent.studio_id,
+        budget_level: args.p_budget_level,
+        budget_notes: args.p_budget_notes,
+        updated_by_practitioner_id: PRAC,
+      };
+      const idx = db.budget.findIndex((r) => r.client_id === args.p_client_id);
+      if (idx >= 0) db.budget[idx] = { ...db.budget[idx], ...next };
+      else db.budget.push(next);
+      return { data: null, error: null };
+    },
     from(table: string) {
       return {
         select(cols: string) {
@@ -67,32 +89,6 @@ function makeFakeSupabase(db: DbState) {
             },
           };
           return chain;
-        },
-        async upsert(row: Row, opts: { onConflict?: string }) {
-          if (table !== "client_budget_context") {
-            throw new Error(`fake supabase: unexpected upsert on ${table}`);
-          }
-          if (db.failUpsertWith) {
-            const err = db.failUpsertWith;
-            db.failUpsertWith = null;
-            return { error: err };
-          }
-          // The real uniqueness guarantee is the client_id PRIMARY KEY; the
-          // fake honours the same conflict target so "save twice" cannot
-          // silently produce two current budgets here either.
-          expect(opts.onConflict).toBe("client_id");
-          // The DB trigger derives studio_id from the parent client and
-          // OVERWRITES whatever the caller sent. Model that, so a test can
-          // never pass because the action happened to send the right studio.
-          const parent = db.clients.find((c) => c.id === row.client_id);
-          const derived = parent ? parent.studio_id : null;
-          const next = { ...row, studio_id: derived };
-          const idx = db.budget.findIndex(
-            (r) => r.client_id === row.client_id,
-          );
-          if (idx >= 0) db.budget[idx] = { ...db.budget[idx], ...next };
-          else db.budget.push(next);
-          return { error: null };
         },
       };
     },
@@ -487,11 +483,17 @@ describe("treatment plan: no longer a budget authority", () => {
     expect(touchers).toEqual([
       // the export (read-only)
       "app/(app)/settings/data/actions.ts",
-      // the single writer
-      "app/(app)/clients/[id]/budget-context-actions.ts",
       // the single reader for the UI
       "lib/budget/queries.ts",
     ].sort());
+    // HON-130: the single WRITER now calls the database command that wraps the upsert. Exactly one caller, repo-wide.
+    const writers = require("node:child_process")
+      .execSync(`grep -rl 'upsert_client_budget_context' app lib components 2>/dev/null || true`, { cwd: ROOT, encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .sort();
+    expect(writers).toEqual(["app/(app)/clients/[id]/budget-context-actions.ts"]);
 
     // Of those, only the action mutates.
     const mutators = touchers.filter((f: string) => {
@@ -501,9 +503,7 @@ describe("treatment plan: no longer a budget authority", () => {
       );
       return /\.(upsert|insert|update|delete)\(/.test(src.slice(idx, idx + 400));
     });
-    expect(mutators).toEqual([
-      "app/(app)/clients/[id]/budget-context-actions.ts",
-    ]);
+    expect(mutators).toEqual([]); // no direct table write remains: the one writer goes through the command
   });
 });
 
@@ -559,7 +559,7 @@ describe("consultation surface", () => {
   it("selecting a chip does NOT inject boilerplate into the textarea", () => {
     // The chip only sets state; the textarea stays uncontrolled on its own
     // defaultValue. Any setNotes(...) driven by a chip would be the bug.
-    expect(BUDGET_CARD).toContain("onClick={() => setLevel(selected ? null : value)}");
+    expect(BUDGET_CARD).toContain("onClick={() => chooseLevel(selected ? null : value)}");
     expect(BUDGET_CARD).not.toMatch(/setNotes\(/);
     expect(BUDGET_CARD).not.toMatch(/Budget classification/i);
   });

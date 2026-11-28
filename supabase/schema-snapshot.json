@@ -3,7 +3,7 @@
   "migrations": {
     "count": 294,
     "last": "0399_client_note_drafts.sql",
-    "sha256": "04acd8ab25cdf9dfaace20c5912368c0d86fc887dff4a4e3d2c06f953e0024b2"
+    "sha256": "4256480f028133735b48bed32f4d276be8c41271a0ec080935a9d28d99c9e68f"
   },
   "public": {
     "tables": [
@@ -172,6 +172,7 @@
       "ack_client_id_photo_object_deletion",
       "acknowledge_waitlist_times_feedback",
       "acquire_studio_capacity_lock",
+      "add_client_clinical_note",
       "add_electrolysis_pass",
       "add_platform_rollout_studio",
       "add_studio_receptionist",
@@ -679,6 +680,7 @@
       "update_session_block_with_areas",
       "upsert_availability_day_locked",
       "upsert_availability_override_locked",
+      "upsert_client_budget_context",
       "validate_appointment_availability",
       "validate_public_booking_slot",
       "validate_public_booking_slot_v2",

@@ -1,32 +1,35 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { acquireEntry, markNone, type DraftActions, type DraftEntry } from "./draft-registry";
+import { acquireEntry, type DraftActions, type DraftEntry } from "./draft-registry";
 import type { DraftState } from "./draft-saver";
 import type { NoteDraftFields, NoteDraftKey, StoredNoteDraft } from "./types";
 
-// Client hook: attaches this editor to the key's DraftSaver (see draft-registry.ts). Unmounting DETACHES, it never discards: a flush that
-// fails (or conflicts, or is cleared) leaves the text held in the saver for the remount, and the failure is shown there. A flush is never
-// treated as a save unless it says so.
+// Client hook: ATTACHES this editor to the key's registry entry (see draft-registry.ts). It never creates, disposes or restarts a saver.
+// Unmounting DETACHES: a flush that fails (or conflicts, or is cleared) leaves the text held in the saver for the remount, and the failure is shown
+// there. A React Strict Mode replay (mount, unmount, mount) is therefore a no-op. A flush is never treated as a save unless it says so.
 const FLUSH_TIMEOUT_MS = 5000;
 const MOVE_DISCARD_TIMEOUT_MS = 8000;
 
-/** `enabled` false (autosave off for this studio): a private, unregistered saver that nothing sends from. The registry is never touched. */
+const IDLE: DraftState = { phase: "idle", savedAt: null, theirs: null };
+
+/**
+ * `enabled` false (autosave off for this studio or this page): NO entry and NO saver exist. The hook returns an inert API (state "idle", every
+ * command a no-op) and never touches the registry, so a page without drafts cannot disturb another page's retained text.
+ */
 export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions, enabled = true) {
-  const [state, setState] = useState<DraftState>({ phase: "idle", savedAt: null, theirs: null });
+  const [state, setState] = useState<DraftState>(IDLE);
   const [discardFailed, setDiscardFailed] = useState(false);
   /** True while Keep as new note moves the text to another key: the editor is read-only so nothing is typed into a key that is being closed. */
   const [moving, setMoving] = useState(false);
-  const [entry] = useState<DraftEntry>(() => acquireEntry(key, restored, actions, () => undefined, enabled));
-  const saver = entry.saver;
-  entry.actions = actions;
+  const [entry] = useState<DraftEntry | null>(() => (enabled ? acquireEntry(key, restored, actions, () => undefined) : null));
+  if (entry) entry.actions = actions;
+  const saver = entry?.saver ?? null;
 
   useEffect(() => {
+    if (!entry || !saver) return;
     // (Re)attach: take over state updates and show the saver's real state (a held failure is visible again, not forgotten).
-    saver.setListener((s) => {
-      entry.floor = Math.max(entry.floor, saver.currentRevision());
-      setState(s);
-    });
+    saver.setListener((s) => setState(s));
     setState(saver.snapshot());
     const unsaved = saver.unsavedWork();
     if (unsaved && saver.snapshot().phase === "idle") saver.change(unsaved.fields); // text held by a detached saver goes out again
@@ -38,8 +41,8 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
     return () => {
       document.removeEventListener("visibilitychange", hide);
       window.removeEventListener("pagehide", hide);
-      // Section/client switch: detach and try to save what is pending, bounded by a timeout. Whatever is still unsaved after that STAYS in
-      // the saver (and keeps retrying quietly); the remount re-attaches to it. Nothing is disposed.
+      // Detach and try to save what is pending, bounded by a timeout. Whatever is still unsaved after that STAYS in the saver (and keeps
+      // retrying quietly); the remount re-attaches to it. Nothing is disposed.
       saver.setListener(() => undefined);
       void Promise.race([saver.flush(), new Promise<boolean>((r) => setTimeout(() => r(false), FLUSH_TIMEOUT_MS))]);
     };
@@ -47,12 +50,31 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
 
   const change = useCallback(
     (fields: NoteDraftFields) => {
-      // New text after a Save or Discard is a NEW draft: the registry must stop saying "this key has no draft", or a remount would drop it.
-      entry.none = false;
-      saver.change(fields);
+      saver?.change(fields);
     },
-    [saver, entry],
+    [saver],
   );
+
+  if (!entry || !saver) {
+    return {
+      state: IDLE,
+      discardFailed: false,
+      moving: false,
+      change,
+      flush: async () => true,
+      retry: () => undefined,
+      keepMine: () => undefined,
+      keepAsNew: () => undefined,
+      useTheirs: () => null as NoteDraftFields | null,
+      latest: () => null as NoteDraftFields | null,
+      /** The draft generation the real Save must name; null when autosave is off. */
+      generation: () => null as string | null,
+      moveOut: async () => null as NoteDraftFields | null,
+      settle: () => undefined,
+      discard: async () => true,
+    };
+  }
+
   return {
     state,
     discardFailed,
@@ -65,20 +87,23 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
     useTheirs: () => saver.useTheirs(),
     /** The newest text of this key (acknowledged or not), for moving it to another key. */
     latest: () => saver.latestFields(),
+    /** The draft generation the real Save must name, so the SAME transaction ends exactly this draft. */
+    generation: (): string | null => saver.currentGeneration(),
     /**
-     * Move this key's text to ANOTHER key (Keep as new note): stop sending, delete the stored draft of THIS key (live rows only; an already
-     * cleared one is left as is), then settle. Returns the newest text, or null when there is none. A failed delete is ignored on purpose: the
-     * text is not lost (the caller seeds the new key with it) and a live row can only linger until it expires.
+     * Move this key's text to ANOTHER key (Keep as new note): stop sending, end THIS lifecycle on the server (its generation; live rows only), then
+     * settle. Returns the newest text, or null when there is none. A failed delete is ignored on purpose: the text is not lost (the caller seeds
+     * the new key with it) and a live row can only linger until it expires.
      */
     moveOut: async (): Promise<NoteDraftFields | null> => {
       setMoving(true);
       try {
         await saver.quiesce();
+        const generation = saver.currentGeneration();
         // The delete has no deadline of its own: bound it, and fall through to carrying the text if it does not answer.
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([
-            entry.actions.discard(key, entry.scope),
+            entry.actions.discard(key, entry.scope, generation),
             new Promise<void>((resolve) => {
               timer = setTimeout(resolve, MOVE_DISCARD_TIMEOUT_MS);
             }),
@@ -92,32 +117,29 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
         // settle() clears it, so reading earlier would seed the new form with stale text (silent loss).
         const fields = saver.latestFields();
         saver.settle();
-        markNone(key, entry.actions.scope);
         return fields;
       } finally {
         setMoving(false);
       }
     },
-    /** The real record was saved (its transaction already cleared the draft): stop sending and remember the draft is gone. */
+    /** The real record was saved (its transaction already ended the draft): stop sending; the next typing is a NEW lifecycle. */
     settle: () => {
       saver.settle();
-      markNone(key, entry.actions.scope);
     },
     /**
-     * Delete the stored draft. Stops sending first and waits for any request in flight, so a late save cannot recreate the draft. TRUE only when
-     * the server confirmed the delete; on failure the queued text is kept and sending resumes, and `discardFailed` says so.
+     * End the stored draft. Stops sending first and waits for any request in flight, so a late save cannot recreate the draft. TRUE only when
+     * the server confirmed; on failure the queued text is kept and sending resumes, and `discardFailed` says so.
      */
     discard: async (): Promise<boolean> => {
       await saver.quiesce();
       let ok = false;
       try {
-        ok = (await entry.actions.discard(key, entry.scope)).ok;
+        ok = (await entry.actions.discard(key, entry.scope, saver.currentGeneration())).ok;
       } catch {
         ok = false;
       }
       if (ok) {
         saver.settle();
-        markNone(key, entry.actions.scope);
         setDiscardFailed(false);
         return true;
       }

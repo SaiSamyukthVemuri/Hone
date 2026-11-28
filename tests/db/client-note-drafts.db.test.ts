@@ -7,7 +7,17 @@ let a: SeededStudio;
 let b: SeededStudio;
 let aColleague: { userId: string; practitionerId: string };
 
-const SAVE = `select * from public.save_client_note_draft($1, $2, $3, $4, $5::jsonb, $6, $7)`;
+const SAVE = `select * from public.save_client_note_draft($1, $2, $3, $4, $5::jsonb, $6, $7, $8)`;
+const DISCARD = `select public.discard_client_note_draft($1, $2, $3, $4, $5) as ok`;
+// One generation per (user, kind, target) so a test that saves the same draft several times is ONE lifecycle, as the editor is.
+const gens = new Map<string, string>();
+function gen(user: string, kind: string, target: string, fresh = false): string {
+  const k = `${user}|${kind}|${target}`;
+  if (fresh || !gens.has(k)) gens.set(k, randomUUID());
+  return gens.get(k)!;
+}
+// The save WRAPPER (the application's note command): hands the draft generation to the clear trigger.
+const NOTE_RPC = `select public.add_client_clinical_note($1, $2, $3, '{}'::text[], null, $4, $5) as id`;
 const NOTE = `insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body, supersedes_note_id)
   values ($1, $2, $3, $4, $5, $6) returning id`;
 
@@ -22,20 +32,27 @@ afterAll(async () => {
   await closePool();
 });
 
-async function save(user: string, s: SeededStudio, kind: string, target: string, fields: object, rev: number, writer = randomUUID()) {
-  return asUser(user, async (q) => (await q(SAVE, [s.studioId, s.clientId, kind, target, JSON.stringify(fields), rev, writer])).rows[0]);
+async function save(user: string, s: SeededStudio, kind: string, target: string, fields: object, rev: number, writer = randomUUID(), generation = gen(user, kind, target)) {
+  return asUser(user, async (q) => (await q(SAVE, [s.studioId, s.clientId, kind, target, JSON.stringify(fields), rev, writer, generation])).rows[0]);
+}
+async function discard(user: string, s: SeededStudio, kind: string, target: string, generation = gen(user, kind, target)) {
+  return asUser(user, async (q) => (await q(DISCARD, [s.studioId, s.clientId, kind, target, generation])).rows[0].ok as boolean);
+}
+async function addNote(user: string, s: SeededStudio, kind: string, body: string, supersedes: string | null, generation: string | null) {
+  return asUser(user, async (q) => (await q(NOTE_RPC, [s.clientId, kind, body, supersedes, generation])).rows[0].id as string);
 }
 async function draftRow(s: SeededStudio, practitionerId: string, kind: string, target: string) {
   return (await adminQuery(`select * from public.client_note_drafts where client_id = $1 and practitioner_id = $2 and kind = $3 and target = $4`, [s.clientId, practitionerId, kind, target])).rows[0];
 }
 async function wipe() {
+  gens.clear();
   await adminQuery(`delete from public.client_note_drafts where studio_id in ($1, $2)`, [a.studioId, b.studioId]);
 }
 
 describe("database-side switch: off means off", () => {
   it("a direct RPC call by a signed-in user stores NOTHING while the studio is not enabled, with the closed code", async () => {
     const off = await seedStudio("nd-off");
-    const r = await asUser(off.userId, async (q) => (await q(SAVE, [off.studioId, off.clientId, "consultation", "new", JSON.stringify({ body: "must not be stored" }), 0, randomUUID()])).rows[0]);
+    const r = await asUser(off.userId, async (q) => (await q(SAVE, [off.studioId, off.clientId, "consultation", "new", JSON.stringify({ body: "must not be stored" }), 0, randomUUID(), randomUUID()])).rows[0]);
     expect(r.status).toBe("disabled");
     expect((await adminQuery(`select count(*)::int n from public.client_note_drafts where studio_id = $1`, [off.studioId])).rows[0].n).toBe(0);
   });
@@ -51,7 +68,7 @@ describe("database-side switch: off means off", () => {
 describe("Privacy conditions on the exact SQL", () => {
   it("a non-member always gets 'refused', whether or not the studio has drafts on; nothing leaks about the switch", async () => {
     await wipe();
-    const asB = () => asUser(b.userId, async (q) => (await q(SAVE, [a.studioId, a.clientId, "consultation", "new", "{}", 0, randomUUID()])).rows[0]);
+    const asB = () => asUser(b.userId, async (q) => (await q(SAVE, [a.studioId, a.clientId, "consultation", "new", "{}", 0, randomUUID(), randomUUID()])).rows[0]);
     expect((await asB()).status).toBe("refused"); // studio a ON
     await adminQuery(`delete from public.client_note_draft_enabled_studios where studio_id = $1`, [a.studioId]);
     try {
@@ -103,9 +120,14 @@ describe("Privacy conditions on the exact SQL", () => {
     await save(a.userId, a, "consultation", "new", { body: "mine" }, 0);
     await adminQuery(`delete from public.client_note_draft_enabled_studios where studio_id = $1`, [a.studioId]); // switched OFF with a draft still stored
     try {
-      const ok = await asUser(a.userId, async (q) => (await q(`select public.discard_client_note_draft($1,$2,'consultation','new') as ok`, [a.studioId, a.clientId])).rows[0].ok);
+      const ok = await discard(a.userId, a, "consultation", "new");
       expect(ok).toBe(true);
-      expect(await draftRow(a, a.practitionerId, "consultation", "new")).toBeUndefined();
+      // Discard is a TOMBSTONE, not a delete: the text is nulled in the same statement and the revision keeps counting.
+      const row = await draftRow(a, a.practitionerId, "consultation", "new");
+      expect(row.fields).toBeNull();
+      expect(row.cleared_at).not.toBeNull();
+      expect(row.generation).toBeNull();
+      expect(row.ended_generation).toBe(gen(a.userId, "consultation", "new"));
     } finally {
       await adminQuery(`insert into public.client_note_draft_enabled_studios (studio_id) values ($1) on conflict do nothing`, [a.studioId]);
     }
@@ -125,7 +147,7 @@ describe("Privacy conditions on the exact SQL", () => {
       );
       expect((await save(a.userId, a, "consultation", "new", { body: "cleared rows do not count" }, 0)).status).toBe("ok");
       // 200 LIVE rows do count: turn the cleared ones live, then the next new draft is refused.
-      await adminQuery(`update public.client_note_drafts set fields = '{"body":"x"}'::jsonb, cleared_at = null where practitioner_id = $1 and client_id = any($2::uuid[])`, [a.practitionerId, ids]);
+      await adminQuery(`update public.client_note_drafts set fields = '{"body":"x"}'::jsonb, cleared_at = null, generation = gen_random_uuid() where practitioner_id = $1 and client_id = any($2::uuid[])`, [a.practitionerId, ids]);
       await expect(save(a.userId, a, "skin_hair_analysis", "new", { body: "over the cap" }, 0)).rejects.toThrow();
     } finally {
       await adminQuery(`delete from public.clients where id = any($1::uuid[])`, [ids]);
@@ -204,7 +226,7 @@ describe("visibility and privileges", () => {
     const colleague = await save(aColleague.userId, a, "consultation", "new", { body: "x" }, 0);
     expect(colleague.status).toBe("ok"); // their OWN draft of their own, never visible to the author
     expect(await draftRow(a, a.practitionerId, "consultation", "new")).toBeUndefined();
-    const cross = await asUser(b.userId, async (q) => (await q(SAVE, [a.studioId, a.clientId, "consultation", "new", "{}", 0, randomUUID()])).rows[0]);
+    const cross = await asUser(b.userId, async (q) => (await q(SAVE, [a.studioId, a.clientId, "consultation", "new", "{}", 0, randomUUID(), randomUUID()])).rows[0]);
     expect(cross.status).toBe("refused");
   });
 
@@ -212,7 +234,7 @@ describe("visibility and privileges", () => {
     await wipe();
     const m = await seedMember(a, "nd-inactive");
     await adminQuery(`update public.practitioners set active = false where id = $1`, [m.practitionerId]);
-    const r = await asUser(m.userId, async (q) => (await q(SAVE, [a.studioId, a.clientId, "consultation", "new", "{}", 0, randomUUID()])).rows[0]);
+    const r = await asUser(m.userId, async (q) => (await q(SAVE, [a.studioId, a.clientId, "consultation", "new", "{}", 0, randomUUID(), randomUUID()])).rows[0]);
     expect(r.status).toBe("refused");
   });
 
@@ -231,14 +253,14 @@ describe("visibility and privileges", () => {
       `select p from (values ('insert'), ('update'), ('delete'), ('truncate'), ('references'), ('trigger')) v(p) where has_table_privilege('authenticated', 'public.client_note_drafts', p)`,
     )).rows;
     expect(authedPrivs).toEqual([]);
-    for (const fn of ["save_client_note_draft(uuid,uuid,text,text,jsonb,integer,uuid)", "discard_client_note_draft(uuid,uuid,text,text)", "client_note_drafts_clear_on_note()", "client_note_drafts_clear_on_budget()", "sweep_client_note_drafts()"]) {
+    for (const fn of ["save_client_note_draft(uuid,uuid,text,text,jsonb,integer,uuid,uuid)", "discard_client_note_draft(uuid,uuid,text,text,uuid)", "client_note_drafts_clear_on_note()", "client_note_drafts_clear_on_budget()", "sweep_client_note_drafts()"]) {
       for (const role of ["anon", "public"]) {
         const has = (await adminQuery(`select has_function_privilege($1, $2::regprocedure, 'execute') as has`, [role === "public" ? "authenticated" : role, `public.${fn}`])).rows[0].has;
         if (role === "anon") expect(has, `${fn} anon`).toBe(false);
       }
     }
     expect((await adminQuery(`select has_function_privilege('service_role', 'public.sweep_client_note_drafts()', 'execute') as has`)).rows[0].has).toBe(true);
-    expect((await adminQuery(`select has_function_privilege('service_role', 'public.save_client_note_draft(uuid,uuid,text,text,jsonb,integer,uuid)', 'execute') as has`)).rows[0].has).toBe(false);
+    expect((await adminQuery(`select has_function_privilege('service_role', 'public.save_client_note_draft(uuid,uuid,text,text,jsonb,integer,uuid,uuid)', 'execute') as has`)).rows[0].has).toBe(false);
     expect((await adminQuery(`select has_function_privilege('authenticated', 'public.client_note_draft_retention()', 'execute') as has`)).rows[0].has).toBe(true);
   });
 });
@@ -252,8 +274,8 @@ describe("one transaction: saving the record clears the draft", () => {
     )).rows.map((r) => r.id as string);
     try {
       await adminQuery(
-        `insert into public.client_note_drafts (studio_id, client_id, practitioner_id, kind, target, fields)
-         select $1, c, $2, 'consultation', 'new', '{"body":"x"}'::jsonb from unnest($3::uuid[]) c`,
+        `insert into public.client_note_drafts (studio_id, client_id, practitioner_id, kind, target, fields, generation)
+         select $1, c, $2, 'consultation', 'new', '{"body":"x"}'::jsonb, gen_random_uuid() from unnest($3::uuid[]) c`,
         [a.studioId, a.practitionerId, ids],
       );
       await expect(save(a.userId, a, "skin_hair_analysis", "new", { body: "over the cap" }, 0)).rejects.toThrow(); // a LIVE draft is still capped
@@ -291,32 +313,41 @@ describe("one transaction: saving the record clears the draft", () => {
     expect(JSON.stringify((await draftRow(a, a.practitionerId, "consultation", base)).fields)).toBe("null");
   });
 
-  it("a late autosave after the clear conflicts and writes no text; a second tab with older text cannot overwrite a cleared row", async () => {
+  it("a late autosave after the Save is `cleared` and writes no text; a second tab of the SAME lifecycle cannot overwrite the tombstone", async () => {
     await wipe();
+    const g = gen(a.userId, "consultation", "new");
     const first = await save(a.userId, a, "consultation", "new", { body: "typing" }, 0);
-    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "saved", null]));
+    await addNote(a.userId, a, "consultation", "saved", null, g); // the real Save, through the wrapper, naming the draft it ends
     const late = await save(a.userId, a, "consultation", "new", { body: "late" }, first.revision);
     expect(late.status).toBe("cleared");
     const tabB = await save(a.userId, a, "consultation", "new", { body: "older text" }, first.revision);
     expect(tabB.status).toBe("cleared");
     expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toBeNull();
-    // A FIRST write (expected revision 0) never revives a tombstone: it comes back cleared WITH the tombstone's revision...
-    const fresh = await save(a.userId, a, "consultation", "new", { body: "fresh" }, 0);
-    expect(fresh.status).toBe("cleared");
-    expect(fresh.revision).toBeGreaterThan(first.revision);
+    // A late FIRST write of the ended lifecycle (expected 0, same generation) is refused too...
+    const lateFirst = await save(a.userId, a, "consultation", "new", { body: "fresh" }, 0);
+    expect(lateFirst.status).toBe("cleared");
+    expect(JSON.stringify(lateFirst)).not.toContain("fresh");
     expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toBeNull();
-    // ...and only a write AT that revision (a deliberate new draft) revives it.
-    const revived = await save(a.userId, a, "consultation", "new", { body: "fresh" }, fresh.revision);
-    expect(revived.status).toBe("ok");
-    expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toEqual({ body: "fresh" });
+    // ...and a genuinely NEW lifecycle (a new generation, expected 0) begins on the same row: the revision continues, it never repeats.
+    const before = (await draftRow(a, a.practitionerId, "consultation", "new")).revision as number;
+    const g2 = gen(a.userId, "consultation", "new", true);
+    const begun = await save(a.userId, a, "consultation", "new", { body: "a new draft" }, 0, randomUUID(), g2);
+    expect(begun.status).toBe("ok");
+    expect(begun.revision).toBeGreaterThan(before);
+    const row = await draftRow(a, a.practitionerId, "consultation", "new");
+    expect(row.fields).toEqual({ body: "a new draft" });
+    expect(row.generation).toBe(g2);
+    expect(row.ended_generation).toBeNull();
   });
 
-  it("P1 (late FIRST autosave): the record is saved while no draft row exists yet; the in-flight first write (revision 0) cannot recreate the text", async () => {
+  it("P1 (late FIRST autosave): the record is saved while no draft row exists yet; the in-flight first write (revision 0, same generation) cannot recreate the text", async () => {
     await wipe();
-    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "just saved", null]));
+    const g = gen(a.userId, "consultation", "new");
+    await addNote(a.userId, a, "consultation", "just saved", null, g);
     const tombstone = await draftRow(a, a.practitionerId, "consultation", "new");
     expect(tombstone.fields).toBeNull(); // the Save left a text-free tombstone, only ids and a revision
     expect(tombstone.cleared_at).not.toBeNull();
+    expect(tombstone.ended_generation).toBe(g); // taken from the transaction-local setting, because no live row existed
     const late = await save(a.userId, a, "consultation", "new", { body: "just saved" }, 0);
     expect(late.status).toBe("cleared");
     expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toBeNull();
@@ -324,28 +355,40 @@ describe("one transaction: saving the record clears the draft", () => {
     expect(visible).toBe(0); // the author's own read shows no draft either
   });
 
-  it("every Save bumps the tombstone: a revival that was based on an older tombstone is refused", async () => {
+  it("ACCEPTED RESIDUAL (named): a raw Data API insert with NO generation leaves a tombstone no lifecycle can be matched to, so a late first write of the author's own can begin a draft", async () => {
     await wipe();
-    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "one", null]));
+    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "raw insert", null]));
+    const tombstone = await draftRow(a, a.practitionerId, "consultation", "new");
+    expect(tombstone.ended_generation).toBeNull();
+    expect(tombstone.fields).toBeNull();
+    expect((await save(a.userId, a, "consultation", "new", { body: "the author's own text" }, 0)).status).toBe("ok");
+  });
+
+  it("every Save bumps the tombstone: a write based on an older tombstone revision is refused", async () => {
+    await wipe();
+    const g = gen(a.userId, "consultation", "new");
+    await addNote(a.userId, a, "consultation", "one", null, g);
     const t1 = (await draftRow(a, a.practitionerId, "consultation", "new")).revision as number;
-    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "two", null]));
+    await addNote(a.userId, a, "consultation", "two", null, randomUUID());
     const t2 = (await draftRow(a, a.practitionerId, "consultation", "new")).revision as number;
     expect(t2).toBeGreaterThan(t1);
     expect((await save(a.userId, a, "consultation", "new", { body: "stale" }, t1)).status).toBe("cleared");
   });
 
-  it("tombstones exist only for an ENABLED studio, and Discard leaves a tombstone in place", async () => {
+  it("tombstones exist only for an ENABLED studio, and Discard leaves a text-free tombstone in place", async () => {
     await wipe();
     await adminQuery(`delete from public.client_note_draft_enabled_studios where studio_id = $1`, [a.studioId]);
     try {
-      await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "autosave off", null]));
+      await addNote(a.userId, a, "consultation", "autosave off", null, randomUUID());
       expect(await draftRow(a, a.practitionerId, "consultation", "new")).toBeUndefined();
     } finally {
       await adminQuery(`insert into public.client_note_draft_enabled_studios (studio_id) values ($1) on conflict do nothing`, [a.studioId]);
     }
-    await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "autosave on", null]));
-    await asUser(a.userId, (q) => q(`select public.discard_client_note_draft($1,$2,'consultation','new')`, [a.studioId, a.clientId]));
-    expect((await draftRow(a, a.practitionerId, "consultation", "new")).cleared_at).not.toBeNull();
+    await save(a.userId, a, "consultation", "new", { body: "live" }, 0);
+    expect(await discard(a.userId, a, "consultation", "new")).toBe(true);
+    const row = await draftRow(a, a.practitionerId, "consultation", "new");
+    expect(row.cleared_at).not.toBeNull();
+    expect(row.fields).toBeNull();
   });
 
   it("a revise target that already has its revision answers cleared with revision 0 (the text can only live as a NEW note)", async () => {
@@ -430,7 +473,7 @@ describe("retention and erasure", () => {
     try {
       await adminQuery(`update public.client_note_drafts set created_at = now() - interval '20 days', updated_at = now() - interval '2 days' where kind = 'consultation' and client_id = $1`, [a.clientId]);
       await adminQuery(`update public.client_note_drafts set created_at = now() - interval '20 days', updated_at = now() - interval '15 days' where kind = 'skin_hair_analysis' and client_id = $1`, [a.clientId]);
-      await adminQuery(`update public.client_note_drafts set fields = null, cleared_at = now() - interval '2 days' where kind = 'budget' and client_id = $1`, [a.clientId]);
+      await adminQuery(`update public.client_note_drafts set fields = null, generation = null, cleared_at = now() - interval '2 days' where kind = 'budget' and client_id = $1`, [a.clientId]);
     } finally {
       await adminQuery(`alter table public.client_note_drafts enable trigger user`);
     }
@@ -465,5 +508,183 @@ describe("retention and erasure", () => {
     await save(s2.userId, s2, "budget", "current", { budget_notes: "x" }, 0);
     await adminQuery(`delete from public.studios where id = $1`, [s2.studioId]).catch(() => undefined);
     expect((await adminQuery(`select count(*)::int n from public.client_note_drafts where studio_id = $1`, [s2.studioId])).rows[0].n).toBe(0);
+  });
+});
+
+describe("draft identity (HON-130 design): a generation never repeats", () => {
+  it("thread 15: a stale tab (old generation, revision 1) cannot overwrite a replacement draft created after a discard", async () => {
+    await wipe();
+    const g1 = gen(a.userId, "consultation", "new");
+    const tabA = await save(a.userId, a, "consultation", "new", { body: "tab A text" }, 0, randomUUID(), g1);
+    expect(tabA.revision).toBe(1);
+    expect(await discard(a.userId, a, "consultation", "new", g1)).toBe(true);
+    const g2 = gen(a.userId, "consultation", "new", true);
+    const replacement = await save(a.userId, a, "consultation", "new", { body: "REPLACEMENT" }, 0, randomUUID(), g2);
+    expect(replacement.status).toBe("ok");
+    expect(replacement.revision).toBeGreaterThan(1); // the revision never restarts at 1
+    // Tab B still holds generation g1 at the old revision 1 AND, to be hostile, the replacement's own revision.
+    for (const rev of [1, replacement.revision]) {
+      const stale = await save(a.userId, a, "consultation", "new", { body: "stale tab overwrite" }, rev, randomUUID(), g1);
+      expect(["cleared", "conflict"]).toContain(stale.status);
+    }
+    const row = await draftRow(a, a.practitionerId, "consultation", "new");
+    expect(row.fields).toEqual({ body: "REPLACEMENT" });
+    expect(row.generation).toBe(g2);
+  });
+
+  it("a live row of ANOTHER generation is always a conflict, whatever revision the writer holds, and returns only the author's own draft", async () => {
+    await wipe();
+    const g1 = randomUUID();
+    const g2 = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "first lifecycle" }, 0, randomUUID(), g1);
+    const other = await save(a.userId, a, "consultation", "new", { body: "second" }, 1, randomUUID(), g2);
+    expect(other.status).toBe("conflict");
+    expect(other.generation).toBe(g1);
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toEqual({ body: "first lifecycle" });
+  });
+
+  it("begin and revive refresh updated_at and keep the revision monotonic across lifecycles", async () => {
+    await wipe();
+    const g1 = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "one" }, 0, randomUUID(), g1);
+    await discard(a.userId, a, "consultation", "new", g1);
+    await adminQuery(`alter table public.client_note_drafts disable trigger user`);
+    await adminQuery(`update public.client_note_drafts set updated_at = now() - interval '10 days' where client_id = $1`, [a.clientId]);
+    await adminQuery(`alter table public.client_note_drafts enable trigger user`);
+    const before = await draftRow(a, a.practitionerId, "consultation", "new");
+    const begun = await save(a.userId, a, "consultation", "new", { body: "two" }, 0, randomUUID(), randomUUID());
+    expect(begun.status).toBe("ok");
+    const after = await draftRow(a, a.practitionerId, "consultation", "new");
+    expect(new Date(after.updated_at).getTime()).toBeGreaterThan(new Date(before.updated_at).getTime() + 9 * 86400_000);
+    expect(after.revision).toBeGreaterThan(before.revision);
+  });
+
+  it("discard only UPDATES a live row of exactly that generation: a wrong generation, a missing row, an ended row change nothing and insert nothing", async () => {
+    await wipe();
+    expect(await discard(a.userId, a, "consultation", "new", randomUUID())).toBe(false);
+    expect(await draftRow(a, a.practitionerId, "consultation", "new")).toBeUndefined(); // never inserts
+    const g = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "live" }, 0, randomUUID(), g);
+    expect(await discard(a.userId, a, "consultation", "new", randomUUID())).toBe(false);
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toEqual({ body: "live" });
+    expect(await discard(a.userId, a, "consultation", "new", g)).toBe(true);
+    const rev = (await draftRow(a, a.practitionerId, "consultation", "new")).revision;
+    expect(await discard(a.userId, a, "consultation", "new", g)).toBe(false); // already ended
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).revision).toBe(rev);
+  });
+
+  it("a colleague cannot discard the author's draft (the key includes the practitioner)", async () => {
+    await wipe();
+    const g = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "mine" }, 0, randomUUID(), g);
+    expect(await discard(aColleague.userId, a, "consultation", "new", g)).toBe(false);
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toEqual({ body: "mine" });
+  });
+
+  it("CHECKs: a tombstone can never hold text, and a row is either live (generation) or ended", async () => {
+    await wipe();
+    await save(a.userId, a, "consultation", "new", { body: "live" }, 0);
+    await expect(adminQuery(`update public.client_note_drafts set cleared_at = now(), generation = null where client_id = $1`, [a.clientId])).rejects.toThrow(); // text kept on a tombstone
+    await expect(adminQuery(`update public.client_note_drafts set generation = null where client_id = $1`, [a.clientId])).rejects.toThrow(); // live without a generation
+    await expect(adminQuery(`update public.client_note_drafts set ended_generation = gen_random_uuid() where client_id = $1`, [a.clientId])).rejects.toThrow(); // live with an ended one
+  });
+
+  it("an author's own revise draft is NOT cleared by a colleague's revision; the author's late write comes back cleared with no text and the row is untouched", async () => {
+    await wipe();
+    const base = await asUser(a.userId, async (q) => (await q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "base-d1", null])).rows[0].id as string);
+    const gA = randomUUID();
+    const aDraft = await save(a.userId, a, "consultation", base, { body: "A's revise text" }, 0, randomUUID(), gA);
+    // B (a colleague) saves a revision of the same note through the wrapper.
+    await addNote(aColleague.userId, a, "consultation", "B's revision", base, randomUUID());
+    const rowBefore = await draftRow(a, a.practitionerId, "consultation", base);
+    expect(rowBefore.fields).toEqual({ body: "A's revise text" }); // A's row untouched by B's Save (only the SAVING practitioner's own row is cleared)
+    const late = await save(a.userId, a, "consultation", base, { body: "A types more" }, aDraft.revision, randomUUID(), gA);
+    expect(late.status).toBe("cleared");
+    expect(JSON.stringify(late)).not.toContain("A's revise text");
+    expect(late.fields).toEqual({});
+    const rowAfter = await draftRow(a, a.practitionerId, "consultation", base);
+    expect(rowAfter.fields).toEqual({ body: "A's revise text" }); // never overwritten, never emptied: the text stays on A's side too
+    expect(rowAfter.revision).toBe(rowBefore.revision);
+  });
+
+  it("A's 'new' draft survives B's note save, and B's own is the only row cleared", async () => {
+    await wipe();
+    await save(a.userId, a, "consultation", "new", { body: "A's new draft" }, 0);
+    const gB = gen(aColleague.userId, "consultation", "new");
+    await save(aColleague.userId, a, "consultation", "new", { body: "B's draft" }, 0, randomUUID(), gB);
+    await addNote(aColleague.userId, a, "consultation", "B saved", null, gB);
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toEqual({ body: "A's new draft" });
+    expect((await draftRow(a, aColleague.practitionerId, "consultation", "new")).fields).toBeNull();
+  });
+});
+
+describe("D3 and HN130/HN131: the Save wrapper and the double-save refusal", () => {
+  it("two windows sharing ONE generation: only one note is created; the second Save is refused with HN131 and rolls back", async () => {
+    await wipe();
+    const g = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "shared draft" }, 0, randomUUID(), g);
+    const n0 = (await adminQuery(`select count(*)::int n from public.client_clinical_notes where client_id = $1`, [a.clientId])).rows[0].n;
+    const results = await Promise.allSettled([
+      addNote(a.userId, a, "consultation", "window one", null, g),
+      addNote(a.userId, a, "consultation", "window two", null, g),
+    ]);
+    const ok = results.filter((r) => r.status === "fulfilled");
+    const bad = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(ok).toHaveLength(1);
+    expect(bad).toHaveLength(1);
+    expect((bad[0].reason as { code?: string }).code).toBe("HN131");
+    expect(String((bad[0].reason as Error).message)).not.toMatch(/window (one|two)/);
+    const n1 = (await adminQuery(`select count(*)::int n from public.client_clinical_notes where client_id = $1`, [a.clientId])).rows[0].n;
+    expect(n1 - n0).toBe(1);
+  });
+
+  it("sequentially: a second Save of an ended generation is HN131; a missing generation or another generation never raises", async () => {
+    await wipe();
+    const g = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "d" }, 0, randomUUID(), g);
+    await addNote(a.userId, a, "consultation", "first", null, g);
+    await expect(addNote(a.userId, a, "consultation", "again", null, g)).rejects.toMatchObject({ code: "HN131" });
+    await addNote(a.userId, a, "consultation", "no generation", null, null); // never fails for draft state
+    await addNote(a.userId, a, "consultation", "other generation", null, randomUUID());
+    await adminQuery(`select 1`);
+  });
+
+  it("an invalid generation setting is NULL and never fails a clinical Save (direct setting, as a hostile caller could set it)", async () => {
+    await wipe();
+    await asUser(a.userId, async (q) => {
+      await q(`select set_config('hone.draft_generation', 'not-a-uuid', true)`);
+      await q(NOTE, [a.clientId, a.studioId, a.practitionerId, "consultation", "invalid setting", null]);
+    });
+    expect(await draftRow(a, a.practitionerId, "consultation", "new").then((r) => r?.ended_generation ?? null)).toBeNull();
+  });
+
+  it("HN131 concerns the saving practitioner's OWN row only: a colleague's ended generation never blocks my Save", async () => {
+    await wipe();
+    const g = randomUUID();
+    await save(aColleague.userId, a, "consultation", "new", { body: "B" }, 0, randomUUID(), g);
+    await addNote(aColleague.userId, a, "consultation", "B saved", null, g);
+    await addNote(a.userId, a, "consultation", "A saves with the same uuid", null, g); // A has no such row: no refusal
+  });
+
+  it("a practitioner AT the 200-live-draft cap can still save a note and a budget through the wrapper (HN130 never fires)", async () => {
+    await wipe();
+    const ids = (await adminQuery(
+      `insert into public.clients (id, studio_id, name, email) select gen_random_uuid(), $1, 'cap3 ' || g, 'cap3-' || g || '@harness.local' from generate_series(1, 200) g returning id`,
+      [a.studioId],
+    )).rows.map((r) => r.id as string);
+    try {
+      await adminQuery(
+        `insert into public.client_note_drafts (studio_id, client_id, practitioner_id, kind, target, fields, generation)
+         select $1, c, $2, 'consultation', 'new', '{"body":"x"}'::jsonb, gen_random_uuid() from unnest($3::uuid[]) c`,
+        [a.studioId, a.practitionerId, ids],
+      );
+      await addNote(a.userId, a, "skin_hair_analysis", "saved at the cap", null, randomUUID());
+      await asUser(a.userId, (q) => q(`select public.upsert_client_budget_context($1, 'somewhat_limited', 'saved at the cap', $2)`, [a.clientId, randomUUID()]));
+      expect((await draftRow(a, a.practitionerId, "skin_hair_analysis", "new")).cleared_at).not.toBeNull();
+      expect((await draftRow(a, a.practitionerId, "budget", "current")).cleared_at).not.toBeNull();
+    } finally {
+      await adminQuery(`delete from public.clients where id = any($1::uuid[])`, [ids]);
+      await adminQuery(`delete from public.client_budget_context where client_id = $1`, [a.clientId]);
+    }
   });
 });

@@ -16,12 +16,16 @@ export type DraftState = {
   theirs: NoteDraftFields | null;
 };
 
-export type DraftSend = (fields: NoteDraftFields, expectedRevision: number) => Promise<NoteDraftSaveResult>;
+export type DraftSend = (fields: NoteDraftFields, expectedRevision: number, generation: string) => Promise<NoteDraftSaveResult>;
 
 export type DraftSaverOptions = {
   send: DraftSend;
   onState: (state: DraftState) => void;
   initialRevision?: number;
+  /** The draft lifecycle this saver writes under (a restored draft's own, else a new one). Every send names it. */
+  generation?: string;
+  /** Mints the generation of the NEXT lifecycle (after a Save, a Discard, a move, or Keep as new). */
+  newGeneration?: () => string;
   debounceMs?: number;
   /** Retry delays after a failed save, then repeats the last. */
   retryMs?: readonly number[];
@@ -31,11 +35,14 @@ export type DraftSaverOptions = {
 
 export class DraftSaver {
   private revision: number;
+  /** The lifecycle this saver writes under. Identity, not ordering: the revision orders writes inside one lifecycle. */
+  private generation: string;
+  private readonly mint: () => string;
+  /** The other lifecycle's generation while in `conflict`: Keep mine takes that draft over, Use theirs adopts it. */
+  private theirGeneration: string | null = null;
   private pending: NoteDraftFields | null = null;
   /** The fields of the request currently in flight (so a timed-out unmount can still hold them). */
   private inFlightFields: NoteDraftFields | null = null;
-  /** True once any write was acknowledged or a stored draft was restored: the difference between a fresh session and a stale one. */
-  private everAcked: boolean;
   /** Quiesced for a discard: nothing new is sent until resume() or settle(). */
   private paused = false;
   private inFlight = false;
@@ -47,12 +54,13 @@ export class DraftSaver {
   private selfSettled = false;
   private state: DraftState = { phase: "idle", savedAt: null, theirs: null };
   private idleWaiters: Array<() => void> = [];
-  private readonly o: Required<Omit<DraftSaverOptions, "initialRevision">>;
+  private readonly o: Required<Omit<DraftSaverOptions, "initialRevision" | "generation" | "newGeneration">>;
   private listener: (state: DraftState) => void;
 
   constructor(options: DraftSaverOptions) {
+    this.mint = options.newGeneration ?? (() => crypto.randomUUID());
+    this.generation = options.generation ?? this.mint();
     this.revision = options.initialRevision ?? 0;
-    this.everAcked = (options.initialRevision ?? 0) > 0;
     this.listener = options.onState;
     this.o = {
       send: options.send,
@@ -67,7 +75,6 @@ export class DraftSaver {
   /** Start from a draft the server already holds (a restored one), so its text counts as the latest. */
   adopt(fields: NoteDraftFields) {
     this.lastAcked = fields;
-    this.everAcked = true;
   }
 
   /** Point state updates at a new listener (a remounted component re-attaches to the same saver). */
@@ -77,6 +84,11 @@ export class DraftSaver {
 
   snapshot(): DraftState {
     return this.state;
+  }
+
+  /** The generation of the draft this saver is writing (named by the real Save so the same transaction ends it). */
+  currentGeneration(): string {
+    return this.generation;
   }
 
   /** The revision the server last acknowledged (0 = none). */
@@ -164,7 +176,7 @@ export class DraftSaver {
     this.set({ phase: "saving" });
     let result: NoteDraftSaveResult;
     try {
-      result = await this.o.send(fields, this.revision);
+      result = await this.o.send(fields, this.revision, this.generation);
     } catch {
       result = { status: "error" };
     }
@@ -172,7 +184,6 @@ export class DraftSaver {
     this.inFlightFields = null;
     if (result.status === "ok") {
       this.revision = result.revision;
-      this.everAcked = true;
       this.lastAcked = fields;
       this.failures = 0;
       if (this.pending != null) {
@@ -183,6 +194,7 @@ export class DraftSaver {
       this.set({ phase: "saved", savedAt: result.savedAt, theirs: null });
     } else if (result.status === "conflict") {
       this.revision = result.revision;
+      this.theirGeneration = result.generation;
       // Keep OUR newest text; never merge. Resolution is explicit (useTheirs / keepMine).
       this.pending = this.pending ?? fields;
       this.set({ phase: "conflict", theirs: result.fields });
@@ -192,16 +204,10 @@ export class DraftSaver {
         this.revision = 0;
         this.pending = null;
         this.set({ phase: "idle", savedAt: null, theirs: null });
-      } else if (result.revision > 0 && !this.everAcked) {
-        // A FRESH session (nothing of ours was ever stored or restored) met the tombstone of an earlier Save of this key: continue from the
-        // tombstone's revision. This is also what stops a late first autosave from recreating a draft of text that was just saved.
-        this.revision = result.revision;
-        this.pending = this.pending ?? fields;
-        void this.run();
-        return;
       } else {
-        // ANOTHER window saved the record (or the revised note already has its revision). KEEP this tab's text, never reset the form,
-        // and ask: keep it as a new draft or discard it. A revision of 0 means the revise target itself is gone: only a NEW note can hold it.
+        // This lifecycle is OVER: another window saved the record or discarded the draft, or the revised note already has its revision. KEEP this
+        // tab's text, never reset the form, and ask: keep it as a new draft (a NEW generation) or discard it. A revision of 0 means the revise
+        // target itself has its revision: only a NEW note can hold the text.
         this.revision = result.revision;
         this.pending = this.pending ?? fields;
         this.set({ phase: "cleared", theirs: null });
@@ -235,9 +241,11 @@ export class DraftSaver {
     void this.run();
   }
 
-  /** Conflict: overwrite the other window's draft with ours (re-save on the current revision). */
+  /** Conflict: overwrite the other window's draft with ours: take its lifecycle over and re-save on its current revision. */
   keepMine() {
     if (this.state.phase !== "conflict") return;
+    if (this.theirGeneration) this.generation = this.theirGeneration;
+    this.theirGeneration = null;
     this.set({ phase: "unsaved", theirs: null });
     void this.run();
   }
@@ -249,6 +257,9 @@ export class DraftSaver {
    */
   keepAsNew() {
     if (this.state.phase !== "cleared") return;
+    // A NEW lifecycle: a new generation and expected revision 0. The server begins it on the tombstone (never revives the ended one).
+    this.generation = this.mint();
+    this.revision = 0;
     this.set({ phase: "unsaved" });
     void this.run();
   }
@@ -256,6 +267,8 @@ export class DraftSaver {
   /** Conflict: adopt the other window's draft. Returns it so the caller can fill the form. */
   useTheirs(): NoteDraftFields | null {
     const theirs = this.state.theirs;
+    if (this.theirGeneration) this.generation = this.theirGeneration;
+    this.theirGeneration = null;
     this.pending = null;
     this.lastAcked = theirs;
     this.set({ phase: "saved", theirs: null });
@@ -266,11 +279,13 @@ export class DraftSaver {
   settle() {
     this.selfSettled = true;
     this.paused = false;
-    this.everAcked = false; // the next typing is a FRESH session: it continues from the tombstone's revision instead of prompting
     this.pending = null;
     this.lastAcked = null;
     this.clear();
+    // The next typing is a NEW draft lifecycle: a new generation and expected revision 0 (the server begins it on the tombstone).
+    this.generation = this.mint();
     this.revision = 0;
+    this.theirGeneration = null;
     this.set({ phase: "idle", savedAt: null, theirs: null });
   }
 

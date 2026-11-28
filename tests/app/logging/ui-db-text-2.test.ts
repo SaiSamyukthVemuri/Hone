@@ -105,7 +105,7 @@ describe("client actions: budget, personal notes, treatment goal", () => {
     const a = await updateClientBudgetContextAction(form({ client_id: "c1", budget_notes: "n", budget_level: "" }));
     expect(a).toMatchObject({ ok: false, error: expect.stringContaining("check the client") });
     expectNoLeak(a);
-    failAt("client_budget_context", "upsert", hostile("23514"));
+    failAt("rpc:upsert_client_budget_context", "rpc", hostile("23514")); // HON-130: the same upsert, now through the invoker command
     const b = await updateClientBudgetContextAction(form({ client_id: "c1", budget_notes: "n", budget_level: "" }));
     expect(b).toMatchObject({ ok: false, error: expect.stringContaining("a value could not be accepted") });
     expectNoLeak(b);

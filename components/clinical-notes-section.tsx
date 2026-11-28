@@ -25,9 +25,10 @@
 
 import { useActionState, useState } from "react";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
-import { latestDraft, seedEntry } from "@/lib/note-drafts/draft-registry";
+import { heldText, latestDraft, seedEntry, type DraftActions } from "@/lib/note-drafts/draft-registry";
 import { NoteDraftStatus } from "@/components/note-draft-status";
-import { targetFor, type NoteDraftFields, type NoteDraftKey, type NoteDraftSaveResult, type StoredNoteDraft } from "@/lib/note-drafts/types";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { targetFor, type NoteDraftFields, type NoteDraftKey, type StoredNoteDraft } from "@/lib/note-drafts/types";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { formatClinicalDate } from "@/lib/clinical-notes/clinical-date";
@@ -42,7 +43,7 @@ export type ClinicalNoteActionResult =
   | { ok: true; note: ClientClinicalNote; author_name: string | null }
   | {
       ok: false;
-      code: "invalid" | "not_found" | "stale_revision" | "error";
+      code: "invalid" | "not_found" | "stale_revision" | "draft_ended" | "error";
       error: string;
     };
 
@@ -168,16 +169,12 @@ export function ClinicalNotesSection({
   );
 }
 
-export type DraftActions = {
-  /** Practitioner + studio of the signed-in session: the draft registry is partitioned by it. */
-  scope: string;
-  save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string; scope: string }) => Promise<NoteDraftSaveResult>;
-  discard: (key: NoteDraftKey, scope: string) => Promise<{ ok: boolean }>;
-};
+export type { DraftActions };
 const NO_DRAFT_ACTIONS: DraftActions = {
   scope: "none",
   save: async () => ({ status: "error" }),
   discard: async () => ({ ok: false }),
+  peek: async () => ({ ok: false, draft: null }),
 };
 
 type OpenForm =
@@ -211,12 +208,63 @@ function KindCard({
     const mine = (drafts ?? []).filter((d) => d.key.kind === section.kind);
     const fresh = mine.find((d) => d.key.target === "new");
     if (fresh) return { mode: "add" };
-    const rev = mine.find((d) => section.notes.some((n) => n.id === d.key.target));
-    const note = rev ? section.notes.find((n) => n.id === rev.key.target) : undefined;
-    return note ? { mode: "revise", note: note as ClinicalNoteWithAuthor } : null;
+    // The derived list knows which notes already HAVE a revision: a draft of such a note reopens as "this note was revised", not as a plain restore.
+    const derived = withDerivedSupersede(section.notes);
+    const rev = mine.find((d) => derived.some((n) => n.id === d.key.target));
+    const note = rev ? derived.find((n) => n.id === rev.key.target) : undefined;
+    return note ? { mode: "revise", note } : null;
   };
   const [openForm, setOpenForm] = useState<OpenForm>(initialOpen);
   const [historyOpen, setHistoryOpen] = useState(!compact);
+  // Keep as new note: the destination (a NEW note's draft) may already hold text. It is never overwritten silently.
+  type MoveApi = { latest: () => NoteDraftFields | null; moveOut: () => Promise<NoteDraftFields | null> };
+  const [moveDialog, setMoveDialog] = useState<null | { mine: NoteDraftFields; theirs: NoteDraftFields; stored: StoredNoteDraft | null; api: MoveApi }>(null);
+  const [moveNotice, setMoveNotice] = useState<string | null>(null);
+  const [confirmReplace, setConfirmReplace] = useState(false);
+  const destKey: NoteDraftKey = { clientId, kind: section.kind, target: "new" };
+  async function finishMove(api: MoveApi, choice: "free" | "append" | "replace", theirs: NoteDraftFields | null, stored: StoredNoteDraft | null) {
+    if (!draftActions) return;
+    const text = await api.moveOut(); // ends the source draft (bounded) and returns the newest text, read AFTER the delete
+    if (!text) return;
+    let final = text;
+    if (choice === "append" && theirs) {
+      const both = [theirs.body, text.body].filter((x) => x && x.length > 0).join("\n\n");
+      const areas = Array.from(new Set([...(theirs.areas ?? []), ...(text.areas ?? [])]));
+      final = { ...text, body: both, ...(areas.length ? { areas } : {}), occurred_at: theirs.occurred_at ?? text.occurred_at };
+    }
+    // A NEW lifecycle (new generation, expected revision 0) when the destination was free; the destination's OWN lifecycle when the person
+    // chose to append to or replace what it held (the same entry, so no conflict with itself).
+    seedEntry(destKey, final, draftActions, choice === "free" ? null : stored);
+    setMoveDialog(null);
+    setOpenForm({ mode: "add" });
+  }
+  async function keepAsNewNote(api: MoveApi) {
+    if (!draftActions) return;
+    const mine = api.latest();
+    if (!mine) return;
+    setMoveNotice(null);
+    let theirs: NoteDraftFields | null = heldText(destKey, draftActions.scope);
+    let stored: StoredNoteDraft | null = null;
+    if (!theirs) {
+      try {
+        const peeked = await draftActions.peek(destKey, draftActions.scope);
+        if (!peeked.ok) {
+          setMoveNotice("Couldn't check where to keep this text. It is still here; try again.");
+          return;
+        }
+        stored = peeked.draft;
+        theirs = stored?.fields ?? null;
+      } catch {
+        setMoveNotice("Couldn't check where to keep this text. It is still here; try again.");
+        return;
+      }
+    }
+    if (theirs) {
+      setMoveDialog({ mine, theirs, stored, api });
+      return;
+    }
+    await finishMove(api, "free", null, null);
+  }
 
   const latest = deriveLatest(notes);
   const areaEnabled = AREA_ENABLED_KINDS.includes(section.kind);
@@ -289,12 +337,45 @@ function KindCard({
           draftActions={draftActions}
           onSaved={handleSaved}
           onCancel={() => setOpenForm(null)}
-          onKeepAsNewNote={(fields) => {
-            if (!draftActions) return;
-            seedEntry({ clientId, kind: section.kind, target: "new" }, fields, draftActions);
-            setOpenForm({ mode: "add" });
-          }}
+          onKeepAsNewNote={(api) => void keepAsNewNote(api)}
         />
+      )}
+
+      {moveNotice && (
+        <p role="alert" className="text-xs text-red-700">
+          {moveNotice}
+        </p>
+      )}
+      {moveDialog && (
+        <div role="dialog" aria-label="A new note draft already exists" className="flex flex-col gap-2 rounded-md border border-neutral-300 p-3 text-xs" data-testid="note-move-dialog">
+          <p className="font-medium">A draft of a new note already exists. Nothing has been changed yet.</p>
+          <p>Text you are moving</p>
+          <pre className="whitespace-pre-wrap">{moveDialog.mine.body ?? ""}</pre>
+          <p>Text already in the new note draft</p>
+          <pre className="whitespace-pre-wrap">{moveDialog.theirs.body ?? ""}</pre>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="min-h-[44px] px-2 font-medium underline" onClick={() => setMoveDialog(null)}>
+              Cancel
+            </button>
+            <button type="button" className="min-h-[44px] px-2 font-medium underline" onClick={() => void finishMove(moveDialog.api, "append", moveDialog.theirs, moveDialog.stored)}>
+              Append
+            </button>
+            <button type="button" className="min-h-[44px] px-2 font-medium underline" onClick={() => setConfirmReplace(true)}>
+              Replace
+            </button>
+            <ConfirmDialog
+              open={confirmReplace}
+              title="Replace the new note draft?"
+              description="The draft's current text will be lost. Both texts stay on screen above until you confirm."
+              confirmLabel="Replace"
+              onConfirm={() => {
+                setConfirmReplace(false);
+                void finishMove(moveDialog.api, "replace", moveDialog.theirs, moveDialog.stored);
+              }}
+              onCancel={() => setConfirmReplace(false)}
+            />
+          </div>
+        </div>
       )}
 
       {history.length > 0 && (
@@ -412,8 +493,8 @@ function NoteForm({
   action: ClinicalNoteAction;
   onSaved: (note: ClientClinicalNote, authorName: string | null) => void;
   onCancel: () => void;
-  /** A revision's draft was cleared because the note was revised elsewhere: move the text to a NEW note instead. */
-  onKeepAsNewNote?: (fields: NoteDraftFields) => void;
+  /** A revision's draft cannot stay (the note was revised since): move the text to a NEW note instead. The parent checks the destination first. */
+  onKeepAsNewNote?: (api: { latest: () => NoteDraftFields | null; moveOut: () => Promise<NoteDraftFields | null> }) => void;
 }) {
   const router = useRouter();
   const draftKey: NoteDraftKey = { clientId, kind, target: targetFor(kind, mode === "revise" && revising ? revising.id : null) };
@@ -434,6 +515,9 @@ function NoteForm({
   }
   const [occurredAt, setOccurredAt] = useState(start?.fields.occurred_at ?? todayISODate());
   const draft = useNoteDraft(draftKey, restored, draftActions ?? NO_DRAFT_ACTIONS, Boolean(draftActions));
+  // The note being revised already HAS a revision (written since this draft was): no draft of it can be saved again, so it is not autosaved and the
+  // reopened editor says so, with Keep as new note, instead of presenting the text as a plain restore.
+  const revised = mode === "revise" && Boolean(revising?.is_superseded);
   const [restoredAt, setRestoredAt] = useState<string | null>(start && !start.unsaved ? start.savedAt : null);
   function applyTheirs(t: NoteDraftFields) {
     // Keep what the person typed visible until they dismiss it; adopt the other window's text.
@@ -444,7 +528,7 @@ function NoteForm({
   }
   const [yourVersion, setYourVersion] = useState<string | null>(null);
   function touch(next: { body?: string; areasText?: string; occurredAt?: string }) {
-    if (!draftActions) return;
+    if (!draftActions || revised) return;
     setRestoredAt(null);
     draft.change({
       body: next.body ?? body,
@@ -475,6 +559,8 @@ function NoteForm({
       {mode === "revise" && revising && (
         <input type="hidden" name="supersedes_note_id" value={revising.id} />
       )}
+      {/* The draft lifecycle this Save ends: the SAME transaction turns exactly this draft into a text-free tombstone. Empty when autosave is off. */}
+      <input type="hidden" name="draft_generation" value={draft.generation() ?? ""} />
       {areaEnabled && (
         <input
           type="hidden"
@@ -555,7 +641,8 @@ function NoteForm({
           restoredAt={restoredAt}
           onRetry={draft.retry}
           onKeepMine={draft.keepMine}
-          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => { void draft.moveOut().then((f) => { if (f) onKeepAsNewNote(f); }); } : draft.keepAsNew}
+          revised={revised}
+          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => onKeepAsNewNote({ latest: draft.latest, moveOut: draft.moveOut }) : draft.keepAsNew}
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) applyTheirs(t);
@@ -584,7 +671,7 @@ function NoteForm({
           className="flex flex-col gap-1 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
         >
           <span>{state.message}</span>
-          {state.code === "stale_revision" && (
+          {(state.code === "stale_revision" || state.code === "draft_ended") && (
             <button
               type="button"
               onClick={() => router.refresh()}

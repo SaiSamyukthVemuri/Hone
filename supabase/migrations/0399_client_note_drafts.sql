@@ -77,7 +77,13 @@ create table if not exists public.client_note_drafts (
   revision integer not null default 1,
   -- Per-tab writer token: a retry of a write whose response was lost (same writer, same fields) is an acknowledged success, not a conflict.
   writer uuid,
-  -- Set when the real record was saved: the draft's text is emptied, revision bumped, and every stale write fails. Swept later.
+  -- DRAFT IDENTITY (HON-130 design, Privacy YES / Insurance final1701). `generation` is the client-minted uuid of ONE draft lifecycle and is set
+  -- exactly while the row is LIVE. When a lifecycle ends (Save or Discard) the row becomes a TOMBSTONE: text NULL, revision bumped, generation
+  -- NULL and `ended_generation` = the lifecycle that ended. The row is never deleted by Save or Discard (only by the sweep), so a revision number
+  -- is never reused and a stale tab or a late first autosave can never touch a newer draft.
+  generation uuid,
+  ended_generation uuid,
+  -- Set when the real record was saved or the draft was discarded: the draft's text is emptied, revision bumped, and every stale write fails. Swept later.
   cleared_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -126,6 +132,13 @@ create table if not exists public.client_note_drafts (
   ),
   constraint client_note_drafts_revision_check check (revision >= 1),
   constraint client_note_drafts_null_only_when_cleared_check check (fields is not null or cleared_at is not null),
+  -- A tombstone holds NO text, whatever wrote it.
+  constraint client_note_drafts_tombstone_text_free_check check (cleared_at is null or fields is null),
+  -- Exactly one identity per state: a live row has a generation and no ended one; a tombstone has no live generation.
+  constraint client_note_drafts_state_check check (
+    (cleared_at is null and generation is not null and ended_generation is null)
+    or (cleared_at is not null and generation is null)
+  ),
   constraint client_note_drafts_owner_key unique (practitioner_id, client_id, kind, target)
 );
 
@@ -232,13 +245,20 @@ create policy "client_note_drafts_author_select"
 -- COMPARE-AND-SET WRITE (SECURITY DEFINER, pinned search_path). It re-proves everything RLS would:
 -- studio membership, the caller's own active practitioner row, and that the client is in the studio.
 --   status ok        written; revision is the new one
---   status conflict  stored revision differs from p_expected_revision; fields = the CALLER'S OWN stored draft
+--   status conflict  the stored draft is live but differs (another revision, or ANOTHER lifecycle's generation); fields/generation = the CALLER'S OWN stored draft
 --   status gone      p_expected_revision > 0 but no draft exists
---   status cleared   the real record was saved (draft cleared) or the revised note already has its revision: stop writing
+--   status cleared   this lifecycle is over (the record was saved or the draft discarded), or the revised note already has its revision: stop writing. NEVER carries text.
 --   status disabled  the studio is not in client_note_draft_enabled_studios (autosave is off); nothing is stored
 --   status refused   not an active practitioner of this studio, or the client is not in it
--- The row looked up is always the caller's own (the key includes practitioner_id), so a conflict can never return
--- another author's text.
+-- The row looked up is always the caller's own (the key includes practitioner_id), so a result can never carry another author's text.
+-- DECISION TABLE (generation G = p_generation). Every branch is ONE conditional statement, so a lock wait re-evaluates it on the committed row:
+--   no row, expected 0                      insert live (G)                                  ok
+--   live (G), expected = revision           update, revision + 1                              ok
+--   live (G), same writer and same fields   a retry whose response was lost                   ok
+--   live (other generation), anything       never touched                                     conflict
+--   tombstone ended_generation = G          that lifecycle is over                            cleared
+--   tombstone, other/NULL ended, expected 0 a genuinely new lifecycle: revive (G), rev + 1    ok
+--   tombstone, expected > 0                 a stale writer                                    cleared
 create or replace function public.save_client_note_draft(
   p_studio_id uuid,
   p_client_id uuid,
@@ -246,9 +266,10 @@ create or replace function public.save_client_note_draft(
   p_target text,
   p_fields jsonb,
   p_expected_revision integer,
-  p_writer uuid
+  p_writer uuid,
+  p_generation uuid
 )
-returns table (status text, revision integer, fields jsonb, updated_at timestamptz)
+returns table (status text, revision integer, fields jsonb, updated_at timestamptz, generation uuid)
 language plpgsql
 security definer
 set search_path = pg_catalog, pg_temp
@@ -256,9 +277,10 @@ as $$
 declare
   v_practitioner uuid;
   v_row public.client_note_drafts%rowtype;
+  v_try integer := 0;
 begin
   if (select auth.uid()) is null then
-    return query select 'refused'::text, 0, '{}'::jsonb, null::timestamptz;
+    return query select 'refused'::text, 0, '{}'::jsonb, null::timestamptz, null::uuid;
     return;
   end if;
   select p.id into v_practitioner
@@ -267,78 +289,100 @@ begin
     and public.is_studio_member(p_studio_id);
   if v_practitioner is null
      or not exists (select 1 from public.clients c where c.id = p_client_id and c.studio_id = p_studio_id) then
-    return query select 'refused'::text, 0, '{}'::jsonb, null::timestamptz;
+    return query select 'refused'::text, 0, '{}'::jsonb, null::timestamptz, null::uuid;
     return;
   end if;
   -- The switch comes AFTER the membership check, so a non-member always gets 'refused' and never learns whether a studio has drafts on.
   -- Nothing is stored for a studio that is not enabled. Closed code, no side effect.
   if not exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = p_studio_id) then
-    return query select 'disabled'::text, 0, '{}'::jsonb, null::timestamptz;
+    return query select 'disabled'::text, 0, '{}'::jsonb, null::timestamptz, null::uuid;
     return;
   end if;
-  if p_expected_revision is null or p_expected_revision < 0 then
-    raise exception 'invalid expected revision' using errcode = 'invalid_parameter_value';
+  if p_expected_revision is null or p_expected_revision < 0 or p_generation is null then
+    raise exception 'invalid draft write' using errcode = 'invalid_parameter_value';
   end if;
 
-  -- A revise target that already has its revision can no longer be drafted against.
+  -- A revise target that already has its revision can no longer be drafted against. Returns NO text and touches no row.
   if p_kind <> 'budget' and p_target <> 'new'
      and exists (select 1 from public.client_clinical_notes n where n.supersedes_note_id = p_target::uuid) then
-    return query select 'cleared'::text, 0, '{}'::jsonb, null::timestamptz;
+    return query select 'cleared'::text, 0, '{}'::jsonb, null::timestamptz, null::uuid;
     return;
   end if;
 
-  -- An expired draft of this key is removed first so it never blocks (or resurrects into) a new one.
+  -- An expired row of this key is removed first so it never blocks a new draft. A stale tab that still holds the old row's revision is
+  -- stopped by its generation, never by the revision, so reusing a revision number here cannot let it overwrite.
   delete from public.client_note_drafts d
   where d.practitioner_id = v_practitioner and d.client_id = p_client_id
-    and d.kind = p_kind and d.target = p_target and d.expires_at <= now();
+    and d.kind = p_kind and d.target = p_target and d.expires_at <= pg_catalog.now();
 
-  if p_expected_revision = 0 then
-    begin
-      insert into public.client_note_drafts as d (client_id, practitioner_id, studio_id, kind, target, target_note_id, fields, writer)
+  loop
+    v_try := v_try + 1;
+    if p_expected_revision = 0 then
+      insert into public.client_note_drafts as d (client_id, practitioner_id, studio_id, kind, target, target_note_id, fields, writer, generation)
       values (p_client_id, v_practitioner, p_studio_id, p_kind, p_target,
-              case when p_target ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then p_target::uuid end, p_fields, p_writer)
+              case when p_target ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then p_target::uuid end,
+              p_fields, p_writer, p_generation)
+      on conflict (practitioner_id, client_id, kind, target) do nothing
       returning * into v_row;
-      return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at;
+      if found then
+        return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at, v_row.generation;
+        return;
+      end if;
+      -- A row exists. A tombstone of ANOTHER lifecycle is a genuinely new draft: revive it (revision continues, never repeats).
+      update public.client_note_drafts d
+         set fields = p_fields, revision = d.revision + 1, writer = p_writer, generation = p_generation,
+             ended_generation = null, cleared_at = null
+       where d.practitioner_id = v_practitioner and d.client_id = p_client_id and d.kind = p_kind and d.target = p_target
+         and d.cleared_at is not null and d.ended_generation is distinct from p_generation
+      returning d.* into v_row;
+      if found then
+        return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at, v_row.generation;
+        return;
+      end if;
+    else
+      update public.client_note_drafts d
+         set fields = p_fields, revision = d.revision + 1, writer = p_writer
+       where d.practitioner_id = v_practitioner and d.client_id = p_client_id and d.kind = p_kind and d.target = p_target
+         and d.cleared_at is null and d.generation = p_generation and d.revision = p_expected_revision
+      returning d.* into v_row;
+      if found then
+        return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at, v_row.generation;
+        return;
+      end if;
+    end if;
+
+    select d.* into v_row from public.client_note_drafts d
+    where d.practitioner_id = v_practitioner and d.client_id = p_client_id and d.kind = p_kind and d.target = p_target;
+    if not found then
+      -- Expected 0 and the row vanished between the statements (a sweep): try the insert again. Expected > 0: it is gone.
+      if p_expected_revision > 0 or v_try >= 3 then
+        return query select 'gone'::text, 0, '{}'::jsonb, null::timestamptz, null::uuid;
+        return;
+      end if;
+    elsif v_row.cleared_at is not null then
+      -- This lifecycle ended (ended_generation = p_generation), or a stale writer believed a draft was live. Terminal, no text.
+      return query select 'cleared'::text, v_row.revision, '{}'::jsonb, null::timestamptz, null::uuid;
       return;
-    exception when unique_violation then
-      null; -- a racing first save: fall through to the conflict / reuse path below
-    end;
-  else
-    update public.client_note_drafts d
-       set fields = p_fields, revision = d.revision + 1, writer = p_writer, cleared_at = null
-     where d.practitioner_id = v_practitioner and d.client_id = p_client_id
-       and d.kind = p_kind and d.target = p_target and d.revision = p_expected_revision
-    returning d.* into v_row;
-    if found then
-      return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at;
+    elsif v_row.generation = p_generation and v_row.writer is not null and v_row.writer = p_writer and v_row.fields = p_fields then
+      -- A retry of a write that already applied (its response was lost): acknowledged success, not a conflict.
+      return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at, v_row.generation;
+      return;
+    else
+      return query select 'conflict'::text, v_row.revision, v_row.fields, v_row.updated_at, v_row.generation;
       return;
     end if;
-  end if;
-
-  select d.* into v_row from public.client_note_drafts d
-  where d.practitioner_id = v_practitioner and d.client_id = p_client_id
-    and d.kind = p_kind and d.target = p_target;
-  if not found then
-    return query select 'gone'::text, 0, '{}'::jsonb, null::timestamptz;
-  elsif v_row.cleared_at is not null then
-    -- The record was saved (a tombstone): ONLY a write at exactly the tombstone's revision revives it. A first write (expected 0) or a stale one
-    -- gets 'cleared' plus that revision, never a recreated draft of text that was just saved.
-    return query select 'cleared'::text, v_row.revision, '{}'::jsonb, null::timestamptz;
-  elsif v_row.writer is not null and v_row.writer = p_writer and v_row.fields = p_fields then
-    -- A retry of a write that already applied (its response was lost): acknowledged success, not a conflict.
-    return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at;
-  else
-    return query select 'conflict'::text, v_row.revision, v_row.fields, v_row.updated_at;
-  end if;
+  end loop;
 end;
 $$;
 
--- Discard: the caller's own draft only.
+-- Discard: the caller's own LIVE draft of exactly this lifecycle, turned into a text-free tombstone IN THE SAME STATEMENT (the text is nulled
+-- there, never left behind). UPDATE only: it never inserts, it works with the switch off, and a generation that is not the live one changes nothing.
 create or replace function public.discard_client_note_draft(
   p_studio_id uuid,
   p_client_id uuid,
   p_kind text,
-  p_target text
+  p_target text,
+  p_generation uuid
 )
 returns boolean
 language plpgsql
@@ -353,13 +397,15 @@ begin
   from public.practitioners p
   where p.studio_id = p_studio_id and p.user_id = (select auth.uid()) and p.active
     and public.is_studio_member(p_studio_id);
-  if v_practitioner is null then
+  if v_practitioner is null or p_generation is null then
     return false;
   end if;
-  delete from public.client_note_drafts d
-  where d.practitioner_id = v_practitioner and d.client_id = p_client_id
-    and d.studio_id = p_studio_id and d.kind = p_kind and d.target = p_target
-    and d.cleared_at is null; -- a tombstone (the record was saved) stays: it is what makes a late first autosave come back 'cleared'
+  update public.client_note_drafts d
+     set fields = null, revision = d.revision + 1, writer = null,
+         ended_generation = d.generation, generation = null, cleared_at = pg_catalog.now()
+   where d.practitioner_id = v_practitioner and d.client_id = p_client_id
+     and d.studio_id = p_studio_id and d.kind = p_kind and d.target = p_target
+     and d.cleared_at is null and d.generation = p_generation;
   get diagnostics v_n = row_count;
   return v_n > 0;
 end;
@@ -397,12 +443,16 @@ begin
 end;
 $$;
 
--- SAME-TRANSACTION CLEAR (Sam: one transaction; Insurance C1/C2/C5).
+-- SAME-TRANSACTION CLEAR (Sam: one transaction; Insurance C1/C2/C5; D1: ONLY the saving practitioner's own row, every kind).
 -- Keyed ONLY from NEW (never auth.uid()): the saved row's author, client, kind and revise target. SECURITY DEFINER with an EMPTY
--- search_path and every object schema-qualified; EXECUTE revoked by name below. It clears at most one row by the unique key and
--- returns NEW untouched. It must never fail for data reasons: it changes no key column, and no CHECK, cap or BEFORE UPDATE on drafts
--- rejects a clear (cap and target checks are INSERT-only; the guard allows key-preserving updates). Any unexpected failure is raised
--- under the DISTINCT SQLSTATE 'HN130' (never 23505, which the revise path maps to stale_revision), so it surfaces as a generic failure.
+-- search_path and every object schema-qualified; EXECUTE revoked by name below. It clears at most one row, the author's own, by the unique key.
+-- `ended_generation` is the live row's OWN generation; only when NO row exists is it taken from the transaction-local setting
+-- `hone.draft_generation` (set by the save wrapper), parsed safely: absent or invalid gives NULL and never fails a clinical Save.
+-- DOUBLE SAVE (D3): a Save whose generation already ended (another window saved the same draft first) is refused with the closed SQLSTATE
+-- 'HN131' and the whole insert rolls back, so one draft can never create two notes. The row is locked FOR UPDATE and re-read after any lock wait.
+-- It must never fail for data reasons otherwise: it changes no key column and no CHECK, cap or BEFORE UPDATE on drafts rejects a clear
+-- (the cap is INSERT-only and exempts tombstones). Any other failure is raised under the DISTINCT SQLSTATE 'HN130' (never 23505, which the
+-- revise path maps to stale_revision), so it surfaces as a generic failure.
 create or replace function public.client_note_drafts_clear_on_note()
 returns trigger
 language plpgsql
@@ -411,26 +461,53 @@ set search_path = ''
 as $$
 declare
   v_target text := coalesce(new.supersedes_note_id::text, 'new');
+  v_set uuid;
+  v_row public.client_note_drafts%rowtype;
+  v_id uuid;
+  v_try integer := 0;
+  v_create boolean;
 begin
-  -- A CLEAR is a TOMBSTONE: the key's row is emptied and its revision bumped on EVERY save of the record (also a second save, and also when
-  -- no draft row existed yet), so a first autosave that was already in flight when Save committed (expected revision 0) finds a row at
-  -- revision >= 1 and comes back 'cleared' instead of recreating a draft of the text that was just saved. Rows are created only for an
-  -- ENABLED studio (autosave off leaves no row at all) and hold no text, only ids and a revision; the sweep removes them after a day.
-  if exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = new.studio_id)
-     and new.kind in ('consultation', 'skin_hair_analysis') then
-    insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, target_note_id, fields, writer, cleared_at)
-    values (new.studio_id, new.client_id, new.practitioner_id, new.kind, v_target, new.supersedes_note_id, null, null, pg_catalog.now())
-    on conflict (practitioner_id, client_id, kind, target)
-    do update set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null;
-  else
-    update public.client_note_drafts d
-       set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null
-     where d.practitioner_id = new.practitioner_id and d.client_id = new.client_id and d.kind = new.kind
-       and d.target = v_target;
-  end if;
+  begin
+    v_set := nullif(pg_catalog.current_setting('hone.draft_generation', true), '')::uuid;
+  exception when others then
+    v_set := null;
+  end;
+  -- Rows are CREATED only for an ENABLED studio (autosave off leaves no row at all) and hold no text, only ids and a revision.
+  v_create := new.kind in ('consultation', 'skin_hair_analysis')
+    and exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = new.studio_id);
+  loop
+    v_try := v_try + 1;
+    select d.* into v_row from public.client_note_drafts d
+    where d.practitioner_id = new.practitioner_id and d.client_id = new.client_id and d.kind = new.kind and d.target = v_target
+    for update;
+    if found then
+      if v_row.cleared_at is not null and v_set is not null and v_row.ended_generation = v_set then
+        raise exception 'note draft already ended' using errcode = 'HN131';
+      end if;
+      update public.client_note_drafts d
+         set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null, generation = null,
+             ended_generation = case when v_row.cleared_at is null then v_row.generation else coalesce(v_row.ended_generation, v_set) end
+       where d.id = v_row.id;
+      exit;
+    elsif v_create then
+      insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, target_note_id, fields, writer, cleared_at, ended_generation)
+      values (new.studio_id, new.client_id, new.practitioner_id, new.kind, v_target, new.supersedes_note_id, null, null, pg_catalog.now(), v_set)
+      on conflict (practitioner_id, client_id, kind, target) do nothing
+      returning d.id into v_id;
+      exit when found;
+      if v_try >= 3 then
+        raise exception 'note draft could not be cleared' using errcode = 'HN130';
+      end if;
+    else
+      exit;
+    end if;
+  end loop;
   return new;
-exception when others then
-  raise exception 'note draft could not be cleared' using errcode = 'HN130';
+exception
+  when sqlstate 'HN131' then
+    raise;
+  when others then
+    raise exception 'note draft could not be cleared' using errcode = 'HN130';
 end;
 $$;
 
@@ -439,26 +516,51 @@ create trigger client_note_drafts_clear_on_note
   after insert on public.client_clinical_notes
   for each row execute function public.client_note_drafts_clear_on_note();
 
--- Budget: keyed on NEW.updated_by_practitioner_id plus the client; kind 'budget', target 'current' only.
+-- Budget: keyed on NEW.updated_by_practitioner_id plus the client; kind 'budget', target 'current' only. Same identity rule, but NO double-save
+-- refusal: a budget is one overwrite row, so a repeated save creates no duplicate record.
 create or replace function public.client_note_drafts_clear_on_budget()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_set uuid;
+  v_row public.client_note_drafts%rowtype;
+  v_id uuid;
+  v_try integer := 0;
+  v_create boolean;
 begin
-  -- Same tombstone rule as notes (see client_note_drafts_clear_on_note): every save bumps the key's revision.
-  if exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = new.studio_id) then
-    insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, fields, writer, cleared_at)
-    values (new.studio_id, new.client_id, new.updated_by_practitioner_id, 'budget', 'current', null, null, pg_catalog.now())
-    on conflict (practitioner_id, client_id, kind, target)
-    do update set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null;
-  else
-    update public.client_note_drafts d
-       set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null
-     where d.practitioner_id = new.updated_by_practitioner_id and d.client_id = new.client_id
-       and d.kind = 'budget' and d.target = 'current';
-  end if;
+  begin
+    v_set := nullif(pg_catalog.current_setting('hone.draft_generation', true), '')::uuid;
+  exception when others then
+    v_set := null;
+  end;
+  v_create := exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = new.studio_id);
+  loop
+    v_try := v_try + 1;
+    select d.* into v_row from public.client_note_drafts d
+    where d.practitioner_id = new.updated_by_practitioner_id and d.client_id = new.client_id and d.kind = 'budget' and d.target = 'current'
+    for update;
+    if found then
+      update public.client_note_drafts d
+         set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null, generation = null,
+             ended_generation = case when v_row.cleared_at is null then v_row.generation else coalesce(v_row.ended_generation, v_set) end
+       where d.id = v_row.id;
+      exit;
+    elsif v_create then
+      insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, fields, writer, cleared_at, ended_generation)
+      values (new.studio_id, new.client_id, new.updated_by_practitioner_id, 'budget', 'current', null, null, pg_catalog.now(), v_set)
+      on conflict (practitioner_id, client_id, kind, target) do nothing
+      returning d.id into v_id;
+      exit when found;
+      if v_try >= 3 then
+        raise exception 'note draft could not be cleared' using errcode = 'HN130';
+      end if;
+    else
+      exit;
+    end if;
+  end loop;
   return new;
 exception when others then
   raise exception 'note draft could not be cleared' using errcode = 'HN130';
@@ -469,6 +571,84 @@ drop trigger if exists client_note_drafts_clear_on_budget on public.client_budge
 create trigger client_note_drafts_clear_on_budget
   after insert or update on public.client_budget_context
   for each row execute function public.client_note_drafts_clear_on_budget();
+
+-- SAVE WRAPPERS (SECURITY INVOKER; D2, Privacy condition 2). The note and budget actions used a direct table insert / upsert; these two commands
+-- are the SAME writes with ONE addition: they hand the draft generation to the clear triggers through a TRANSACTION-LOCAL setting. They run with
+-- the CALLER'S rights, so RLS, the append-only history, the studio-derive and attribution triggers and the one-revision index decide exactly as
+-- before; nothing here is elevated. Studio and practitioner come from the SESSION (the client's own studio and the caller's active practitioner
+-- row there), never from an argument. Errors are closed codes with no text: 42501 when the client or the practitioner row is not available to the
+-- caller; every other failure is the table's own (23505 stays the revision conflict). The generation is optional: NULL leaves the old behaviour.
+create or replace function public.add_client_clinical_note(
+  p_client_id uuid,
+  p_kind text,
+  p_body text,
+  p_areas text[],
+  p_occurred_at timestamptz,
+  p_supersedes_note_id uuid,
+  p_generation uuid default null
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_studio uuid;
+  v_practitioner uuid;
+  v_id uuid;
+begin
+  select c.studio_id into v_studio from public.clients c where c.id = p_client_id;
+  if v_studio is null then
+    raise exception 'not available' using errcode = '42501';
+  end if;
+  select p.id into v_practitioner from public.practitioners p
+  where p.studio_id = v_studio and p.user_id = (select auth.uid()) and p.active;
+  if v_practitioner is null then
+    raise exception 'not available' using errcode = '42501';
+  end if;
+  perform pg_catalog.set_config('hone.draft_generation', coalesce(p_generation::text, ''), true);
+  insert into public.client_clinical_notes (client_id, studio_id, practitioner_id, kind, body, areas, occurred_at, supersedes_note_id)
+  values (p_client_id, v_studio, v_practitioner, p_kind, p_body, coalesce(p_areas, '{}'::text[]),
+          coalesce(p_occurred_at, pg_catalog.now()), p_supersedes_note_id)
+  returning id into v_id;
+  perform pg_catalog.set_config('hone.draft_generation', '', true);
+  return v_id;
+end;
+$$;
+
+create or replace function public.upsert_client_budget_context(
+  p_client_id uuid,
+  p_budget_level text,
+  p_budget_notes text,
+  p_generation uuid default null
+)
+returns void
+language plpgsql
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_studio uuid;
+  v_practitioner uuid;
+begin
+  select c.studio_id into v_studio from public.clients c where c.id = p_client_id;
+  if v_studio is null then
+    raise exception 'not available' using errcode = '42501';
+  end if;
+  select p.id into v_practitioner from public.practitioners p
+  where p.studio_id = v_studio and p.user_id = (select auth.uid()) and p.active;
+  if v_practitioner is null then
+    raise exception 'not available' using errcode = '42501';
+  end if;
+  perform pg_catalog.set_config('hone.draft_generation', coalesce(p_generation::text, ''), true);
+  insert into public.client_budget_context as b (client_id, studio_id, budget_level, budget_notes, updated_by_practitioner_id)
+  values (p_client_id, v_studio, p_budget_level, coalesce(p_budget_notes, ''), v_practitioner)
+  on conflict (client_id) do update
+     set studio_id = excluded.studio_id, budget_level = excluded.budget_level, budget_notes = excluded.budget_notes,
+         updated_by_practitioner_id = excluded.updated_by_practitioner_id;
+  perform pg_catalog.set_config('hone.draft_generation', '', true);
+end;
+$$;
 
 -- PRIVILEGES: revoke everything by name (public, anon, authenticated, service_role), then grant exactly what is intended.
 revoke all on public.client_note_draft_enabled_studios from public, anon, authenticated, service_role;
@@ -484,12 +664,18 @@ revoke all privileges on function public.client_note_drafts_clear_on_budget() fr
 revoke all privileges on function public.client_note_draft_retention() from public, anon, service_role;
 -- RLS and column defaults evaluate this as the CALLER, so authenticated needs EXECUTE (it returns a constant).
 grant execute on function public.client_note_draft_retention() to authenticated;
-revoke all privileges on function public.save_client_note_draft(uuid, uuid, text, text, jsonb, integer, uuid)
+revoke all privileges on function public.save_client_note_draft(uuid, uuid, text, text, jsonb, integer, uuid, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function public.save_client_note_draft(uuid, uuid, text, text, jsonb, integer, uuid) to authenticated;
-revoke all privileges on function public.discard_client_note_draft(uuid, uuid, text, text)
+grant execute on function public.save_client_note_draft(uuid, uuid, text, text, jsonb, integer, uuid, uuid) to authenticated;
+revoke all privileges on function public.discard_client_note_draft(uuid, uuid, text, text, uuid)
   from public, anon, authenticated, service_role;
-grant execute on function public.discard_client_note_draft(uuid, uuid, text, text) to authenticated;
+grant execute on function public.discard_client_note_draft(uuid, uuid, text, text, uuid) to authenticated;
+revoke all privileges on function public.add_client_clinical_note(uuid, text, text, text[], timestamptz, uuid, uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.add_client_clinical_note(uuid, text, text, text[], timestamptz, uuid, uuid) to authenticated;
+revoke all privileges on function public.upsert_client_budget_context(uuid, text, text, uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.upsert_client_budget_context(uuid, text, text, uuid) to authenticated;
 revoke all privileges on function public.sweep_client_note_drafts()
   from public, anon, authenticated, service_role;
 grant execute on function public.sweep_client_note_drafts() to service_role;

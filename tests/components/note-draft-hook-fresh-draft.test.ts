@@ -11,7 +11,7 @@ const { useNoteDraft } = await import("@/lib/note-drafts/use-note-draft");
 const { latestDraft, resetDraftRegistry } = await import("@/lib/note-drafts/draft-registry");
 
 const key = { clientId: "c1", kind: "consultation" as const, target: "new" };
-const actions = { scope: "p1:s1", save: vi.fn(async () => ({ status: "error" as const })), discard: async () => ({ ok: true }) };
+const actions = { scope: "p1:s1", save: vi.fn(async () => ({ status: "error" as const })), discard: async () => ({ ok: true }), peek: async () => ({ ok: true, draft: null }) };
 
 describe("useNoteDraft", () => {
   afterEach(() => resetDraftRegistry());
@@ -48,7 +48,7 @@ describe("useNoteDraft", () => {
   it("moveOut (Keep as new note) stops sending, deletes THIS key's stored draft and returns the newest text", async () => {
     const discard = vi.fn(async () => ({ ok: true }));
     const save = vi.fn(async () => ({ status: "error" as const }));
-    const local = { scope: "p1:s1", save, discard };
+    const local = { scope: "p1:s1", save, discard, peek: actions.peek };
     let api!: ReturnType<typeof useNoteDraft>;
     const Probe = () => {
       api = useNoteDraft({ clientId: "c1", kind: "consultation", target: "note-1" }, null, local, true);
@@ -62,7 +62,7 @@ describe("useNoteDraft", () => {
       moved = await api.moveOut();
     });
     expect(moved).toEqual({ body: "text to move" });
-    expect(discard).toHaveBeenCalledWith({ clientId: "c1", kind: "consultation", target: "note-1" }, "p1:s1");
+    expect(discard).toHaveBeenCalledWith({ clientId: "c1", kind: "consultation", target: "note-1" }, "p1:s1", expect.stringMatching(/^[0-9a-f-]{36}$/));
     expect(latestDraft({ clientId: "c1", kind: "consultation", target: "note-1" }, null, "p1:s1")).toBeNull(); // the old key holds nothing
     await act(async () => root.unmount());
   });
@@ -70,7 +70,7 @@ describe("useNoteDraft", () => {
   it("text typed during a SLOW delete is carried to the new form, not lost", async () => {
     let finishDelete!: () => void;
     const discard = vi.fn(() => new Promise<{ ok: boolean }>((r) => (finishDelete = () => r({ ok: true }))));
-    const local = { scope: "p1:s1", save: vi.fn(async () => ({ status: "error" as const })), discard };
+    const local = { scope: "p1:s1", save: vi.fn(async () => ({ status: "error" as const })), discard, peek: actions.peek };
     const k = { clientId: "c1", kind: "consultation" as const, target: "note-2" };
     let api!: ReturnType<typeof useNoteDraft>;
     const Probe = () => {
@@ -97,7 +97,7 @@ describe("useNoteDraft", () => {
   it("a delete that never answers falls through after 8 s and the text is still carried", async () => {
     vi.useFakeTimers();
     const discard = vi.fn(() => new Promise<{ ok: boolean }>(() => undefined));
-    const local = { scope: "p1:s1", save: vi.fn(async () => ({ status: "error" as const })), discard };
+    const local = { scope: "p1:s1", save: vi.fn(async () => ({ status: "error" as const })), discard, peek: actions.peek };
     const k = { clientId: "c1", kind: "consultation" as const, target: "note-3" };
     let api!: ReturnType<typeof useNoteDraft>;
     const Probe = () => {
@@ -123,7 +123,7 @@ describe("useNoteDraft", () => {
   it("the editor is read-only while the text is being moved", async () => {
     let finishDelete!: () => void;
     const discard = vi.fn(() => new Promise<{ ok: boolean }>((r) => (finishDelete = () => r({ ok: true }))));
-    const local = { scope: "p1:s1", save: vi.fn(async () => ({ status: "error" as const })), discard };
+    const local = { scope: "p1:s1", save: vi.fn(async () => ({ status: "error" as const })), discard, peek: actions.peek };
     const k = { clientId: "c1", kind: "consultation" as const, target: "note-4" };
     let api!: ReturnType<typeof useNoteDraft>;
     const Probe = () => {
@@ -143,6 +143,46 @@ describe("useNoteDraft", () => {
       await moving;
     });
     expect(api.moving).toBe(false);
+    await act(async () => root.unmount());
+  });
+
+  it("autosave off (enabled=false): an inert API, NO entry, and another page's retained text is untouched", async () => {
+    const other = { clientId: "c9", kind: "consultation" as const, target: "new" };
+    const held = vi.fn(async () => ({ status: "error" as const }));
+    let on!: ReturnType<typeof useNoteDraft>;
+    let off!: ReturnType<typeof useNoteDraft>;
+    const On = () => {
+      on = useNoteDraft(other, null, { ...actions, save: held }, true);
+      return null;
+    };
+    const Off = () => {
+      off = useNoteDraft(key, null, actions, false);
+      return null;
+    };
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(createElement(On)));
+    await act(async () => on.change({ body: "retained on another page" }));
+    await act(async () => root.render(createElement(Off)));
+    expect(off.state.phase).toBe("idle");
+    expect(off.generation()).toBeNull();
+    expect(await off.discard()).toBe(true); // a no-op, not a server call
+    expect(latestDraft(other, null, "p1:s1")?.fields).toEqual({ body: "retained on another page" });
+    await act(async () => root.unmount());
+  });
+
+  it("Strict Mode: mount, cleanup, mount keeps the same saver and the held text", async () => {
+    const { StrictMode } = await import("react");
+    const k = { clientId: "c1", kind: "consultation" as const, target: "strict-1" };
+    let api!: ReturnType<typeof useNoteDraft>;
+    const Probe = () => {
+      api = useNoteDraft(k, null, actions, true);
+      return null;
+    };
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(createElement(StrictMode, null, createElement(Probe))));
+    await act(async () => api.change({ body: "typed under strict mode" }));
+    expect(latestDraft(k, null, "p1:s1")?.fields).toEqual({ body: "typed under strict mode" });
+    expect(api.generation()).toMatch(/^[0-9a-f-]{36}$/);
     await act(async () => root.unmount());
   });
 });

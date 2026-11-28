@@ -89,6 +89,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     saveNoteDraftAction: "staff",
     discardNoteDraftAction: "staff",
     loadNoteDrafts: "staff",
+    peekNoteDraftAction: "staff",
   },
   "app/(app)/clients/[id]/clinical-notes-actions.ts": {
     addClinicalNoteAction: "staff",
@@ -580,6 +581,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
 export const RPC_NAMES: readonly string[] = [
   "edit_studio_portal_presentation",
   "acknowledge_waitlist_times_feedback",
+  "add_client_clinical_note",
   "add_electrolysis_pass",
   "admin_accept_pending_invitation",
   "admin_complete_onboarding",
@@ -720,6 +722,7 @@ export const RPC_NAMES: readonly string[] = [
   "run_waitlist_retention_cleanup",
   "save_client_card_on_file_ordered",
   "save_client_note_draft",
+  "upsert_client_budget_context",
   "sweep_client_note_drafts",
   "save_weekly_availability",
   "set_appointment_notes",
@@ -783,6 +786,11 @@ export const RPC_NAMES: readonly string[] = [
 export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   edit_studio_portal_presentation: "-u-D",
   acknowledge_waitlist_times_feedback: "--sD",
+  add_client_clinical_note: "-u-I",
+  discard_client_note_draft: "-u-D",
+  save_client_note_draft: "-u-D",
+  sweep_client_note_drafts: "--sD",
+  upsert_client_budget_context: "-u-I",
   add_electrolysis_pass: "-u-D",
   admin_accept_pending_invitation: "--sD",
   admin_complete_onboarding: "--sD",
