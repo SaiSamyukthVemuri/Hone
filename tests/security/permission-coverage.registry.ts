@@ -689,7 +689,6 @@ export const RPC_NAMES: readonly string[] = [
   "move_or_reassign_appointment",
   "my_hone_billing_status",
   "my_hone_solo_impact",
-  "my_hone_studio_canceled",
   "my_hone_team_seats",
   "my_pending_invitation",
   "observe_appointment_email_operation",

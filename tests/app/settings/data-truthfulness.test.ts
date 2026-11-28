@@ -197,8 +197,8 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
     // prefix exemption removed that, so pin the importer set instead. Adding an
     // importer is a deliberate, reviewed edit of THIS list.
     const REVIEWED_IMPORTERS = [
+      "app/(app)/calendar/actions.ts",
       "app/(app)/layout.tsx",
-      "app/(app)/settings/layout.tsx",
       "app/(app)/settings/subscription/actions.ts",
       "app/(app)/settings/subscription/invoice-history.tsx",
       "app/(app)/settings/subscription/page.tsx",
@@ -210,6 +210,7 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
       "app/(auth)/login/layout.tsx",
       "app/(auth)/no-access/checkout-action.ts",
       "app/(auth)/no-access/page.tsx",
+      "app/(desk)/desk/booking-actions.ts",
       // Marketing reads the flag to select the signup entry point.
       "app/_components/marketing/SiteHeader.tsx",
       "app/api/billing/webhook/route.ts",
@@ -221,8 +222,8 @@ describe("#8 — the Terms do not describe automated Hone subscription billing a
       "app/signup/SignupForm.tsx",
       "app/signup/actions.ts",
       "app/signup/page.tsx",
-      // The desk guard applies the billing pause only while checkout is enabled.
-      "lib/desk/guard.ts",
+      // The neutral staff text for the billing lock (the database refuses only NEW bookings and sessions).
+      "lib/sessions/session-command-errors.ts",
       "lib/settings/nav-registry.ts",
     ];
     const { execSync } = await import("node:child_process");

@@ -139,3 +139,25 @@ it("refuses an unverified account before reserving a purchase or opening Checkou
   expect(hooks.rpc).not.toHaveBeenCalled();
   expect(hooks.billing).not.toHaveBeenCalled();
 });
+
+it("measures the session's expiry from the retry, not from the claim (Stripe's 30 minute minimum)", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const a = { ...attempt(), created: now - 120 }; // the retry arrives two minutes after the claim
+  const stripe = fakeBilling({ prices: { [SOLO_PRICE]: price({ id: SOLO_PRICE, unit_amount: 4900 }) }, checkoutUrl });
+  hooks.billing.mockReturnValue(stripe);
+  hooks.rpc.mockResolvedValueOnce({ data: a }).mockResolvedValueOnce({ data: true });
+  await expect(submit()).rejects.toThrow("redirect " + checkoutUrl);
+  const { expiresAt } = stripe.calls.createCheckoutSession[0];
+  expect(expiresAt).toBeGreaterThanOrEqual(now + 30 * 60 + 60);
+  expect(expiresAt).toBeGreaterThan(a.created + 31 * 60);
+});
+
+it("reuses an unbound session Stripe still has open instead of opening a second one", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const stripe = fakeBilling({ prior: { id: "cs_prior", status: "open", url: checkoutUrl, expires_at: now + 20 * 60 } });
+  hooks.billing.mockReturnValue(stripe);
+  hooks.rpc.mockResolvedValueOnce({ data: { ...attempt(), created: now - 600 } }).mockResolvedValueOnce({ data: true });
+  await expect(submit()).rejects.toThrow("redirect " + checkoutUrl);
+  expect(stripe.calls.createCheckoutSession).toHaveLength(0);
+  expect(hooks.rpc.mock.calls[1]).toEqual(["bind_hone_checkout", expect.objectContaining({ p_session: "cs_prior" })]);
+});

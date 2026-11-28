@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin-server";
-import { isSelfServeCheckoutEnabled, type PlanKey } from "./plans";
+import type { PlanKey } from "./plans";
 
 export type OwnerBilling = {
   plan: PlanKey;
@@ -31,13 +31,6 @@ export async function readOwnerProviderIds(studioId: string): Promise<ProviderId
   const { data, error } = await createAdminClient().rpc("read_hone_billing_provider_ids", { p_studio: studioId, p_user: user.id });
   if (error || !data?.customer || !data?.subscription) return null;
   return data as ProviderIds;
-}
-
-// Only an EFFECTIVE cancellation pauses the owner's workspace; a pending cancel request never does.
-export async function ownerWorkspacePaused(studioId: string) {
-  if (!isSelfServeCheckoutEnabled(process.env)) return false;
-  const { billing } = await readOwnerBilling(studioId);
-  return billing?.status === "canceled";
 }
 
 export type SoloImpact = {

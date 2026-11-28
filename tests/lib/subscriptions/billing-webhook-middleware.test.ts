@@ -59,15 +59,23 @@ describe("/api/billing/webhook through the middleware, session-less", () => {
   });
 });
 
-it("pauses an already signed-in studio on the next request, with owner-only Billing access", async () => {
+it("never redirects a cancelled studio's staff or owner: records stay open and only the database refuses new work", async () => {
   vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED","true");
   member.signedIn = true;
-  expect(isRedirect(await post("/calendar"))).toBe(false);
   member.paused = true;
-  expect((await post("/calendar")).headers.get("location")).toContain("/subscription-paused");
-  expect((await post("/settings/subscription")).headers.get("location")).toContain("/subscription-paused");
-  expect(isRedirect(await post("/subscription-paused"))).toBe(false);
-  member.owner = true;
-  expect((await post("/dashboard")).headers.get("location")).toContain("/settings/subscription");
-  expect(isRedirect(await post("/settings/subscription"))).toBe(false);
+  const rpcCalls: string[] = [];
+  // Practitioner and owner alike, on records, export, a session under way, the calendar and Billing.
+  for (const owner of [false, true]) {
+    member.owner = owner;
+    for (const path of ["/calendar", "/clients/c1", "/clients/c1/export", "/clients/c1/sessions/s1", "/api/export", "/settings/subscription", "/dashboard"]) {
+      expect(isRedirect(await post(path)), `${owner ? "owner" : "practitioner"} ${path}`).toBe(false);
+    }
+  }
+  expect(rpcCalls).toEqual([]);
+});
+
+it("source: the middleware no longer consults the cancelled flag at all", () => {
+  const mw = readFileSync(path.join(process.cwd(), "lib/supabase/middleware.ts"), "utf8");
+  expect(mw).not.toMatch(/my_hone_studio_canceled|my_hone_billing_status/);
+  expect(mw).not.toMatch(/redirect[^\n]*subscription-paused/);
 });

@@ -367,7 +367,9 @@ export function createBillingStripeClient(
           automatic_tax: { enabled: false },
         },
         params.attemptId
-          ? { idempotencyKey: "hone-signup-" + params.attemptId }
+          // Keyed by the expiry too: the expiry is measured from each request, and Stripe rejects a repeated
+          // key whose parameters differ. A lost response is recovered by looking the session up first.
+          ? { idempotencyKey: "hone-signup-" + params.attemptId + "-" + params.expiresAt }
           : undefined,
       );
       return { id: session.id, url: session.url };

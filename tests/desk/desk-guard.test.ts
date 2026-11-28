@@ -85,16 +85,12 @@ describe("requireReceptionistWithStudio", () => {
     await expect(requireReceptionistWithStudio()).resolves.toMatchObject({ studioId: "s2", receptionistId: "r2" });
   });
 
-  it("checks the selected desk subscription before allowing the next request", async () => {
+  it("does not turn a cancelled studio's receptionist away from the desk: the database refuses only new work", async () => {
     vi.stubEnv("HONE_SELF_SERVE_CHECKOUT_ENABLED", "true");
     state.rows = [{ id: "r1", studio_id: "s1", display_name: "Desk" }];
-    canceledRead.mockResolvedValueOnce({ data: true });
-    expect(await where()).toBe("/subscription-paused?desk=single");
-    expect(canceledRead).toHaveBeenCalledWith("my_hone_studio_canceled", { p_studio: "s1" });
-    canceledRead.mockResolvedValueOnce({ data: false });
+    canceledRead.mockResolvedValue({ data: true });
     await expect(requireReceptionistWithStudio()).resolves.toMatchObject({ studioId: "s1" });
-    canceledRead.mockResolvedValueOnce({ error: { message: "unavailable" } });
-    expect(await where()).toBe("Could not verify studio access.");
+    expect(canceledRead).not.toHaveBeenCalledWith("my_hone_studio_canceled", expect.anything());
   });
 
   it("a failed membership read is loud, never read as no membership", async () => {

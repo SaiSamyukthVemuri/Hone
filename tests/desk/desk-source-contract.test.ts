@@ -60,7 +60,7 @@ describe("the desk surface", () => {
     expect(fromCalls.sort()).toEqual(["lib/desk/entry.ts:studio_receptionists", "lib/desk/guard.ts:studio_receptionists"]);
     const rpcs = files.flatMap((f) => [...stripComments(src(f)).matchAll(/rpc(?:<[^>]*>)?\(\s*["']([^"']+)["']/g)].map((m) => m[1]));
     expect(rpcs.sort()).toEqual([
-      "my_hone_studio_canceled", "receptionist_appointment_contact", "receptionist_book_opening", "receptionist_booking_options", "receptionist_calendar_v3",
+      "receptionist_appointment_contact", "receptionist_book_opening", "receptionist_booking_options", "receptionist_calendar_v3",
       "receptionist_booking_clients_v3", "receptionist_find_openings_v2", "receptionist_studio_timezone",
     ].sort());
     for (const f of files) {

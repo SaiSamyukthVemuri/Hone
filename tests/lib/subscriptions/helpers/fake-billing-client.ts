@@ -97,6 +97,8 @@ export function fakeBilling(opts: {
   checkoutUrl?: string | null;
   /** When set, createCheckoutSession throws this. */
   createError?: Error;
+  /** What a lookup of the attempt's earlier Stripe session returns (default: none). */
+  prior?: { id: string; status: string; url: string | null; expires_at: number } | null;
 } = {}): FakeBilling {
   const calls: FakeBilling["calls"] = {
     retrievePrice: [],
@@ -104,7 +106,7 @@ export function fakeBilling(opts: {
     createCheckoutSession: [],
     constructEvent: 0,
   };
-  return {
+  const fake: BillingStripeClient & { calls: FakeBilling["calls"] } = {
     calls,
     async retrievePrice(id) {
       calls.retrievePrice.push(id);
@@ -138,4 +140,10 @@ export function fakeBilling(opts: {
       return s.event;
     },
   };
+  // The real client also looks up an attempt's earlier Checkout session; the interface type predates it.
+  return Object.assign(fake, {
+    async findAttemptSession() {
+      return (opts.prior ?? null) as never;
+    },
+  }) as FakeBilling;
 }
