@@ -10,6 +10,9 @@ import type { Service } from "@/lib/types/database";
 import { monthDayLabel, weekdayLabel } from "./calendar-format";
 import { findCalendarOpeningsAction, type CalendarOpening } from "./find-time-actions";
 
+/** The longest search the finder runs, in days. find-time-actions.ts refuses a longer range with the same number. */
+export const FIND_TIME_MAX_DAYS = 7;
+
 export type FindTimeService = Pick<Service, "id" | "name" | "default_duration_minutes">;
 export type { CalendarOpening };
 
@@ -42,11 +45,24 @@ export function CalendarFindTime({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [limit, setLimit] = useState(4);
+  // Said politely (a live region) when moving From had to move Through with it, so the change is never silent.
+  const [notice, setNotice] = useState("");
+  const fromRef = useRef<HTMLInputElement>(null);
+  const throughRef = useRef<HTMLInputElement>(null);
   const request = useRef(0);
   useEffect(() => () => { request.current += 1; }, []);
   const service = services.find((s) => s.id === serviceId);
   const durations = [...new Set(services.map((s) => s.default_duration_minutes))].sort((a, b) => a - b);
   const matchingServices = services.filter((s) => !durationFilter || s.default_duration_minutes === durationFilter);
+  // The search window is up to seven days (find-time-actions.ts enforces the same rule). The form checks it itself and says what to change beside the field:
+  // the browser's own bubble named only a date and gave no way forward (HON-131).
+  const lastAllowed = fromDate ? addDays(fromDate, FIND_TIME_MAX_DAYS - 1) : "";
+  const fromError = !fromDate ? "Choose a From date." : fromDate < today ? `From can't be before today. Choose ${monthDayLabel(today)} or later.` : "";
+  const throughError = !toDate ? "Choose a Through date."
+    : !fromDate ? ""
+    : toDate < fromDate ? `Through can't be before From. Choose ${monthDayLabel(fromDate)} to ${monthDayLabel(lastAllowed)}.`
+    : toDate > lastAllowed ? `You can search up to ${FIND_TIME_MAX_DAYS} days at a time. The latest Through date for this From is ${monthDayLabel(lastAllowed)}. To search a later week, move From later.`
+    : "";
 
   function invalidate() {
     request.current += 1;
@@ -55,10 +71,16 @@ export function CalendarFindTime({
     setLoading(false);
     setError("");
     setLimit(4);
+    setNotice("");
     onClear();
   }
   async function search(event: FormEvent) {
     event.preventDefault();
+    // An invalid range sends nothing and keeps every selection; focus goes to the field the message sits beside.
+    if (fromError || throughError) {
+      (fromError ? fromRef : throughRef).current?.focus();
+      return;
+    }
     invalidate();
     if (!service || !fromDate || !toDate) return;
     const current = request.current;
@@ -85,7 +107,7 @@ export function CalendarFindTime({
   return (
     <section aria-label="Find time" className="space-y-4">
       {services.length === 0 ? <p className="text-sm text-fg-muted">No active services to book.</p> :
-        <form onSubmit={search} className="grid gap-3">
+        <form onSubmit={search} noValidate className="grid gap-3">
           {durations.length > 1 && <fieldset>
             <legend className="mb-1"><SectionLabel size="caption">Duration</SectionLabel></legend>
             <div className="flex flex-wrap gap-1">
@@ -118,16 +140,28 @@ export function CalendarFindTime({
           {rebook?.practitionerId && (!preferred || (!isOwner && rebook.practitionerId !== viewerId)) &&
             <p className="text-xs text-fg-muted">The previous practitioner is unavailable for this search.</p>}
           <FieldLabel label="From">
-            <input type="date" required min={today} value={fromDate} className={fieldControlClass()} onChange={(e) => {
-              const date = e.target.value;
-              invalidate(); setFromDate(date);
-              if (date && (toDate < date || toDate > addDays(date, 6))) setToDate(addDays(date, 2));
-            }} />
+            <input ref={fromRef} type="date" required min={today} value={fromDate} className={fieldControlClass()}
+              aria-invalid={fromError ? true : undefined} aria-describedby={fromError ? "find-time-from-error find-time-window-help" : "find-time-window-help"}
+              onChange={(e) => {
+                const date = e.target.value;
+                invalidate(); setFromDate(date);
+                // Moving From can leave Through outside the window. Move it, and SAY so: a date the person typed never changes without a word.
+                if (date && (toDate < date || toDate > addDays(date, FIND_TIME_MAX_DAYS - 1))) {
+                  const moved = addDays(date, 2);
+                  setToDate(moved);
+                  setNotice(`Through moved to ${monthDayLabel(moved)} so the search stays within ${FIND_TIME_MAX_DAYS} days of ${monthDayLabel(date)}.`);
+                }
+              }} />
           </FieldLabel>
+          {fromError && <p id="find-time-from-error" role="alert" className="-mt-1 text-xs text-danger-solid">{fromError}</p>}
           <FieldLabel label="Through">
-            <input type="date" required min={fromDate} max={fromDate ? addDays(fromDate, 6) : undefined}
-              value={toDate} className={fieldControlClass()} onChange={(e) => { invalidate(); setToDate(e.target.value); }} />
+            <input ref={throughRef} type="date" required value={toDate} className={fieldControlClass()}
+              aria-invalid={throughError ? true : undefined} aria-describedby={throughError ? "find-time-through-error find-time-window-help" : "find-time-window-help"}
+              onChange={(e) => { invalidate(); setToDate(e.target.value); }} />
           </FieldLabel>
+          {throughError && <p id="find-time-through-error" role="alert" className="-mt-1 text-xs text-danger-solid">{throughError}</p>}
+          <p id="find-time-window-help" className="-mt-1 text-xs text-fg-muted">Search up to {FIND_TIME_MAX_DAYS} days at a time.</p>
+          <p role="status" aria-live="polite" data-testid="find-time-notice" className={notice ? "-mt-1 text-xs text-fg-muted" : "sr-only"}>{notice}</p>
           <Button type="submit" size="sm" pending={loading} busyLabel="Searching…" disabled={!service}>Search availability</Button>
         </form>}
       {error && <p role="alert" className="text-sm text-danger-solid">{error}</p>}

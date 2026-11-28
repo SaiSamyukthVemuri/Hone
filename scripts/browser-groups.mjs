@@ -287,6 +287,8 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // HON-131: Find time's 7-day window is stated and checked beside the field; weeks two to six are searchable; selections kept; nothing booked.
+      "calendar-find-time-window.spec.ts",
       "desk-calendar.spec.ts",
       "desk-finder-and-isolation.spec.ts",
       // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
