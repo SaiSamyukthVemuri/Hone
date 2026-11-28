@@ -22,7 +22,7 @@ create table public.hone_signup_attempts (
   check (state <> 'paid' or (customer_id is not null and subscription_id is not null))
 );
 create unique index hone_signup_one_purchase on public.hone_signup_attempts(user_id) where state <> 'expired';
-create table public.hone_billing_events (id text primary key);
+create table public.hone_billing_events (id text primary key, created_at timestamptz not null default now());
 create table public.hone_renewal_invoices (
   invoice_id text primary key,
   attempt_id uuid not null references public.hone_signup_attempts(id) on delete cascade,

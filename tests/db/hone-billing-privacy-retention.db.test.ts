@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { assertMayMutateFrontDeskRollout } from "./helpers/rollout-mutation-guard";
 import { adminQuery, closePool, userQuery } from "./helpers/harness";
 
 beforeAll(async () => {
+  await assertMayMutateFrontDeskRollout();
   await adminQuery("update public.platform_rollouts set mode='pilot' where key='front_desk'");
 });
 afterAll(async () => {
   await adminQuery("update public.platform_rollouts set mode='off' where key='front_desk'");
+  // The guard proved the stack started with nobody listed, so everything listed now is this suite's.
+  await adminQuery("delete from public.platform_rollout_studios where rollout_key='front_desk'");
   await closePool();
 });
 

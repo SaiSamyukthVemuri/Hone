@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { assertMayMutateFrontDeskRollout } from "./helpers/rollout-mutation-guard";
 import { adminQuery, adminTx, closePool, userQuery } from "./helpers/harness";
 import { PLANS, type PlanKey } from "@/lib/subscriptions/plans";
 import type { InvitationRole } from "@/lib/types/database";
@@ -8,10 +9,13 @@ import type { InvitationRole } from "@/lib/types/database";
 // for it and a seat grant covers them. The plan writes its own grant (Studio: 1, Solo: none); the platform
 // mode is switched to 'pilot' here only so those per-studio switches take effect, and restored afterwards.
 beforeAll(async () => {
+  await assertMayMutateFrontDeskRollout();
   await adminQuery("update public.platform_rollouts set mode='pilot' where key='front_desk'");
 });
 afterAll(async () => {
   await adminQuery("update public.platform_rollouts set mode='off' where key='front_desk'");
+  // The guard proved the stack started with nobody listed, so everything listed now is this suite's.
+  await adminQuery("delete from public.platform_rollout_studios where rollout_key='front_desk'");
   await closePool();
 });
 
