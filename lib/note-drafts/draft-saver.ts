@@ -291,6 +291,9 @@ export class DraftSaver {
     this.paused = false;
     this.pending = null;
     this.lastAcked = null;
+    // The text of a request still in flight is what the real Save just recorded (or what the person discarded): hide it from unsavedWork() and
+    // latestFields() NOW, or reopening the form before the reply arrives would restore already-saved text. The reply itself is dropped by run().
+    this.inFlightFields = null;
     this.clear();
     // The next typing is a NEW draft lifecycle: a new generation and expected revision 0 (the server begins it on the tombstone).
     this.generation = this.mint();

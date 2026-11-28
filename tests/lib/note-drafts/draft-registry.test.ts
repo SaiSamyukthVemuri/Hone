@@ -41,6 +41,21 @@ describe("draft registry", () => {
     expect(latestDraft(key, stored(2, "old text from page load"), SCOPE_A)).toMatchObject({ fields: { body: "newer text" }, revision: 5, unsaved: false });
   });
 
+  it("r4 (Codex P2): settle() while an autosave is still in flight leaves NOTHING to restore: the reopened form must not get the already-saved text", async () => {
+    let release!: (r: NoteDraftSaveResult) => void;
+    const save = vi.fn(() => new Promise<NoteDraftSaveResult>((r) => (release = r)));
+    const entry = acquireEntry(key, null, actions(save), () => undefined);
+    entry.saver.change({ body: "text that the real Save is about to record" });
+    await vi.advanceTimersByTimeAsync(1600); // the autosave is out, unanswered
+    entry.saver.settle(); // the note was saved; Add note is then reopened BEFORE the reply arrives
+    expect(entry.saver.unsavedWork()).toBeNull();
+    expect(entry.saver.latestFields()).toBeNull();
+    expect(latestDraft(key, null, SCOPE_A)).toBeNull();
+    release(ok(4)); // the late reply changes nothing either
+    await vi.advanceTimersByTimeAsync(0);
+    expect(latestDraft(key, null, SCOPE_A)).toBeNull();
+  });
+
   it("once an entry exists it is the ONLY answer: a settled (saved or discarded) draft is not brought back by the page's stale prop", () => {
     const entry = acquireEntry(key, stored(2, "old"), actions(async () => ok(3)), () => undefined);
     entry.saver.settle();

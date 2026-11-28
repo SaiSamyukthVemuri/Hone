@@ -549,6 +549,7 @@ function NoteForm({
       const result = await action(formData);
       if (result.ok) {
         draft.settle(); // the save already cleared the draft in its own transaction
+        heldEdits.current = null;
         onSaved(result.note, result.author_name);
         return { status: "idle" };
       }
@@ -664,6 +665,7 @@ function NoteForm({
           discardFailed={draft.discardFailed}
           onDiscard={async () => {
             if (!(await draft.discard())) return; // failed: the editor stays exactly as it was and the status says so
+            heldEdits.current = null; // the discarded edits must never be what Keep as new carries
             setRestoredAt(null);
             resetBody(mode === "revise" && revising ? revising.body : "");
             setAreasText(revising ? revising.areas.join(", ") : "");

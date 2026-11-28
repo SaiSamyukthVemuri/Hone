@@ -115,6 +115,25 @@ describe("Keep as new note never overwrites an occupied destination", () => {
     await act(async () => root.unmount());
   });
 
+  it("r4 (Codex P2): after a SUCCESSFUL Discard of a superseded-target draft, Keep as new does not carry the discarded edits", async () => {
+    vi.useFakeTimers();
+    const { host, root, save } = await mount({ notes, drafts: [mine], peek: async () => ({ ok: true, draft: null }) });
+    const ta = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      set.call(ta, "EDITED then discarded");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(button(host, "Discard draft") ?? button(host, "Discard"));
+    expect(host.textContent).not.toMatch(/EDITED then discarded/);
+    await click(button(host, "Keep as new draft"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    const bodies = save.mock.calls.map((c) => c[0] as { key: { target: string }; fields: { body?: string } }).filter((c) => c.key.target === "new").map((c) => c.fields.body);
+    expect(bodies).not.toContain("EDITED then discarded");
+    vi.useRealTimers();
+    await act(async () => root.unmount());
+  });
+
   it("a free destination moves straight away as a NEW lifecycle (expected revision 0, a different generation)", async () => {
     vi.useFakeTimers();
     const { host, root, save } = await mount({ notes, drafts: [mine], peek: async () => ({ ok: true, draft: null }) });
