@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 // @ts-expect-error - .mjs utilities ship without type declarations
-import { classify, STORAGE_DB_TEST, WEBKIT_PAYMENT_SEEDS } from "../../scripts/classify-changes.mjs";
+import { classify, STORAGE_DB_TEST, WEBKIT_PAYMENT_SEEDS, storagePolicyDeps, touchesStorageDeps } from "../../scripts/classify-changes.mjs";
 // @ts-expect-error - .mjs utilities ship without type declarations
 import { forwardClosure } from "../../scripts/import-graph.mjs";
 
@@ -61,5 +64,48 @@ describe("webkit_surface: only the quick-checkout surface of the payment lane st
   it("FAIL-SAFE: the full matrix and shared infrastructure do; a mixed diff is judged by its most WebKit-touching file", () => {
     expect(c("package.json").webkit_surface).toBe(true);
     expect(c("lib/billing/stripe-webhook.ts", "components/quick-checkout-modal.tsx").webkit_surface).toBe(true);
+  });
+});
+
+describe("storage_photos: a migration that redefines what the storage policies call or read starts the lane", () => {
+  const real = storagePolicyDeps(process.cwd()) as { fns: string[]; tables: string[] };
+
+  it("the dependency list is derived from the policies in the tree and contains the membership helper and its table", () => {
+    expect(real.fns).toContain("is_studio_member");
+    expect(real.tables).toContain("practitioners");
+  });
+
+  it("is derived, not hard-coded: a fixture tree with its own policy yields its own helper and table", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "storage-deps-"));
+    mkdirSync(path.join(root, "supabase/migrations"), { recursive: true });
+    const w = (n: string, t: string) => writeFileSync(path.join(root, "supabase/migrations", n), t);
+    w("0001_a.sql", "create or replace function public.can_see_blob(x uuid) returns boolean language sql as $$ select exists (select 1 from public.blob_owners where id = x) $$;");
+    w("0002_b.sql", 'create policy "p" on storage.objects for select using (public.can_see_blob(owner::uuid));');
+    w("0003_c.sql", "create or replace function public.unrelated() returns int language sql as $$ select 1 $$;");
+    const d = storagePolicyDeps(root) as { fns: string[]; tables: string[] };
+    expect(d.fns).toEqual(["can_see_blob"]);
+    expect(d.tables).toEqual(["blob_owners"]);
+    expect(touchesStorageDeps("create or replace function public.can_see_blob(x uuid) returns boolean as $$ select true $$;", d)).toBe(true);
+    expect(touchesStorageDeps("alter table public.blob_owners add column z int;", d)).toBe(true);
+    expect(touchesStorageDeps("create or replace function public.unrelated() returns int as $$ select 2 $$;", d)).toBe(false);
+  });
+
+  it("a migration redefining is_studio_member, or altering the membership table, names no storage word and still starts storage_photos", () => {
+    const redefine = "create or replace function public.is_studio_member(target_studio_id uuid) returns boolean language sql as $$ select true $$;";
+    expect(/storage\.|\bbucket|treatment_image|photo|signed/i.test(redefine)).toBe(false);
+    expect(touchesStorageDeps(redefine, real)).toBe(true);
+    expect(touchesStorageDeps("alter table public.practitioners add column nickname text;", real)).toBe(true);
+    expect(touchesStorageDeps("create table public.unrelated_widgets (id int);", real)).toBe(false);
+  });
+
+  it("end to end through classify: a real migration that only alters the membership table starts the lane", () => {
+    expect(c("supabase/migrations/0023_practitioner_color.sql").storage_photos).toBe(true);
+  });
+
+  it("an empty diff (a re-run) runs everything: both non-required lane flags are true with the full matrix", () => {
+    const r = c();
+    expect(r.full_matrix_required).toBe(true);
+    expect(r.storage_photos).toBe(true);
+    expect(r.webkit_surface).toBe(true);
   });
 });

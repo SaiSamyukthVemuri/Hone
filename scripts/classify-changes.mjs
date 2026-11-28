@@ -20,7 +20,8 @@
 // identically, and nothing committed can go stale.
 // ---------------------------------------------------------------------------
 
-import { readFileSync, appendFileSync } from "node:fs";
+import { readFileSync, readdirSync, appendFileSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DOCS, isDocsPath } from "./docs-paths.mjs";
 import { scanTestDependencies } from "./test-dependencies.mjs";
@@ -292,7 +293,7 @@ export function classify(files, deps = dependenciesFor()) {
     mobile: false,
     ci_workflows: false,
     full_matrix_required: false,
-    // CI-SELECT-03. The two non-required lanes' own reasons (see laneSurfaces below); both true on the full matrix.
+    // CI-SELECT-03. The two non-required lanes' own reasons (see laneSurfaces below); default false here; true on the full matrix, including the empty-diff re-run.
     storage_photos: false,
     webkit_surface: false,
     // G4. A docs-only diff runs no unit lane, so a document READ BY A UNIT TEST
@@ -312,6 +313,8 @@ export function classify(files, deps = dependenciesFor()) {
   if (list.length === 0) {
     // No detectable diff (e.g. a re-run). Be conservative: run everything.
     out.full_matrix_required = true;
+    // Conservative means everything, the two non-required lanes included: laneSurfaces would otherwise leave them false on an empty diff.
+    Object.assign(out, laneSurfaces(list, true, {}));
     Object.assign(out, baselineRisk(list, {}, false));
     return out;
   }
@@ -411,6 +414,55 @@ function migrationText(f) {
   }
 }
 
+// The storage policies call helpers (is_studio_member, from 0001/0092) and the helpers read tables (practitioners). A migration that redefines one of
+// them names none of the storage words, so it would not start the only PR-time check of those policies. The list is DERIVED, not hard-coded: every
+// `create policy` statement in a migration that names the storage surface contributes the public functions it calls and the tables it reads, and each
+// such function contributes the tables and functions its latest definition reads (two levels).
+const FN_DEF = /create\s+(?:or\s+replace\s+)?function\s+public\.(\w+)\s*\([\s\S]*?\$(\w*)\$([\s\S]*?)\$\2\$/gi;
+const refsIn = (text) => ({
+  fns: [...text.matchAll(/\bpublic\.(\w+)\s*\(/g)].map((m) => m[1]),
+  tables: [...text.matchAll(/\b(?:from|join)\s+(?:only\s+)?public\.(\w+)/gi)].map((m) => m[1]),
+});
+let storageDepsCache = new Map();
+export function storagePolicyDeps(root) {
+  if (storageDepsCache.has(root)) return storageDepsCache.get(root);
+  const dir = path.join(root, "supabase/migrations");
+  const fnBody = new Map();
+  const policies = [];
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".sql")).sort()) {
+    const t = readFileSync(path.join(dir, f), "utf8");
+    for (const m of t.matchAll(FN_DEF)) fnBody.set(m[1], m[3]); // later migrations win
+    if (STORAGE_SQL.test(t)) for (const m of t.matchAll(/create\s+policy\s[\s\S]*?;/gi)) policies.push(m[0]);
+  }
+  const fns = new Set();
+  const tables = new Set();
+  let frontier = [];
+  for (const body of policies) {
+    const r = refsIn(body);
+    r.fns.forEach((n) => frontier.push(n));
+    r.tables.forEach((n) => tables.add(n));
+  }
+  for (let depth = 0; depth < 2 && frontier.length; depth++) {
+    const next = [];
+    for (const n of frontier) {
+      if (fns.has(n) || !fnBody.has(n)) continue;
+      fns.add(n);
+      const r = refsIn(fnBody.get(n));
+      r.tables.forEach((x) => tables.add(x));
+      r.fns.forEach((x) => next.push(x));
+    }
+    frontier = next;
+  }
+  const out = { fns: [...fns].sort(), tables: [...tables].sort() };
+  storageDepsCache.set(root, out);
+  return out;
+}
+export function touchesStorageDeps(text, deps) {
+  const fn = deps.fns.length && new RegExp(`(?:create(?:\\s+or\\s+replace)?|drop|alter)\\s+function\\s+(?:if\\s+exists\\s+)?(?:public\\.)?(?:${deps.fns.join("|")})\\b`, "i");
+  const tb = deps.tables.length && new RegExp(`(?:create|drop|alter)\\s+table\\s+(?:if\\s+(?:not\\s+)?exists\\s+)?(?:only\\s+)?(?:public\\.)?(?:${deps.tables.join("|")})\\b`, "i");
+  return Boolean((fn && fn.test(text)) || (tb && tb.test(text)));
+}
+
 function laneSurfaces(list, full, dbDeps) {
   if (full) return { storage_photos: true, webkit_surface: true };
   const root = fileURLToPath(new URL("..", import.meta.url));
@@ -421,7 +473,7 @@ function laneSurfaces(list, full, dbDeps) {
     if (STORAGE_PATHS.some((re) => re.test(f)) || storageClosure.has(f) || (dbDeps[f] ?? []).includes?.(STORAGE_DB_TEST)) return true;
     if (!isMigration(f)) return false;
     const t = migrationText(f);
-    return t === null || STORAGE_SQL.test(t);
+    return t === null || STORAGE_SQL.test(t) || touchesStorageDeps(t, storagePolicyDeps(root));
   });
   const webkit = list.some((f) => {
     if (WEBKIT_PATHS.some((re) => re.test(f)) || webkitClosure.has(f)) return true;
