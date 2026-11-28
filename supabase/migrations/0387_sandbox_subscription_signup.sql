@@ -15,6 +15,8 @@ create table public.hone_signup_attempts (
   state text not null default 'open' check (state in ('open','expired','paid')),
   session_id text unique,
   session_url text,
+  checkout_generation integer not null default 0,
+  checkout_claimed_at timestamptz,
   customer_id text unique,
   subscription_id text unique,
   studio_id uuid unique references public.studios(id) on delete cascade,
@@ -162,6 +164,16 @@ returns boolean language sql security definer set search_path = '' as $$
   with bound as (update public.hone_signup_attempts set session_id=p_session, session_url=p_url, last_activity_at=now()
     where id=p_attempt and user_id=p_user and state='open' and (session_id is null or session_id=p_session)
     returning id) select exists(select 1 from bound);
+$$;
+-- The checkout generation is claimed here, atomically, BEFORE a Stripe session is created, and the Stripe idempotency key is derived from it.
+-- Two submissions that overlap cannot both receive a generation: the second gets NULL while the first holds an unexpired claim, and is
+-- routed to "confirming". A crash leaves the claim to lapse after two minutes; a session it left at Stripe is found by lookup first.
+create function public.claim_hone_checkout_generation(p_attempt uuid, p_user uuid)
+returns integer language sql security definer set search_path = '' as $$
+  update public.hone_signup_attempts set checkout_generation=checkout_generation+1, checkout_claimed_at=now(), last_activity_at=now()
+    where id=p_attempt and user_id=p_user and state='open' and session_id is null
+      and (checkout_claimed_at is null or checkout_claimed_at < now() - interval '2 minutes')
+    returning checkout_generation;
 $$;
 create function public.expire_hone_checkout(p_attempt uuid, p_user uuid, p_session text)
 returns boolean language sql security definer set search_path = '' as $$
@@ -344,10 +356,10 @@ language sql stable security definer set search_path = '' as $$
     and p.user_id=auth.uid() and p.role='owner' and p.active);
 $$;
 
-revoke all on function public.claim_hone_signup(uuid,text,text,text),public.bind_hone_checkout(uuid,uuid,text,text),
+revoke all on function public.claim_hone_signup(uuid,text,text,text),public.bind_hone_checkout(uuid,uuid,text,text),public.claim_hone_checkout_generation(uuid,uuid),
   public.expire_hone_checkout(uuid,uuid,text), public.apply_hone_billing_invoice(text,uuid,uuid,text,text,text,text,text,timestamptz),
   public.check_hone_new_work_allowed(), public.my_hone_billing_status(uuid) from public,anon,authenticated,service_role;
-grant execute on function public.claim_hone_signup(uuid,text,text,text),public.bind_hone_checkout(uuid,uuid,text,text),
+grant execute on function public.claim_hone_signup(uuid,text,text,text),public.bind_hone_checkout(uuid,uuid,text,text),public.claim_hone_checkout_generation(uuid,uuid),
   public.expire_hone_checkout(uuid,uuid,text), public.apply_hone_billing_invoice(text,uuid,uuid,text,text,text,text,text,timestamptz)
   to service_role;
 grant execute on function public.my_hone_billing_status(uuid) to authenticated;

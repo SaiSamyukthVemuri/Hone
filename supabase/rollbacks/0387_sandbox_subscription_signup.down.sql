@@ -22,6 +22,7 @@ drop function public.hone_sync_included_desk(uuid,text);
 drop function public.my_hone_billing_status(uuid);
 drop function public.apply_hone_billing_invoice(text,uuid,uuid,text,text,text,text,text,timestamptz);
 drop function public.claim_hone_signup(uuid,text,text,text);
+drop function public.claim_hone_checkout_generation(uuid,uuid);
 drop function public.bind_hone_checkout(uuid,uuid,text,text);
 drop function public.expire_hone_checkout(uuid,uuid,text);
 drop table public.hone_renewal_invoices,public.hone_billing_events,public.hone_signup_attempts;

@@ -82,6 +82,8 @@ export interface CreateCheckoutSessionParams {
   /** Unix seconds. Stripe requires at least 30 minutes from creation. */
   expiresAt: number;
   attemptId?: string;
+  /** The generation claimed in the database before this call; the idempotency key is derived from it. */
+  generation?: number;
 }
 
 export interface BillingStripeClient {
@@ -367,9 +369,10 @@ export function createBillingStripeClient(
           automatic_tax: { enabled: false },
         },
         params.attemptId
-          // Keyed by the expiry too: the expiry is measured from each request, and Stripe rejects a repeated
-          // key whose parameters differ. A lost response is recovered by looking the session up first.
-          ? { idempotencyKey: "hone-signup-" + params.attemptId + "-" + params.expiresAt }
+          // Keyed by the generation the database handed out for THIS submission (never a clock value, which two
+          // overlapping requests can share). A new generation is a new key, so Stripe never sees one key with different
+          // parameters; a lost response is recovered by looking the session up first.
+          ? { idempotencyKey: "hone-signup-" + params.attemptId + "-" + (params.generation ?? params.expiresAt) }
           : undefined,
       );
       return { id: session.id, url: session.url };

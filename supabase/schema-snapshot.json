@@ -3,7 +3,7 @@
   "migrations": {
     "count": 297,
     "last": "0398_studio_portal_presentations.sql",
-    "sha256": "20128d61c7b07db8b4d84bc88a7db81e8302cf222250ee7e24d5790f76f154cf"
+    "sha256": "fb6d3c3ded677ac2e1a8ec0d6c6621246e44c5015268c272148b2a772a809e5c"
   },
   "public": {
     "tables": [
@@ -239,6 +239,7 @@
       "claim_conversion_delivery",
       "claim_email_provider_events",
       "claim_email_send",
+      "claim_hone_checkout_generation",
       "claim_hone_restart",
       "claim_hone_signup",
       "claim_hone_subscription_change",

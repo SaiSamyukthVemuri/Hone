@@ -76,10 +76,12 @@ it.each([
     hooks.billing.mockReturnValue(stripe);
     hooks.rpc
       .mockResolvedValueOnce({ data: a })
+      .mockResolvedValueOnce({ data: 1 })
       .mockResolvedValueOnce({ data: true });
     await expect(submit(plan)).rejects.toThrow("redirect " + checkoutUrl);
     expect(hooks.rpc.mock.calls.map((c) => c[0])).toEqual([
       "claim_hone_signup",
+      "claim_hone_checkout_generation",
       "bind_hone_checkout",
     ]);
     expect(stripe.calls.createCheckoutSession).toHaveLength(1);
@@ -88,6 +90,7 @@ it.each([
       customerEmail: user.email,
       clientReferenceId: user.id,
       attemptId: a.id,
+      generation: 1,
       metadata: {
         hone_plan: plan,
         hone_attempt_id: a.id,
@@ -145,7 +148,7 @@ it("measures the session's expiry from the retry, not from the claim (Stripe's 3
   const a = { ...attempt(), created: now - 120 }; // the retry arrives two minutes after the claim
   const stripe = fakeBilling({ prices: { [SOLO_PRICE]: price({ id: SOLO_PRICE, unit_amount: 4900 }) }, checkoutUrl });
   hooks.billing.mockReturnValue(stripe);
-  hooks.rpc.mockResolvedValueOnce({ data: a }).mockResolvedValueOnce({ data: true });
+  hooks.rpc.mockResolvedValueOnce({ data: a }).mockResolvedValueOnce({ data: 2 }).mockResolvedValueOnce({ data: true });
   await expect(submit()).rejects.toThrow("redirect " + checkoutUrl);
   const { expiresAt } = stripe.calls.createCheckoutSession[0];
   expect(expiresAt).toBeGreaterThanOrEqual(now + 30 * 60 + 60);
@@ -160,4 +163,32 @@ it("reuses an unbound session Stripe still has open instead of opening a second 
   await expect(submit()).rejects.toThrow("redirect " + checkoutUrl);
   expect(stripe.calls.createCheckoutSession).toHaveLength(0);
   expect(hooks.rpc.mock.calls[1]).toEqual(["bind_hone_checkout", expect.objectContaining({ p_session: "cs_prior" })]);
+});
+
+it("two overlapping submissions open ONE Stripe session: the loser gets no generation and is sent to confirming", async () => {
+  // The database hands the generation out atomically: the first claim gets 1, a claim while that one is live gets null.
+  let handed = 0;
+  const bound: string[] = [];
+  hooks.rpc.mockImplementation(async (fn: string, args: Record<string, unknown>) => {
+    if (fn === "claim_hone_signup") return { data: attempt() };
+    if (fn === "claim_hone_checkout_generation") return { data: ++handed === 1 ? 1 : null };
+    if (fn === "bind_hone_checkout") { bound.push(String(args.p_session)); return { data: bound.length === 1 }; }
+    return { data: null };
+  });
+  const stripe = fakeBilling({ prices: { [SOLO_PRICE]: price({ id: SOLO_PRICE, unit_amount: 4900 }) }, checkoutUrl });
+  hooks.billing.mockReturnValue(stripe);
+  const outcomes = await Promise.all([submit(), submit()].map((p) => p.then(() => "returned", (e: Error) => e.message)));
+  expect(stripe.calls.createCheckoutSession).toHaveLength(1);
+  expect(stripe.calls.createCheckoutSession[0]).toMatchObject({ generation: 1 });
+  expect(outcomes.filter((o) => o === "redirect " + checkoutUrl)).toHaveLength(1);
+  expect(outcomes.filter((o) => String(o).includes("confirming-payment"))).toHaveLength(1);
+});
+
+it("a Stripe request is keyed by the claimed generation, never by a clock value two requests can share", async () => {
+  const src = (await import("node:fs")).readFileSync("lib/subscriptions/billing-client.ts", "utf8");
+  expect(src).toMatch(/hone-signup-" \+ params\.attemptId \+ "-" \+ \(params\.generation \?\? params\.expiresAt\)/);
+  const action = (await import("node:fs")).readFileSync("app/(auth)/no-access/checkout-action.ts", "utf8");
+  // the generation is claimed before the session is created
+  expect(action.indexOf("claim_hone_checkout_generation")).toBeGreaterThan(-1);
+  expect(action.indexOf("claim_hone_checkout_generation")).toBeLessThan(action.indexOf("createSubscriptionCheckout({"));
 });

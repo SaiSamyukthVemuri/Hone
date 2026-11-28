@@ -79,17 +79,29 @@ export async function beginStudioCheckout(form: FormData) {
         // expires in under 30 minutes, and a retry a minute after the claim would otherwise fall below it.
         const requestSeconds = Math.floor(Date.now() / 1000);
         const reusable = prior?.status === "open" && prior.url && (prior.expires_at ?? 0) > requestSeconds + 60;
+        // The generation that keys the Stripe request is claimed in the database FIRST, atomically: a second
+        // overlapping submission gets none and waits on the first (confirming) instead of creating another session.
+        let generation: number | null = null;
+        if (!reusable) {
+          const claimed = await admin.rpc("claim_hone_checkout_generation", { p_attempt: a.id, p_user: user.id });
+          if (claimed.error) throw new Error("generation_failed");
+          generation = typeof claimed.data === "number" ? claimed.data : null;
+        }
         const result = reusable
           ? { ok: true as const, sessionId: prior!.id, url: prior!.url as string }
-          : await createSubscriptionCheckout({
-              client,
-              plan,
-              env: process.env,
-              origin: getRequiredAppOrigin(),
-              user: { id: user.id, email: a.email },
-              attemptId: a.id,
-              nowSeconds: requestSeconds,
-            });
+          : generation === null
+            ? { ok: false as const, reason: "in_flight" }
+            : await createSubscriptionCheckout({
+                client,
+                plan,
+                env: process.env,
+                origin: getRequiredAppOrigin(),
+                user: { id: user.id, email: a.email },
+                attemptId: a.id,
+                generation,
+                nowSeconds: requestSeconds,
+              });
+        if (!result.ok && generation === null && !reusable) destination = "/no-access?reason=confirming-payment";
         if (result.ok) {
           const bound = await admin.rpc("bind_hone_checkout", {
             p_attempt: a.id,

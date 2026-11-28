@@ -82,6 +82,8 @@ export interface CheckoutRequest {
   /** Unix seconds. Injected so tests are deterministic. */
   nowSeconds?: number;
   attemptId?: string;
+  /** The generation the database claimed for this submission; it keys the Stripe request. */
+  generation?: number;
   restart?: { id: string; customer: string };
 }
 
@@ -176,6 +178,7 @@ export async function createSubscriptionCheckout(
       ...(req.restart ? { customer: req.restart.customer } : {}),
       metadata,
       ...(req.attemptId ? { attemptId: req.restart?.id ?? req.attemptId } : {}),
+      ...(req.generation !== undefined ? { generation: req.generation } : {}),
       successUrl: origin + (req.restart ? "/settings/subscription?notice=restarting" : "/no-access?reason=confirming-payment"),
       cancelUrl: origin + (req.restart ? "/settings/subscription" : "/no-access?plan=" + planKey),
       expiresAt: now + CHECKOUT_SESSION_TTL_SECONDS,

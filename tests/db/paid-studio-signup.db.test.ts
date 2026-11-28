@@ -164,6 +164,31 @@ describe("sandbox paid signup", () => {
     },
   );
 
+  it("hands the checkout generation to exactly one of several overlapping claims, and none once a session is bound", async () => {
+    const user = randomUUID();
+    await adminQuery("insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())", [user, user + "@example.test"]);
+    const attempt = (await adminQuery("select public.claim_hone_signup($1,'studio','Test studio','Test owner') as a", [user])).rows[0].a;
+    // Only the service worker may call it: revoked by name from public, anon, authenticated and service_role, then granted to service_role alone.
+    const priv = (await adminQuery(
+      "select r, has_function_privilege(r, 'public.claim_hone_checkout_generation(uuid,uuid)', 'execute') as ok from unnest(array['anon','authenticated','service_role']) r",
+    )).rows as { r: string; ok: boolean }[];
+    expect(Object.fromEntries(priv.map((x) => [x.r, x.ok]))).toEqual({ anon: false, authenticated: false, service_role: true });
+    expect((await adminQuery("select has_function_privilege('public','public.claim_hone_checkout_generation(uuid,uuid)','execute') as ok")).rows[0].ok).toBe(false);
+    const claim = async () => (await adminQuery("select public.claim_hone_checkout_generation($1,$2) as g", [attempt.id, user])).rows[0].g as number | null;
+    const got = await Promise.all([claim(), claim(), claim(), claim()]);
+    expect(got.filter((g) => g !== null)).toEqual([1]);
+    // A stranger, or a claim while the first is live, gets nothing.
+    expect((await adminQuery("select public.claim_hone_checkout_generation($1,$2) as g", [attempt.id, randomUUID()])).rows[0].g).toBeNull();
+    expect(await claim()).toBeNull();
+    // A crashed claim lapses: after the lease the next one gets generation 2, never a repeat of 1.
+    await adminQuery("update public.hone_signup_attempts set checkout_claimed_at = now() - interval '3 minutes' where id=$1", [attempt.id]);
+    expect(await claim()).toBe(2);
+    // Once a session is bound there is nothing left to claim.
+    await adminQuery("select public.bind_hone_checkout($1,$2,$3,'https://checkout.example.test/x')", [attempt.id, user, "cs_test_" + randomUUID()]);
+    await adminQuery("update public.hone_signup_attempts set checkout_claimed_at = now() - interval '3 minutes' where id=$1", [attempt.id]);
+    expect(await claim()).toBeNull();
+  });
+
   it("never provisions a second studio or owner for a second COMPLETED Checkout of the same attempt", async () => {
     const f = await fixture("studio");
     expect(await f.receive("evt_" + randomUUID())).toBe(200);
