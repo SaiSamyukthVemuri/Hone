@@ -71,7 +71,7 @@ type Action = (formData: FormData) => Promise<RecordActionResult>;
 // three brands the studio buys, plus a free-text "Other". The DB column stays
 // free text (no migration), so existing/legacy values are preserved: on edit,
 // a stored value that isn't one of these preselects "Other" with the value.
-export const MANUFACTURER_OPTIONS = ["Protec", "Ballet", "Sterex"] as const;
+export const MANUFACTURER_OPTIONS = ["Protec", "Ballet", "Sterex", "Velona"] as const;
 const OTHER_MANUFACTURER = "__other__";
 
 const INPUT_CLS =
@@ -294,7 +294,7 @@ function OperatorPicker({
   );
 }
 
-// PR #316: manufacturer dropdown (Protec / Ballet / Sterex + Other). Fully
+// PR #316: manufacturer dropdown with a free-text Other option. Fully
 // controlled so it works with copy-last (a new key/defaultValue prefills it) and
 // preserves free-text/legacy values on edit. Submits exactly ONE
 // `manufacturer_name` value via a hidden input: the selected brand, or the typed
