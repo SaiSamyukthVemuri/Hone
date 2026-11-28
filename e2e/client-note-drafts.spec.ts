@@ -1,8 +1,8 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 
 import { E2E_NOTE_DRAFTS_STUDIO_ID } from "./helpers/local-env";
-import { seedE2eStudio, sql, type E2eSeed } from "./helpers/seed";
-import { loginAsOwner } from "./helpers/flows";
+import { seedE2eStudio, seedE2eMember, sql, type E2eSeed } from "./helpers/seed";
+import { loginAsOwner, loginByMagicLink } from "./helpers/flows";
 
 // HON-130: autosaved note drafts, in a real browser. Autosave is OFF except for the ONE synthetic studio this spec seeds
 // (E2E_NOTE_DRAFTS_STUDIO_ID, enabled in the app server's env AND in the database allow-list below). Synthetic data only.
@@ -325,4 +325,92 @@ test("P2: Keep as new on a revision whose note was revised elsewhere moves the t
   await expect(c.getByText(/Draft saved \d\d:\d\d/)).toBeVisible({ timeout: T });
   const rows = await sql<{ target: string }>(`select target from public.client_note_drafts where client_id = $1 and kind = 'consultation' and fields->>'body' = $2`, [clientId, `${text} more`]);
   expect(rows.map((r) => r.target)).toEqual(["new"]);
+});
+
+// ---- Privacy condition 2: identity changes while a draft is unsent ----
+async function softSignOut(page: Page) {
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.waitForURL(/\/login/, { timeout: T });
+}
+
+async function freshClient(): Promise<string> {
+  const tag = Math.random().toString(36).slice(2, 8);
+  const r = await sql<{ id: string }>(`insert into public.clients (id, studio_id, name, email) values (gen_random_uuid(), $1, $2, $3) returning id`, [seed.studioId, `Synthetic Identity ${tag}`, `identity-${tag}@harness.local`]);
+  return r[0].id;
+}
+
+async function typeUnsentWhileSavesFail(page: Page, hold: { failing: boolean; attempts: number }, clientId: string) {
+  await page.route("**/clients/**", (route) => {
+    if (route.request().method() === "POST" && isSave(route)) {
+      hold.attempts += 1;
+      if (hold.failing) return route.abort();
+    }
+    return route.continue();
+  });
+  await page.goto(treatment(clientId));
+  const restoredBanner = card(page, "Consultation notes").getByText(/Draft restored/);
+  if (await restoredBanner.first().isVisible().catch(() => false)) {
+    await card(page, "Consultation notes").getByRole("button", { name: "Discard draft" }).click();
+    await expect(restoredBanner).toHaveCount(0, { timeout: T });
+  }
+  const box = card(page, "Consultation notes").locator("textarea[name=body]");
+  if (!(await box.isVisible().catch(() => false))) await openNoteForm(page, "Consultation notes");
+  await box.fill("PRACTITIONER A UNSENT CLINICAL TEXT");
+  await expect(page.getByText("Couldn't save the draft. Your text is still here.").first()).toBeVisible({ timeout: T });
+}
+
+test("sign-out with an unsent draft: no background retry fires after the soft sign-out, and the next sign-in finds none of A's text", async ({ page }) => {
+  test.setTimeout(240_000);
+  const member = await seedE2eMember(seed);
+  const clientId = await freshClient();
+  await login(page);
+  const hold = { failing: true, attempts: 0 };
+  await typeUnsentWhileSavesFail(page, hold, clientId);
+  const before = hold.attempts;
+  await softSignOut(page); // a soft navigation to /login: the page's JS (and any saver) is still alive unless the shell tears it down
+  const atSignOut = hold.attempts;
+  hold.failing = false; // if a retry were still alive it would now SUCCEED, under whatever session the cookie holds
+  await page.waitForTimeout(9_000); // longer than the 2 s and 4 s retry backoffs
+  expect(hold.attempts, "no draft save was attempted after sign-out").toBe(atSignOut);
+  expect(before).toBeGreaterThan(0);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+  // The second practitioner signs in on the same tab and opens the same client: no earlier text, no restored banner.
+  await loginByMagicLink(page, member.email);
+  await page.goto(treatment(clientId));
+  const b = await openNoteForm(page, "Consultation notes");
+  await expect(b).toHaveValue("");
+  await expect(page.getByText(/Draft restored/)).toHaveCount(0);
+  const stored = await sql<{ n: string }>(`select count(*)::text as n from public.client_note_drafts where client_id = $1 and fields is not null`, [clientId]);
+  expect(stored[0].n).toBe("0");
+});
+
+test("second tab signs A out and B in while tab 1 still holds A's unsent text: tab 1's retry stores nothing", async ({ browser }) => {
+  test.setTimeout(240_000);
+  const member = await seedE2eMember(seed);
+  const clientId = await freshClient();
+  const context: BrowserContext = await browser.newContext();
+  const tab1 = await context.newPage();
+  await loginAsOwner(tab1, seed);
+  const hold = { failing: true, attempts: 0 };
+  await typeUnsentWhileSavesFail(tab1, hold, clientId);
+  // Tab 2 shares the cookies: it signs A out and signs B in.
+  const tab2 = await context.newPage();
+  await tab2.goto(treatment(clientId));
+  await softSignOut(tab2);
+  await loginByMagicLink(tab2, member.email);
+  await tab2.goto(treatment(clientId));
+  const b = await openNoteForm(tab2, "Consultation notes");
+  await expect(b).toHaveValue("");
+  await expect(tab2.getByText(/Draft restored/)).toHaveCount(0);
+  // Tab 1's network "recovers": its pending retry now reaches the server, carrying A's scope under B's cookie.
+  const attemptsBefore = hold.attempts;
+  hold.failing = false;
+  await tab1.getByRole("button", { name: "Retry" }).first().click();
+  await expect.poll(() => hold.attempts, { timeout: T }).toBeGreaterThan(attemptsBefore);
+  await tab1.waitForTimeout(3_000);
+  const stored = await sql<{ n: string }>(`select count(*)::text as n from public.client_note_drafts where client_id = $1 and fields is not null`, [clientId]);
+  expect(stored[0].n, "A's text was stored under no one").toBe("0");
+  await expect(tab1.getByText(/Draft saved \d\d:\d\d/)).toHaveCount(0); // tab 1 never claims it was saved
+  await context.close();
 });
