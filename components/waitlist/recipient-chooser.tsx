@@ -40,7 +40,9 @@ export function RecipientChooser({
   const pageIds = view.items.map((c) => c.entryId);
   const matching = filtered.length;
   const selectedMatching = selectedAmong(filtered, state.selected);
-  const btn = buttonClasses({ variant: "secondary" });
+  // The shared secondary button's hover and pressed fills also paint on a DISABLED button (its disabled style only dims it), and Previous / Next are disabled at the ends:
+  // a disabled control must not react, so the resting fill is restored for them.
+  const btn = buttonClasses({ variant: "secondary", className: "disabled:hover:bg-surface disabled:active:bg-surface" });
   return (
     <fieldset className="flex flex-col gap-2 text-sm" data-testid="recipient-chooser">
       <legend className="font-medium">Choose who to invite</legend>
