@@ -157,7 +157,9 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
 // -- the route audit, proved from the specs' own URLs -----------------------------------------------------------------------------------
 describe("VERIFIED_ROUTES: every spec that visits an audited route is in a group its path rule selects", () => {
   const specFiles = readdirSync(ROOT, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && /^e2e(-[\w]+)?$/.test(d.name))
+    // e2e-payment specs run in the payment lane, selected by the `payment` path rule, never through BROWSER_GROUPS; a payment spec that
+    // also opens an audited screen (split-money-three-screens.spec.ts drives /financials/analytics) cannot, and need not, sit in a group.
+    .filter((d) => d.isDirectory() && /^e2e(-[\w]+)?$/.test(d.name) && d.name !== "e2e-payment")
     .flatMap((d) => readdirSync(path.join(ROOT, d.name)).filter((f) => f.endsWith(".spec.ts")).map((f) => ({ f, text: readFileSync(path.join(ROOT, d.name, f), "utf8") })));
   const groupsOfSpec = (spec: string) => Object.entries(BROWSER_GROUPS as Record<string, { specs: string[] }>).filter(([, d]) => d.specs.includes(spec)).map(([g]) => g);
   const audit = (urlRe: RegExp, allowed: string[]) => {
