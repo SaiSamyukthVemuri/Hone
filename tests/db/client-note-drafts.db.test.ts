@@ -577,7 +577,7 @@ describe("draft identity (HON-130 design): a generation never repeats", () => {
     await wipe();
     const g = randomUUID();
     await save(a.userId, a, "consultation", "new", { body: "mine" }, 0, randomUUID(), g);
-    expect(await discard(aColleague.userId, a, "consultation", "new", g)).toBe(false);
+    expect(await discard(aColleague.userId, a, "consultation", "new", g)).toBe(true); // r4: the colleague has no draft at this key, so there is nothing of theirs to keep
     expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toEqual({ body: "mine" });
   });
 
@@ -849,10 +849,10 @@ describe("r4 (Codex round 4): the server remembers every ended generation of a k
   it("budget keeps the same memory (no double-save refusal): a stale autosave of an ended budget generation cannot revive", async () => {
     await wipe();
     const [g, h] = [randomUUID(), randomUUID()];
-    await save(a.userId, a, "budget", "current", { budget_level: "low" }, 0, randomUUID(), g);
-    await asUser(a.userId, async (q) => q(`select public.upsert_client_budget_context($1, 'low', 'n', $2)`, [a.clientId, g]));
-    await save(a.userId, a, "budget", "current", { budget_level: "high" }, 0, randomUUID(), h);
-    await asUser(a.userId, async (q) => q(`select public.upsert_client_budget_context($1, 'high', 'n', $2)`, [a.clientId, h]));
+    await save(a.userId, a, "budget", "current", { budget_level: "somewhat_limited" }, 0, randomUUID(), g);
+    await asUser(a.userId, async (q) => q(`select public.upsert_client_budget_context($1, 'somewhat_limited', 'n', $2)`, [a.clientId, g]));
+    await save(a.userId, a, "budget", "current", { budget_level: "severely_limited" }, 0, randomUUID(), h);
+    await asUser(a.userId, async (q) => q(`select public.upsert_client_budget_context($1, 'severely_limited', 'n', $2)`, [a.clientId, h]));
     const late = await save(a.userId, a, "budget", "current", { budget_level: "late" }, 0, randomUUID(), g);
     expect(late.status).toBe("cleared");
     const row = await draftRow(a, a.practitionerId, "budget", "current");

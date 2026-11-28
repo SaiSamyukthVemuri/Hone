@@ -3,7 +3,7 @@
   "migrations": {
     "count": 294,
     "last": "0399_client_note_drafts.sql",
-    "sha256": "ba487ddb4b4498e5386b33bb6a590d2fe57156916746df6b1134312559309d35"
+    "sha256": "e80a796c4015deb5a7489d485096df289181ad3dd2a2cde7733dd218e026f278"
   },
   "public": {
     "tables": [
@@ -264,6 +264,7 @@
       "client_legal_identities_guard",
       "client_legal_identities_revision",
       "client_legal_name_access_audit_immutable",
+      "client_note_draft_remember_ended",
       "client_note_draft_retention",
       "client_note_drafts_cap",
       "client_note_drafts_clear_on_budget",

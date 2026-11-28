@@ -401,6 +401,7 @@ describe("0179 — catalog shape", () => {
     for (const t of cascading) {
       expect([
         "calendar_connections",
+        "client_note_drafts", // HON-130: transient autosaved text, author-private, swept; never the record
         "google_oauth_states",
         "service_practitioners",
         "studio_availability_default",

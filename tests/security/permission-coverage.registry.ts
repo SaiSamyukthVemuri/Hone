@@ -88,7 +88,6 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   "app/(app)/clients/[id]/note-draft-actions.ts": {
     saveNoteDraftAction: "staff",
     discardNoteDraftAction: "staff",
-    loadNoteDrafts: "staff",
     peekNoteDraftAction: "staff",
   },
   "app/(app)/clients/[id]/clinical-notes-actions.ts": {

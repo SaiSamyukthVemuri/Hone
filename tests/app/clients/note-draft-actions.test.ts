@@ -13,7 +13,8 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc, from
 vi.mock("@/lib/supabase/queries", () => ({ getCurrentPractitionerWithStudio: async () => ({ studio: { id: S }, practitioner: { id: "p1" } }) }));
 vi.mock("@/lib/logging/safe-log", () => ({ safeLog: { error: (m: string) => logs.push(m), info: (m: string) => logs.push(m) } }));
 
-import { discardNoteDraftAction, loadNoteDrafts, saveNoteDraftAction } from "@/app/(app)/clients/[id]/note-draft-actions";
+import { discardNoteDraftAction, saveNoteDraftAction } from "@/app/(app)/clients/[id]/note-draft-actions";
+import { loadNoteDrafts } from "@/lib/note-drafts/load-drafts";
 
 const input = { key: { clientId: C, kind: "consultation" as const, target: "new" }, fields: { body: "SECRET CLINICAL TEXT" }, expectedRevision: 0, writer: W, scope: `p1:${S}`, generation: G };
 
@@ -29,7 +30,7 @@ describe("switch OFF (the default in every environment)", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
   it("load returns nothing and calls nothing", async () => {
-    expect(await loadNoteDrafts(C)).toEqual([]);
+    expect(await loadNoteDrafts(C, S)).toEqual([]);
     expect(rpc).not.toHaveBeenCalled();
   });
   it("discard still reaches the database: an author can always delete their own draft", async () => {

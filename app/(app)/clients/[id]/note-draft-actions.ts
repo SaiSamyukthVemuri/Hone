@@ -105,31 +105,6 @@ export async function discardNoteDraftAction(key: NoteDraftKey, scope: string, g
   }
 }
 
-/** The caller's own live drafts for one client (RLS is author-only; a cleared or NULL row reads as no draft). */
-export async function loadNoteDrafts(clientId: string): Promise<StoredNoteDraft[]> {
-  if (!UUID.test(clientId)) return [];
-  try {
-    const { studio } = await getCurrentPractitionerWithStudio();
-    if (!noteDraftsEnabledFor(studio.id)) return [];
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("client_note_drafts")
-      .select("kind, target, fields, revision, updated_at, generation")
-      .eq("client_id", clientId);
-    if (error || !data) return [];
-    const out: StoredNoteDraft[] = [];
-    for (const r of data as Array<{ kind: NoteDraftKind; target: string; fields: unknown; revision: number; updated_at: string; generation: string | null }>) {
-      if (r.fields == null || !r.generation) continue; // NULL = cleared = no draft, no banner
-      const fields = sanitizeDraftFields(r.kind, r.fields);
-      if (!fields) continue;
-      out.push({ key: { clientId, kind: r.kind, target: r.target }, fields, revision: r.revision, savedAt: r.updated_at, generation: r.generation });
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
-
 /** The caller's own live draft of ONE key (author-only RLS), or none. `ok` false = the read failed, so the caller must not assume the key is free. */
 export async function peekNoteDraftAction(key: NoteDraftKey, scope: string): Promise<{ ok: boolean; draft: StoredNoteDraft | null }> {
   if (!validKey(key)) return { ok: false, draft: null };

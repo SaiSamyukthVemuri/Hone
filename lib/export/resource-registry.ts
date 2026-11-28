@@ -1050,6 +1050,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
   },
 
   // HON-130: transient autosaved note drafts. Author-private, never part of the clinical record, swept after retention.
+  client_note_draft_enabled_studios: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "The server-side allow-list that switches autosaved note drafts on for a studio. Operations configuration, not studio content: it holds studio ids and an enable time only, is writable by the service role alone, and is never shown to a studio.",
+  },
   client_note_drafts: {
     kind: "excluded",
     category: "derived",

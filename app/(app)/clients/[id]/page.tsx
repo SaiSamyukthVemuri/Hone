@@ -143,7 +143,8 @@ import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 import { noteDraftsEnabledFor } from "@/lib/note-drafts/enabled";
 import { draftScope } from "@/lib/note-drafts/scope";
-import { discardNoteDraftAction, loadNoteDrafts, peekNoteDraftAction, saveNoteDraftAction } from "./note-draft-actions";
+import { discardNoteDraftAction, peekNoteDraftAction, saveNoteDraftAction } from "./note-draft-actions";
+import { loadNoteDrafts } from "@/lib/note-drafts/load-drafts";
 import { ClinicalNotesSummary } from "@/components/clinical-notes-summary";
 import { updateClientBudgetContextAction } from "./budget-context-actions";
 import { getClientBudgetContext } from "@/lib/budget/queries";
@@ -472,7 +473,7 @@ export default async function ClientCheatSheetPage({
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
     // HON-130: this practitioner's own autosaved note drafts (author-only RLS; empty while the server-side switch is off). Treatment tab only.
     needsConsultationNotes
-      ? loadNoteDrafts(client.id)
+      ? loadNoteDrafts(client.id, studio.id)
       : Promise.resolve([] as Awaited<ReturnType<typeof loadNoteDrafts>>),
   ]);
 
