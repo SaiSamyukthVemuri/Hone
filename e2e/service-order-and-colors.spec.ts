@@ -6,6 +6,7 @@ import {
   getOwnerPractitionerId,
   seedServiceEligibility,
   getPublicBookingServiceOrder,
+  sql,
 } from "./helpers/seed";
 import { loginAsOwner } from "./helpers/flows";
 
@@ -47,6 +48,11 @@ test.describe("service reorder", () => {
       "Electrolysis 60",
       CONSULT,
     ]);
+    // These two peers are both shown in the new-client consultation picker.
+    await sql(
+      "update public.services set modality = 'consultation' where studio_id = $1 and id in ($2, $3)",
+      [seed.studioId, ids[CONSULT], ids["AAA First Alphabetically"]],
+    );
     // The public booking menu only offers services a practitioner is eligible
     // for, so make all four bookable — otherwise the parity step would compare
     // a one-item list and prove nothing.
@@ -135,6 +141,22 @@ test.describe("service reorder", () => {
       const settingsOrder = (await getStudioServiceOrder(seed.studioId)).map((r) => r.name);
       const bookingOrder = await getPublicBookingServiceOrder(seed.studioId);
       expect(bookingOrder).toEqual(settingsOrder);
+    });
+
+    await test.step("the saved order survives reload and is visible to a new client", async () => {
+      await page.reload();
+      await page.getByRole("button", { name: `Edit ${CONSULT}`, exact: true }).click();
+      const editor = page.getByRole("form", { name: `Edit ${CONSULT}`, exact: true });
+      await expect(editor.getByLabel("Service name")).toBeVisible();
+      await expect(editor.getByLabel("Position number")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Reorder services" })).toBeVisible();
+
+      await page.goto(`/book/${seed.slug}`);
+      await page.getByRole("button", { name: /new client/i }).click();
+      const options = page.getByRole("combobox", { name: /^service\b/i }).locator("option");
+      await expect(options).toHaveCount(3);
+      await expect(options.nth(0)).toHaveAttribute("value", consultId);
+      await expect(options.nth(1)).toHaveAttribute("value", ids["AAA First Alphabetically"]);
     });
   });
 

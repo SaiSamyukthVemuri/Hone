@@ -131,18 +131,6 @@ function ServiceForm({ service, calendarColorAvailable, timeFormat }: {
               </FieldLabel>
             </div>
           </details>
-          {service && (
-            <details className="group border-t border-line">
-              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm font-medium [&::-webkit-details-marker]:hidden">
-                <span aria-hidden className="size-2 -rotate-45 border-r border-b border-current group-open:rotate-45" />
-                Advanced
-              </summary>
-              <FieldLabel label="Position number" hint="Use Reorder in the service menu to move a service by one position.">
-                <input name="sort_order" type="number" min={0} max={100000} step={1} defaultValue={service.sort_order}
-                  className={fieldControlClass({ fullWidth: false, className: "w-28 tabular-nums" })} />
-              </FieldLabel>
-            </details>
-          )}
           {!service && <p className="text-sm text-fg-muted">Adding this service makes it available in your booking menu.</p>}
         </div>
       </div>

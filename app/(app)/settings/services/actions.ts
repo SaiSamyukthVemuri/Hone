@@ -58,14 +58,6 @@ function parseModality(value: FormDataEntryValue | null): string | null {
   return t;
 }
 
-function parseSortOrder(value: FormDataEntryValue | null): number | null {
-  const t = trimmed(value);
-  if (!t) return null;
-  const n = parseInt(t, 10);
-  if (!Number.isFinite(n) || n < 0 || n > 100000) return null;
-  return n;
-}
-
 // Position for a NEW service: the END of the studio's visible order.
 //
 // This was previously scoped PER MODALITY (`max(sort_order) + 10` within one
@@ -114,9 +106,7 @@ export async function createServiceAction(formData: FormData): Promise<void> {
   }
 
   const modality = parseModality(formData.get("modality"));
-  const explicitSort = parseSortOrder(formData.get("sort_order"));
-  const sort_order =
-    explicitSort != null ? explicitSort : await nextStudioSortOrder(studioId);
+  const sort_order = await nextStudioSortOrder(studioId);
 
   const supabase = await createClient();
   const base = {
@@ -154,10 +144,9 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
   }
 
   const modality = parseModality(formData.get("modality"));
-  const sort_order = parseSortOrder(formData.get("sort_order"));
 
   const supabase = await createClient();
-  const update: Record<string, unknown> = {
+  const update = {
     name,
     description: nullable(formData.get("description")),
     default_duration_minutes: duration,
@@ -166,7 +155,6 @@ export async function updateServiceAction(formData: FormData): Promise<void> {
     pre_care_instructions: nullable(formData.get("pre_care_instructions")),
     updated_at: new Date().toISOString(),
   };
-  if (sort_order != null) update.sort_order = sort_order;
   const calendar_color = parseCalendarColor(formData.get("calendar_color"));
 
   let { error } = await supabase
