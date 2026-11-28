@@ -367,6 +367,26 @@ it("switches tiers once and reserves the lower limits while Stripe confirms a do
   expect((await adminQuery("select status from public.pending_invitations where email=$1",[recipient])).rows[0].status).toBe("revoked");
 });
 
+it("reads receptionist capacity from the Front Desk grants: an operator grant adds to the plan and survives a move to Solo", async () => {
+  const t = await signup("studio");
+  expect(await usage(t)).toMatchObject({ plan: "studio", receptionist_limit: 1 });
+  await adminQuery("insert into public.platform_rollout_studios(rollout_key,studio_id) values ('front_desk',$1) on conflict do nothing", [t.studio]);
+  await adminQuery(
+    "insert into public.studio_front_desk_seats(studio_id,seats,source,reason,granted_by_admin) values ($1,2,'custom_agreed','agreed extra desk seats','operator@example.test')",
+    [t.studio],
+  );
+  expect(await usage(t)).toMatchObject({ plan: "studio", receptionist_limit: 3 });
+  // A pending move to Solo shows what remains once effective: the plan's own seat goes, the operator's grant stays.
+  const down = await requestChange(t, "solo");
+  expect(down.result).toBe("pending");
+  expect(await usage(t)).toMatchObject({ receptionist_limit: 2 });
+  expect(await settle(down.id)).toBe(true);
+  expect(await usage(t)).toMatchObject({ plan: "solo", receptionist_limit: 2 });
+  // A revoked or expired grant no longer counts.
+  await adminQuery("update public.studio_front_desk_seats set revoked_at=now(),revoked_by_admin='operator@example.test',revoke_reason='ended' where studio_id=$1 and source='custom_agreed'", [t.studio]);
+  expect(await usage(t)).toMatchObject({ plan: "solo", receptionist_limit: 0 });
+});
+
 it("locks only new bookings and new unscheduled sessions once cancellation takes effect, never on a pending cancel", async () => {
   const t = await signup("studio");
   const staff = await authUser(await invite(t, "practitioner"));

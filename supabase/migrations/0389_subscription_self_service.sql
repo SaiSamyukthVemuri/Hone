@@ -62,14 +62,21 @@ language sql stable security definer set search_path = '' as $$
     and p.user_id=auth.uid() and p.role='owner' and p.active);
 $$;
 
+-- Receptionist capacity is 0390's single truth: the sum of the studio's active Front Desk seat grants (the plan's included one AND any
+-- operator grant). A pending change to Solo is shown as it will be once effective: the plan-included grant is gone, a custom grant stays.
+-- plpgsql, so the 0390 function is resolved when it runs, not when this file is applied.
 create or replace function public.hone_team_seat_counts(p_studio uuid)
 returns table(plan text, practitioner_used int, practitioner_limit int, receptionist_used int, receptionist_limit int)
-language sql stable security definer set search_path = '' as $$
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  return query
   select a.plan,
     (select count(*) from public.practitioners p where p.studio_id=a.studio_id and p.active)::int + pending.clinical,
     case when a.plan='solo' or a.change_target='solo' then 1 when a.plan='studio' then 3 end,
     (select count(*) from public.studio_receptionists r where r.studio_id=a.studio_id and r.active)::int + pending.desk,
-    case when a.plan='solo' or a.change_target='solo' then 0 when a.plan='studio' then 1 end
+    greatest(public.front_desk_seat_limit(a.studio_id) - case when a.change_target='solo' then
+      coalesce((select sum(g.seats) from public.studio_front_desk_seats g where g.studio_id=a.studio_id and g.source='plan_included'
+        and g.revoked_at is null and (g.expires_at is null or g.expires_at > now())),0) else 0 end, 0)::int
   from public.hone_signup_attempts a
   cross join lateral (
     select count(*) filter (where i.role is distinct from 'receptionist')::int as clinical,
@@ -77,7 +84,7 @@ language sql stable security definer set search_path = '' as $$
     from public.pending_invitations i where i.studio_id=a.studio_id and i.status='pending'
   ) pending
   where a.state='paid' and a.studio_id=p_studio;
-$$;
+end $$;
 
 create or replace function public.apply_hone_billing_invoice(p_event text, p_attempt uuid, p_user uuid, p_plan text,
   p_customer text, p_subscription text, p_invoice text, p_kind text, p_event_at timestamptz)
