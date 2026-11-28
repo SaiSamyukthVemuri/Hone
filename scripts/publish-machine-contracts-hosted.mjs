@@ -14,9 +14,9 @@ import { homedir, tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { execFileSync } from "node:child_process";
 import { runHosted, makeHostedClient, makeFsLedger, sha256, Refusal } from "./lib/hosted-publish.mjs";
+import { resolveProductionBranch, remoteBranchExistsViaLsRemote } from "./lib/production-branch.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const PRODUCTION_BRANCH = "claude/build-hone-saas-hOex7";
 const args = process.argv.slice(2);
 const flag = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const publish = args.includes("--publish");
@@ -46,6 +46,13 @@ function buildPlan() {
 // Only the DECLARED git/fs/tty effects; every child process gets a scrubbed environment so the key can never be inherited.
 const scrubbed = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" };
 const git = (a) => execFileSync("git", a, { cwd: root, env: scrubbed, encoding: "utf8" }).trim();
+// `main` once the production branch is renamed, else the old name: the remote answers, so a stale local ref cannot. LAZY and memoised: a dry run (or no arguments) must make
+// no network call, so nothing asks the remote until the publish path actually needs the name (after the dry-run return in runHosted).
+let productionBranchMemo = null;
+const productionBranch = () => (productionBranchMemo ??= resolveProductionBranch({
+  override: null,
+  remoteBranchExists: (n) => remoteBranchExistsViaLsRemote((a) => execFileSync("git", a, { cwd: root, env: scrubbed, stdio: "ignore" }), n),
+}));
 const ledgerDir = join(homedir(), ".hone-publish-ledger");
 const receiptsDir = join(root, "docs/production/hosted-publication-receipts");
 function writeAtomic(dir, name, body) {
@@ -63,7 +70,7 @@ try {
     execArgv: process.execArgv,
     stdinTTY: Boolean(process.stdin.isTTY),
     stdoutTTY: Boolean(process.stdout.isTTY),
-    productionBranch: PRODUCTION_BRANCH,
+    get productionBranch() { return productionBranch(); },
     expectTokenSha256: flag("expect-token-sha256"),
     now: () => Date.now(),
     stdout: (s) => console.log(s),
@@ -85,8 +92,8 @@ try {
     },
     git: (a) => (a[0] === "status" ? git(["status", "--porcelain", "--untracked-files=all"]) : git(a)),
     isAncestorOfProduction: (head) => {
-      git(["fetch", "--quiet", "origin", PRODUCTION_BRANCH]);
-      try { git(["merge-base", "--is-ancestor", head, `origin/${PRODUCTION_BRANCH}`]); return true; } catch { return false; }
+      git(["fetch", "--quiet", "origin", productionBranch()]);
+      try { git(["merge-base", "--is-ancestor", head, `origin/${productionBranch()}`]); return true; } catch { return false; }
     },
     systemRef: () => readFileSync(join(root, "supabase/.temp/project-ref"), "utf8").trim(),
     declaredMigrationMax: () => JSON.parse(readFileSync(join(root, "docs/production/migration-state.json"), "utf8")).hosted_migration_max,

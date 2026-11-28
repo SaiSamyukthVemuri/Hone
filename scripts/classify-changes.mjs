@@ -24,6 +24,7 @@ import { readFileSync, appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DOCS, isDocsPath } from "./docs-paths.mjs";
 import { scanTestDependencies } from "./test-dependencies.mjs";
+import { dbHelperReach } from "./import-graph.mjs";
 
 /** Anything here genuinely affects every lane. Kept deliberately short. */
 const FULL_MATRIX = [
@@ -37,7 +38,8 @@ const FULL_MATRIX = [
   /^lib\/supabase\//,
   /^lib\/env\//,
   /^e2e\/helpers\//,
-  /^tests\/db\/helpers\//,
+  // tests/db/helpers/** is NOT here (CI-SELECT-02 R1): it forces the full matrix only when the whole-repo import graph shows something outside the
+  // DB suites, the dependency tests and the payment e2e fixtures can run it. See dbHelperReach in scripts/import-graph.mjs.
 ];
 
 // Docs and records that never change runtime behaviour: DOCS, imported from
@@ -77,7 +79,7 @@ const RULES = [
   { key: "google_calendar", patterns: [/google[-_]?calendar/i, /^lib\/google-calendar\//, /^e2e-google\//, /^playwright\.google\.config/, /^app\/api\/cron\/calendar/] },
   { key: "mobile", patterns: [/^e2e-mobile\//, /^playwright\.mobile\.config/, /mobile/i, /responsive/i] },
   // The dependency SCANNER is selection logic, like this file.
-  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/test-dependencies\.mjs$/, /^scripts\/docs-paths\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\//] },
+  { key: "ci_workflows", patterns: [/^\.github\/workflows\//, /^scripts\/classify-changes\.mjs$/, /^scripts\/test-dependencies\.mjs$/, /^scripts\/import-graph\.mjs$/, /^scripts\/browser-groups\.mjs$/, /^scripts\/docs-paths\.mjs$/, /^scripts\/verify-prepush\.mjs$/, /^tests\/ci\/(?!.*\.test\.ts$)/] },
   { key: "browser_core", patterns: [/^e2e\//, /^app\//, /^components\//, /^playwright\.config/] },
   { key: "application", patterns: [/^app\//, /^components\//, /^lib\//, /^hooks\//, /^types\//, /\.tsx?$/] },
 ];
@@ -358,6 +360,16 @@ export function classify(files, deps = dependenciesFor()) {
   // apply-record files are NEVER full-matrix triggers, which is why the
   // docs_only short-circuit above runs first.
   if (list.some((f) => match(f, FULL_MATRIX))) out.full_matrix_required = true;
+
+  // CI-SELECT-02 R1. A DB test helper: select exactly the lanes that can run it, or the full matrix when the import graph cannot prove that.
+  for (const f of list.filter((x) => x.startsWith("tests/db/helpers/"))) {
+    const reach = dbHelperReach(REPO_ROOT, f);
+    if (!reach.provable) out.full_matrix_required = true;
+    else {
+      out.database = true;
+      for (const lane of reach.lanes) out[lane] = true;
+    }
+  }
 
   // Changing the CI system itself warrants the full matrix for that PR.
   if (out.ci_workflows) out.full_matrix_required = true;
