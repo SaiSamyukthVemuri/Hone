@@ -329,8 +329,10 @@ test("P2: Keep as new on a revision whose note was revised elsewhere moves the t
 
 // ---- Privacy condition 2: identity changes while a draft is unsent ----
 async function softSignOut(page: Page) {
-  await page.getByRole("button", { name: "Open account menu" }).click();
-  await page.getByRole("button", { name: "Sign out" }).click();
+  // Desktop shell: "Open account menu"; narrow shell (iPad width): "Open navigation menu". Same Sign out control in both.
+  const trigger = page.getByRole("button", { name: /^Open (account|navigation) menu$/ }).first();
+  await trigger.click();
+  await page.getByRole("button", { name: "Sign out" }).first().click();
   await page.waitForURL(/\/login/, { timeout: T });
 }
 
@@ -345,7 +347,6 @@ async function typeUnsentWhileSavesFail(page: Page, hold: { failing: boolean; at
   page.on("request", (r) => {
     if (r.method() === "POST" && (r.postData() ?? "").includes("expectedRevision")) hold.attempts += 1;
   });
-  await page.route("**/clients/**", (route) => (hold.failing && route.request().method() === "POST" && isSave(route) ? route.abort() : route.continue()));
   await page.goto(treatment(clientId));
   const restoredBanner = card(page, "Consultation notes").getByText(/Draft restored/);
   if (await restoredBanner.first().isVisible().catch(() => false)) {
@@ -353,7 +354,13 @@ async function typeUnsentWhileSavesFail(page: Page, hold: { failing: boolean; at
     await expect(restoredBanner).toHaveCount(0, { timeout: T });
   }
   const box = card(page, "Consultation notes").locator("textarea[name=body]");
-  if (!(await box.isVisible().catch(() => false))) await openNoteForm(page, "Consultation notes");
+  // A tap before hydration is lost (WebKit): press "Add note" again until the form is really there.
+  await expect(async () => {
+    if (!(await box.isVisible())) await card(page, "Consultation notes").getByRole("button", { name: "Add note" }).click();
+    await expect(box).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
+  // Registered only now: intercepting every /clients/ URL while the page's own assets load breaks WebKit's first render.
+  await page.route("**/clients/**", (route) => (hold.failing && route.request().method() === "POST" && isSave(route) ? route.abort() : route.continue()));
   await box.fill("PRACTITIONER A UNSENT CLINICAL TEXT");
   await expect(page.getByText("Couldn't save the draft. Your text is still here.").first()).toBeVisible({ timeout: T });
 }
