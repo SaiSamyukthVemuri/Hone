@@ -2,7 +2,11 @@
 -- anything not yet saved as a note or budget record is lost. Switch autosave OFF (app env and the enabled-studios table) and roll the application back
 -- FIRST: with the objects gone, the draft actions and the nightly cron route return their closed error / 503. The saved records are untouched.
 -- Clinical rows are never touched: only triggers, functions, the two draft tables and one extra unique index are dropped.
--- Order: the two clear triggers on the clinical tables, then the functions, then the tables, then the extra unique index.
+-- ORDER OF A ROLLBACK: roll the APPLICATION back FIRST, then run this file. EMERGENCY ONLY.
+-- THE TWO SAVE WRAPPERS ARE DELIBERATELY LEFT IN PLACE: public.add_client_clinical_note and public.upsert_client_budget_context hold no data, run
+-- with the caller's own rights and work without the clear triggers (the setting they write is simply unused), so a database rollback while
+-- the new application is still live cannot stop note or budget saves. Re-applying 0399 replaces them (create or replace).
+-- Order here: the two clear triggers on the clinical tables, then the draft functions, then the tables, then the extra unique index.
 begin;
 
 set local lock_timeout = '5s';
@@ -14,9 +18,6 @@ drop function if exists public.client_note_drafts_clear_on_note();
 drop function if exists public.client_note_drafts_clear_on_budget();
 drop function if exists public.save_client_note_draft(uuid, uuid, text, text, jsonb, integer, uuid, uuid);
 drop function if exists public.discard_client_note_draft(uuid, uuid, text, text, uuid);
--- The two SAVE WRAPPERS are what the note and budget actions call: roll the APPLICATION back before this, or saves fail. They hold no data.
-drop function if exists public.add_client_clinical_note(uuid, text, text, text[], timestamptz, uuid, uuid);
-drop function if exists public.upsert_client_budget_context(uuid, text, text, uuid);
 drop function if exists public.sweep_client_note_drafts();
 
 drop table if exists public.client_note_drafts;

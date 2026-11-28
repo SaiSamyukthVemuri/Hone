@@ -687,4 +687,66 @@ describe("D3 and HN130/HN131: the Save wrapper and the double-save refusal", () 
       await adminQuery(`delete from public.client_budget_context where client_id = $1`, [a.clientId]);
     }
   });
+
+  it("r3 (Insurance P3): a Save naming G2 over a live row of G1 ends G2, so a RETRIED G2 Save after a lost response is refused; G1 is not the one ended", async () => {
+    await wipe();
+    const g1 = randomUUID();
+    const g2 = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "window started G1" }, 0, randomUUID(), g1);
+    const n0 = (await adminQuery(`select count(*)::int n from public.client_clinical_notes where client_id = $1`, [a.clientId])).rows[0].n;
+    await addNote(a.userId, a, "consultation", "saved naming G2", null, g2); // the response is then lost
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).ended_generation).toBe(g2); // the named generation, not the live row's G1
+    await expect(addNote(a.userId, a, "consultation", "retry of the same Save", null, g2)).rejects.toMatchObject({ code: "HN131" });
+    const n1 = (await adminQuery(`select count(*)::int n from public.client_clinical_notes where client_id = $1`, [a.clientId])).rows[0].n;
+    expect(n1 - n0).toBe(1);
+  });
+
+  it("r3: with NO generation named, the live row's own generation is still what ends", async () => {
+    await wipe();
+    const g1 = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "d" }, 0, randomUUID(), g1);
+    await addNote(a.userId, a, "consultation", "no generation", null, null);
+    expect((await draftRow(a, a.practitionerId, "consultation", "new")).ended_generation).toBe(g1);
+  });
+
+  it("r3 (Insurance P3): reviving a tombstone is a NEW live draft and counts against the 200-live-draft cap; a clinical Save at the cap still never fails", async () => {
+    await wipe();
+    const ids = (await adminQuery(
+      `insert into public.clients (id, studio_id, name, email) select gen_random_uuid(), $1, 'cap4 ' || g, 'cap4-' || g || '@harness.local' from generate_series(1, 200) g returning id`,
+      [a.studioId],
+    )).rows.map((r) => r.id as string);
+    try {
+      // A tombstone on the key we will try to revive, made the normal way (draft, then Save).
+      const g = randomUUID();
+      await save(a.userId, a, "consultation", "new", { body: "will be saved" }, 0, randomUUID(), g);
+      await addNote(a.userId, a, "consultation", "saved", null, g);
+      expect((await draftRow(a, a.practitionerId, "consultation", "new")).cleared_at).not.toBeNull();
+      // 200 LIVE drafts of this practitioner on other clients.
+      await adminQuery(
+        `insert into public.client_note_drafts (studio_id, client_id, practitioner_id, kind, target, fields, generation)
+         select $1, c, $2, 'consultation', 'new', '{"body":"x"}'::jsonb, gen_random_uuid() from unnest($3::uuid[]) c`,
+        [a.studioId, a.practitionerId, ids],
+      );
+      // The revival (expected 0, a new generation) is refused like any other new live draft, and the tombstone is untouched.
+      await expect(save(a.userId, a, "consultation", "new", { body: "revive at the cap" }, 0, randomUUID(), randomUUID())).rejects.toThrow();
+      expect((await draftRow(a, a.practitionerId, "consultation", "new")).cleared_at).not.toBeNull();
+      // Below the cap it revives.
+      await adminQuery(`delete from public.client_note_drafts where practitioner_id = $1 and client_id = $2`, [a.practitionerId, ids[0]]);
+      expect((await save(a.userId, a, "consultation", "new", { body: "revive under the cap" }, 0, randomUUID(), randomUUID())).status).toBe("ok");
+      // The revival made it exactly 200 live drafts: a clinical Save at the cap still succeeds and clears (Privacy's rule).
+      await addNote(a.userId, a, "consultation", "saved at the cap", null, null);
+    } finally {
+      await adminQuery(`delete from public.clients where id = any($1::uuid[])`, [ids]);
+    }
+  });
+
+  it("r3: the down file leaves BOTH save wrappers in place and says to roll the application back first (source contract)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const down = readFileSync(join(process.cwd(), "supabase/rollbacks/0399_client_note_drafts.down.sql"), "utf8");
+    expect(down).not.toMatch(/drop function[^;]*add_client_clinical_note/i);
+    expect(down).not.toMatch(/drop function[^;]*upsert_client_budget_context/i);
+    expect(down).toMatch(/roll the APPLICATION back FIRST/);
+    expect(down).toMatch(/DELIBERATELY LEFT IN PLACE/);
+  });
 });

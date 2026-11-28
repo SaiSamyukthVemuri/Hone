@@ -30,11 +30,15 @@
 -- only (author-only RLS). service_role holds no table privilege: its ONLY entry is
 -- sweep_client_note_drafts() (retention), which returns a count and never returns text.
 -- ONE TRANSACTION (Sam, 28 Nov 2026): saving the real note or budget row CLEARS the matching draft in the same transaction,
--- by an AFTER INSERT (notes) / AFTER INSERT OR UPDATE (budget) trigger. The application's add/revise/budget commands, their
--- INSERT/UPSERT, the existing triggers, attribution, the one-revision index and the verified read-back are byte-for-byte unchanged.
+-- by an AFTER INSERT (notes) / AFTER INSERT OR UPDATE (budget) trigger. The application now saves through two SECURITY INVOKER wrappers
+-- (add_client_clinical_note, upsert_client_budget_context) that run the SAME insert / upsert with the caller's own rights and hand the draft
+-- generation to the triggers in a transaction-local setting. The tables, their existing triggers, attribution, RLS, the one-revision index and
+-- the application's verified read-back are unchanged; the wrappers add no privilege.
 -- If the clear raises, the whole save rolls back and the person's text stays in the editor. "Clear" sets fields to NULL, bumps the
 -- revision and marks the row cleared, so no draft text survives even if the row does, and a late in-flight autosave cannot
--- resurrect it (its compare-and-set fails).
+-- resurrect it (its compare-and-set fails). A Save whose draft lifecycle already ended is refused with SQLSTATE HN131 (see the notes trigger).
+-- ROLLBACK ORDER: the down file leaves the two wrappers in place (they hold no data and work without the triggers), so a database rollback
+-- while the new application is live cannot stop note or budget saves. Roll the APPLICATION back first, then the down file; emergency only.
 -- ===========================================================================
 
 begin;
@@ -328,7 +332,15 @@ begin
         return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at, v_row.generation;
         return;
       end if;
-      -- A row exists. A tombstone of ANOTHER lifecycle is a genuinely new draft: revive it (revision continues, never repeats).
+      -- A row exists. A tombstone of ANOTHER lifecycle is a genuinely new draft: revive it (revision continues, never repeats). A revival is a
+      -- NEW live draft, so it counts against the 200 live-draft cap exactly as an insert does. (Only a draft write can hit this: a clinical
+      -- Save only ever turns a row into a tombstone, which is exempt, so a Save never fails on the cap.)
+      if exists (select 1 from public.client_note_drafts d
+                 where d.practitioner_id = v_practitioner and d.client_id = p_client_id and d.kind = p_kind and d.target = p_target
+                   and d.cleared_at is not null and d.ended_generation is distinct from p_generation)
+         and (select count(*) from public.client_note_drafts d where d.practitioner_id = v_practitioner and d.cleared_at is null) >= 200 then
+        raise exception 'too many drafts for this practitioner' using errcode = 'check_violation';
+      end if;
       update public.client_note_drafts d
          set fields = p_fields, revision = d.revision + 1, writer = p_writer, generation = p_generation,
              ended_generation = null, cleared_at = null
@@ -446,8 +458,9 @@ $$;
 -- SAME-TRANSACTION CLEAR (Sam: one transaction; Insurance C1/C2/C5; D1: ONLY the saving practitioner's own row, every kind).
 -- Keyed ONLY from NEW (never auth.uid()): the saved row's author, client, kind and revise target. SECURITY DEFINER with an EMPTY
 -- search_path and every object schema-qualified; EXECUTE revoked by name below. It clears at most one row, the author's own, by the unique key.
--- `ended_generation` is the live row's OWN generation; only when NO row exists is it taken from the transaction-local setting
--- `hone.draft_generation` (set by the save wrapper), parsed safely: absent or invalid gives NULL and never fails a clinical Save.
+-- `ended_generation` is the generation the Save NAMED (the transaction-local setting `hone.draft_generation`, set by the save wrapper), else the
+-- live row's OWN generation; so a retried Save of the generation that ended it is refused. Parsed safely: absent or invalid gives NULL and
+-- never fails a clinical Save.
 -- DOUBLE SAVE (D3): a Save whose generation already ended (another window saved the same draft first) is refused with the closed SQLSTATE
 -- 'HN131' and the whole insert rolls back, so one draft can never create two notes. The row is locked FOR UPDATE and re-read after any lock wait.
 -- It must never fail for data reasons otherwise: it changes no key column and no CHECK, cap or BEFORE UPDATE on drafts rejects a clear
@@ -486,7 +499,7 @@ begin
       end if;
       update public.client_note_drafts d
          set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null, generation = null,
-             ended_generation = case when v_row.cleared_at is null then v_row.generation else coalesce(v_row.ended_generation, v_set) end
+             ended_generation = case when v_row.cleared_at is null then coalesce(v_set, v_row.generation) else coalesce(v_row.ended_generation, v_set) end
        where d.id = v_row.id;
       exit;
     elsif v_create then
@@ -545,7 +558,7 @@ begin
     if found then
       update public.client_note_drafts d
          set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null, generation = null,
-             ended_generation = case when v_row.cleared_at is null then v_row.generation else coalesce(v_row.ended_generation, v_set) end
+             ended_generation = case when v_row.cleared_at is null then coalesce(v_set, v_row.generation) else coalesce(v_row.ended_generation, v_set) end
        where d.id = v_row.id;
       exit;
     elsif v_create then
