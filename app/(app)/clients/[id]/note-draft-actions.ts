@@ -78,7 +78,7 @@ export async function discardNoteDraftAction(key: NoteDraftKey): Promise<{ ok: b
   if (!validKey(key)) return { ok: false };
   try {
     const { studio } = await getCurrentPractitionerWithStudio();
-    if (!noteDraftsEnabledFor(studio.id)) return { ok: false };
+    // NOT behind the switch: an author can always delete their own draft, whether or not autosave is on for the studio.
     const supabase = await createClient();
     const { error } = await supabase.rpc("discard_client_note_draft", {
       p_studio_id: studio.id,

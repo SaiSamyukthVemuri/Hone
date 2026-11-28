@@ -3,7 +3,7 @@
   "migrations": {
     "count": 292,
     "last": "0399_client_note_drafts.sql",
-    "sha256": "049cc27e9cef0637f03e18b52c0f17d34c1740a7e579e3d7d702a83dad62ad88"
+    "sha256": "dba27b5c0b11953689abedbb277159f64fc71a0ded051a6d1cd44b496221024a"
   },
   "public": {
     "tables": [

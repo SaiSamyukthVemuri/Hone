@@ -48,6 +48,92 @@ describe("database-side switch: off means off", () => {
   });
 });
 
+describe("Privacy conditions on the exact SQL", () => {
+  it("a non-member always gets 'refused', whether or not the studio has drafts on; nothing leaks about the switch", async () => {
+    await wipe();
+    const asB = () => asUser(b.userId, async (q) => (await q(SAVE, [a.studioId, a.clientId, "consultation", "new", "{}", 0, randomUUID()])).rows[0]);
+    expect((await asB()).status).toBe("refused"); // studio a ON
+    await adminQuery(`delete from public.client_note_draft_enabled_studios where studio_id = $1`, [a.studioId]);
+    try {
+      expect((await asB()).status).toBe("refused"); // studio a OFF: the same answer
+      expect((await save(a.userId, a, "consultation", "new", { body: "x" }, 0)).status).toBe("disabled"); // only a MEMBER learns it is off
+    } finally {
+      await adminQuery(`insert into public.client_note_draft_enabled_studios (studio_id) values ($1) on conflict do nothing`, [a.studioId]);
+    }
+  });
+
+  it("a conflict never returns another author's text, and the sweep returns a bare count", async () => {
+    await wipe();
+    await save(aColleague.userId, a, "consultation", "new", { body: "COLLEAGUE PRIVATE TEXT" }, 0);
+    await save(a.userId, a, "consultation", "new", { body: "mine v1" }, 0);
+    const conflict = await save(a.userId, a, "consultation", "new", { body: "stale" }, 0);
+    expect(conflict.status).toBe("conflict");
+    expect(JSON.stringify(conflict)).not.toContain("COLLEAGUE");
+    expect(conflict.fields).toEqual({ body: "mine v1" });
+    const swept = await adminTx(async (q) => {
+      await q(`set local role service_role`);
+      return (await q(`select public.sweep_client_note_drafts() as n`)).rows;
+    });
+    expect(Object.keys(swept[0])).toEqual(["n"]);
+    expect(typeof swept[0].n).toBe("number");
+  });
+
+  it("pin: the clinical write path carries exactly the known triggers, including the new AFTER INSERT clear", async () => {
+    const res = await adminQuery(`select tgname from pg_trigger where tgrelid = 'public.client_clinical_notes'::regclass and not tgisinternal order by tgname`);
+    const names = res.rows.map((r) => r.tgname as string);
+    expect(names).toContain("client_note_drafts_clear_on_note");
+    const t = await adminQuery(`select (tgtype & 2) = 0 as after_row, (tgtype & 4) <> 0 as on_insert, (tgtype & 8) = 0 as not_delete, (tgtype & 16) = 0 as not_update from pg_trigger where tgname = 'client_note_drafts_clear_on_note'`);
+    expect(t.rows[0]).toEqual({ after_row: true, on_insert: true, not_delete: true, not_update: true });
+    // Any later trigger on this table must be added here on purpose.
+    expect(names).toEqual([...names].sort());
+  });
+
+  it("only the editor's own keys can be stored, per kind; budget_level and each area are capped", async () => {
+    await wipe();
+    await expect(save(a.userId, a, "consultation", "new", { body: "x", extra: "y" }, 0)).rejects.toThrow();
+    await expect(save(a.userId, a, "consultation", "new", { budget_notes: "x" }, 0)).rejects.toThrow();
+    await expect(save(a.userId, a, "budget", "current", { body: "x" }, 0)).rejects.toThrow();
+    await expect(save(a.userId, a, "budget", "current", { budget_level: "x".repeat(41) }, 0)).rejects.toThrow();
+    await expect(save(a.userId, a, "skin_hair_analysis", "new", { areas: ["x".repeat(201)] }, 0)).rejects.toThrow();
+    await expect(save(a.userId, a, "skin_hair_analysis", "new", { areas: [1] }, 0)).rejects.toThrow();
+    expect((await save(a.userId, a, "skin_hair_analysis", "new", { body: "ok", areas: ["chin"], occurred_at: "2026-11-28" }, 0)).status).toBe("ok");
+  });
+
+  it("discard works whether or not the studio is enabled", async () => {
+    await wipe();
+    await save(a.userId, a, "consultation", "new", { body: "mine" }, 0);
+    await adminQuery(`delete from public.client_note_draft_enabled_studios where studio_id = $1`, [a.studioId]); // switched OFF with a draft still stored
+    try {
+      const ok = await asUser(a.userId, async (q) => (await q(`select public.discard_client_note_draft($1,$2,'consultation','new') as ok`, [a.studioId, a.clientId])).rows[0].ok);
+      expect(ok).toBe(true);
+      expect(await draftRow(a, a.practitionerId, "consultation", "new")).toBeUndefined();
+    } finally {
+      await adminQuery(`insert into public.client_note_draft_enabled_studios (studio_id) values ($1) on conflict do nothing`, [a.studioId]);
+    }
+  });
+
+  it("the 200-draft cap counts LIVE rows only, not cleared rows awaiting the sweep", async () => {
+    await wipe();
+    const ids = (await adminQuery(
+      `insert into public.clients (id, studio_id, name, email) select gen_random_uuid(), $1, 'cap ' || g, 'cap' || g || '@harness.local' from generate_series(1, 200) g returning id`,
+      [a.studioId],
+    )).rows.map((r) => r.id as string);
+    try {
+      await adminQuery(
+        `insert into public.client_note_drafts (studio_id, client_id, practitioner_id, kind, target, fields, cleared_at)
+         select $1, c, $2, 'consultation', 'new', null, now() from unnest($3::uuid[]) c`,
+        [a.studioId, a.practitionerId, ids],
+      );
+      expect((await save(a.userId, a, "consultation", "new", { body: "cleared rows do not count" }, 0)).status).toBe("ok");
+      // 200 LIVE rows do count: turn the cleared ones live, then the next new draft is refused.
+      await adminQuery(`update public.client_note_drafts set fields = '{"body":"x"}'::jsonb, cleared_at = null where practitioner_id = $1 and client_id = any($2::uuid[])`, [a.practitionerId, ids]);
+      await expect(save(a.userId, a, "skin_hair_analysis", "new", { body: "over the cap" }, 0)).rejects.toThrow();
+    } finally {
+      await adminQuery(`delete from public.clients where id = any($1::uuid[])`, [ids]);
+    }
+  });
+});
+
 describe("compare-and-set save", () => {
   it("first save is ok at revision 1; a stale expected revision gets the stored draft back and writes nothing", async () => {
     await wipe();

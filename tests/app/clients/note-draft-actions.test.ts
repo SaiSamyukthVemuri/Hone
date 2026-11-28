@@ -26,10 +26,14 @@ describe("switch OFF (the default in every environment)", () => {
     expect(await saveNoteDraftAction(input)).toEqual({ status: "disabled" });
     expect(rpc).not.toHaveBeenCalled();
   });
-  it("discard and load do nothing", async () => {
-    expect(await discardNoteDraftAction(input.key)).toEqual({ ok: false });
+  it("load returns nothing and calls nothing", async () => {
     expect(await loadNoteDrafts(C)).toEqual([]);
     expect(rpc).not.toHaveBeenCalled();
+  });
+  it("discard still reaches the database: an author can always delete their own draft", async () => {
+    rpc.mockResolvedValue({ data: true, error: null });
+    expect(await discardNoteDraftAction(input.key)).toEqual({ ok: true });
+    expect(rpc).toHaveBeenCalledWith("discard_client_note_draft", expect.objectContaining({ p_studio_id: S, p_client_id: C }));
   });
   it("another studio on the list does not enable this one", async () => {
     process.env.HONE_NOTE_DRAFTS_STUDIO_IDS = "99999999-9999-4999-8999-999999999999";

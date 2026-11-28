@@ -109,6 +109,21 @@ create table if not exists public.client_note_drafts (
     and coalesce(length(fields->>'budget_notes'), 0) <= 20000
     and (jsonb_typeof(fields->'areas') is distinct from 'array' or jsonb_array_length(fields->'areas') <= 40)
   ),
+  -- Only the keys the editor itself sends: a note draft holds body/areas/occurred_at, a budget draft budget_level/budget_notes. Nothing else can be stored.
+  constraint client_note_drafts_field_keys_check check (
+    fields is null
+    or case when kind = 'budget'
+         then (fields - array['budget_level', 'budget_notes']) = '{}'::jsonb
+         else (fields - array['body', 'areas', 'occurred_at']) = '{}'::jsonb
+       end
+  ),
+  -- Value shapes behind those keys: budget_level at most 40 characters, every area at most 200 (the sanitiser's own caps).
+  constraint client_note_drafts_value_caps_check check (
+    coalesce(length(fields->>'budget_level'), 0) <= 40
+    and coalesce(length(fields->>'occurred_at'), 0) <= 40
+    and (jsonb_typeof(fields->'areas') is distinct from 'array'
+         or not exists (select 1 from jsonb_array_elements(fields->'areas') a where jsonb_typeof(a) <> 'string' or length(a #>> '{}') > 200))
+  ),
   constraint client_note_drafts_revision_check check (revision >= 1),
   constraint client_note_drafts_null_only_when_cleared_check check (fields is not null or cleared_at is not null),
   constraint client_note_drafts_owner_key unique (practitioner_id, client_id, kind, target)
@@ -116,6 +131,9 @@ create table if not exists public.client_note_drafts (
 
 create index if not exists client_note_drafts_studio_idx on public.client_note_drafts (studio_id);
 create index if not exists client_note_drafts_expiry_idx on public.client_note_drafts (expires_at);
+-- The sweep's two predicates (14 days from the last edit; cleared rows after a day) each get an index, so the nightly pass never scans the table.
+create index if not exists client_note_drafts_updated_idx on public.client_note_drafts (updated_at);
+create index if not exists client_note_drafts_cleared_idx on public.client_note_drafts (cleared_at) where cleared_at is not null;
 
 -- Studio comes from the client, never from the caller (dual-membership practitioners satisfy
 -- is_studio_member for two studios, so an RLS predicate alone cannot stop a wrong-studio row).
@@ -177,7 +195,7 @@ language plpgsql
 set search_path = pg_catalog, pg_temp
 as $$
 begin
-  if (select count(*) from public.client_note_drafts d where d.practitioner_id = new.practitioner_id) >= 200 then
+  if (select count(*) from public.client_note_drafts d where d.practitioner_id = new.practitioner_id and d.cleared_at is null) >= 200 then
     raise exception 'too many drafts for this practitioner' using errcode = 'check_violation';
   end if;
   return new;
@@ -241,11 +259,6 @@ begin
     return query select 'refused'::text, 0, '{}'::jsonb, null::timestamptz;
     return;
   end if;
-  -- The switch: nothing is stored for a studio that is not enabled. Closed code, no side effect.
-  if not exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = p_studio_id) then
-    return query select 'disabled'::text, 0, '{}'::jsonb, null::timestamptz;
-    return;
-  end if;
   select p.id into v_practitioner
   from public.practitioners p
   where p.studio_id = p_studio_id and p.user_id = (select auth.uid()) and p.active
@@ -253,6 +266,12 @@ begin
   if v_practitioner is null
      or not exists (select 1 from public.clients c where c.id = p_client_id and c.studio_id = p_studio_id) then
     return query select 'refused'::text, 0, '{}'::jsonb, null::timestamptz;
+    return;
+  end if;
+  -- The switch comes AFTER the membership check, so a non-member always gets 'refused' and never learns whether a studio has drafts on.
+  -- Nothing is stored for a studio that is not enabled. Closed code, no side effect.
+  if not exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = p_studio_id) then
+    return query select 'disabled'::text, 0, '{}'::jsonb, null::timestamptz;
     return;
   end if;
   if p_expected_revision is null or p_expected_revision < 0 then
