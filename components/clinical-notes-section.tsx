@@ -408,6 +408,15 @@ function NoteForm({
     restored?.fields.areas ? restored.fields.areas.join(", ") : revising ? revising.areas.join(", ") : "",
   );
   const [body, setBody] = useState(restored?.fields.body ?? (mode === "revise" && revising ? revising.body : ""));
+  // The textarea stays UNCONTROLLED (defaultValue, as before): a controlled textarea mirrors its text into the DOM, which made the typed text
+  // match page-level text queries before the save returned. A reset (discard, use theirs) remounts it with a new key.
+  const [bodyInit, setBodyInit] = useState(body);
+  const [bodyKey, setBodyKey] = useState(0);
+  function resetBody(next: string) {
+    setBody(next);
+    setBodyInit(next);
+    setBodyKey((k) => k + 1);
+  }
   const [occurredAt, setOccurredAt] = useState(restored?.fields.occurred_at ?? todayISODate());
   const draftKey: NoteDraftKey = { clientId, kind, target: targetFor(kind, mode === "revise" && revising ? revising.id : null) };
   const draft = useNoteDraft(draftKey, restored, draftActions ?? NO_DRAFT_ACTIONS);
@@ -415,7 +424,7 @@ function NoteForm({
   function applyTheirs(t: NoteDraftFields) {
     // Keep what the person typed visible until they dismiss it; adopt the other window's text.
     setYourVersion(body);
-    if (t.body !== undefined) setBody(t.body);
+    if (t.body !== undefined) resetBody(t.body);
     if (t.areas) setAreasText(t.areas.join(", "));
     if (t.occurred_at) setOccurredAt(t.occurred_at);
   }
@@ -466,7 +475,8 @@ function NoteForm({
         </label>
         <textarea
           name="body"
-          value={body}
+          key={bodyKey}
+          defaultValue={bodyInit}
           onChange={(e) => {
             setBody(e.target.value);
             touch({ body: e.target.value });
@@ -536,7 +546,7 @@ function NoteForm({
           onDiscard={async () => {
             await draft.discard();
             setRestoredAt(null);
-            setBody(mode === "revise" && revising ? revising.body : "");
+            resetBody(mode === "revise" && revising ? revising.body : "");
             setAreasText(revising ? revising.areas.join(", ") : "");
             setOccurredAt(todayISODate());
           }}

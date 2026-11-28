@@ -998,6 +998,8 @@ describe("0183: privileges", () => {
       "client_budget_context_server_timestamps",
       "client_budget_context_set_studio_id",
       "client_budget_context_set_updated_at",
+      // HON-130 (0399): clears the author's own budget draft in the same transaction as the save.
+      "client_note_drafts_clear_on_budget",
     ]);
   });
 

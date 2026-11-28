@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { adminQuery, adminTx, asRole, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
+import { adminQuery, adminTx, asUser, closePool, seedMember, seedStudio, type SeededStudio } from "./helpers/harness";
 
 // Migration 0399: author-private autosaved drafts (HON-130), proven on the real migrated database.
 let a: SeededStudio;
@@ -15,6 +15,8 @@ beforeAll(async () => {
   a = await seedStudio("nd-a");
   b = await seedStudio("nd-b");
   aColleague = await seedMember(a, "nd-a-colleague");
+  // Autosave is OFF by default; the suite turns it on for its two synthetic studios (the one DB-side switch).
+  await adminQuery(`insert into public.client_note_draft_enabled_studios (studio_id) values ($1), ($2) on conflict do nothing`, [a.studioId, b.studioId]);
 });
 afterAll(async () => {
   await closePool();
@@ -29,6 +31,22 @@ async function draftRow(s: SeededStudio, practitionerId: string, kind: string, t
 async function wipe() {
   await adminQuery(`delete from public.client_note_drafts where studio_id in ($1, $2)`, [a.studioId, b.studioId]);
 }
+
+describe("database-side switch: off means off", () => {
+  it("a direct RPC call by a signed-in user stores NOTHING while the studio is not enabled, with the closed code", async () => {
+    const off = await seedStudio("nd-off");
+    const r = await asUser(off.userId, async (q) => (await q(SAVE, [off.studioId, off.clientId, "consultation", "new", JSON.stringify({ body: "must not be stored" }), 0, randomUUID()])).rows[0]);
+    expect(r.status).toBe("disabled");
+    expect((await adminQuery(`select count(*)::int n from public.client_note_drafts where studio_id = $1`, [off.studioId])).rows[0].n).toBe(0);
+  });
+  it("the allow-list is empty by default, and authenticated cannot read or write it", async () => {
+    await expect(asUser(a.userId, (q) => q(`select * from public.client_note_draft_enabled_studios`))).rejects.toThrow();
+    await expect(asUser(a.userId, (q) => q(`insert into public.client_note_draft_enabled_studios (studio_id) values ($1)`, [randomUUID()]))).rejects.toThrow();
+    for (const p of ["select", "insert", "update", "delete"]) {
+      expect((await adminQuery(`select has_table_privilege('anon', 'public.client_note_draft_enabled_studios', $1) as h`, [p])).rows[0].h).toBe(false);
+    }
+  });
+});
 
 describe("compare-and-set save", () => {
   it("first save is ok at revision 1; a stale expected revision gets the stored draft back and writes nothing", async () => {
@@ -254,7 +272,11 @@ describe("retention and erasure", () => {
     } finally {
       await adminQuery(`alter table public.client_note_drafts enable trigger user`);
     }
-    const removed = await asRole("service_role", async (q) => (await q(`select public.sweep_client_note_drafts() as n`)).rows[0].n as number);
+    // asRole rolls back, so run as service_role in a committed transaction.
+    const removed = await adminTx(async (q) => {
+      await q(`set local role service_role`);
+      return (await q(`select public.sweep_client_note_drafts() as n`)).rows[0].n as number;
+    });
     expect(removed).toBeGreaterThanOrEqual(2);
     expect(await draftRow(a, a.practitionerId, "consultation", "new")).toBeDefined();
     expect(await draftRow(a, a.practitionerId, "skin_hair_analysis", "new")).toBeUndefined();

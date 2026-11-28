@@ -459,6 +459,7 @@ export const BROWSER_GROUPS = {
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
       "client-profile-save.spec.ts",
+      "client-note-drafts.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a

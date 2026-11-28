@@ -96,6 +96,14 @@ export function ClientBudgetCard({
   );
   // HON-130: budget draft. The saved record is written only by the Save button; the same transaction clears the draft.
   const [notes, setNotes] = useState(restored?.fields.budget_notes ?? initial.budgetNotes);
+  // Uncontrolled textarea (defaultValue, as before); a reset remounts it with a new key.
+  const [notesInit, setNotesInit] = useState(notes);
+  const [notesKey, setNotesKey] = useState(0);
+  function resetNotes(next: string) {
+    setNotes(next);
+    setNotesInit(next);
+    setNotesKey((k) => k + 1);
+  }
   const draftKey: NoteDraftKey = { clientId, kind: "budget", target: "current" };
   const draft = useNoteDraft(draftKey, restored, draftActions ?? { save: async () => ({ status: "error" }), discard: async () => ({ ok: false }) });
   const [restoredAt, setRestoredAt] = useState<string | null>(restored ? restored.savedAt : null);
@@ -200,7 +208,8 @@ export function ClientBudgetCard({
         <textarea
           id="client-budget-notes"
           name="budget_notes"
-          value={notes}
+          key={notesKey}
+          defaultValue={notesInit}
           onChange={(e) => {
             setNotes(e.target.value);
             touch({ notes: e.target.value });
@@ -222,14 +231,14 @@ export function ClientBudgetCard({
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) {
-              if (t.budget_notes !== undefined) setNotes(t.budget_notes);
+              if (t.budget_notes !== undefined) resetNotes(t.budget_notes);
               if (t.budget_level !== undefined) setLevel((t.budget_level || null) as ClientBudgetLevel | null);
             }
           }}
           onDiscard={async () => {
             await draft.discard();
             setRestoredAt(null);
-            setNotes(initial.budgetNotes);
+            resetNotes(initial.budgetNotes);
             setLevel(initial.budgetLevel);
           }}
         />

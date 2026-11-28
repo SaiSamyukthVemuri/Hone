@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DRAFT_COPY, draftRestoredLabel, draftSavedLabel } from "@/lib/note-drafts/types";
 import type { DraftState } from "@/lib/note-drafts/draft-saver";
 
@@ -28,6 +30,7 @@ export function NoteDraftStatus({
   onUseTheirs: () => void;
   onDiscard: () => void;
 }) {
+  const [confirmTheirs, setConfirmTheirs] = useState(false);
   let line: string | null = null;
   let tone = "text-neutral-500";
   if (state.phase === "saving") line = DRAFT_COPY.saving;
@@ -71,15 +74,20 @@ export function NoteDraftStatus({
           <button type="button" onClick={onKeepMine} className="min-h-[44px] px-2 font-medium underline">
             Keep mine
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm("Use the other window's draft? Your version stays in the box until you dismiss it.")) onUseTheirs();
-            }}
-            className="min-h-[44px] px-2 font-medium underline"
-          >
+          <button type="button" onClick={() => setConfirmTheirs(true)} className="min-h-[44px] px-2 font-medium underline">
             Use theirs
           </button>
+          <ConfirmDialog
+            open={confirmTheirs}
+            title="Use the other window's draft?"
+            description="Your version stays on screen until you dismiss it."
+            confirmLabel="Use theirs"
+            onConfirm={() => {
+              setConfirmTheirs(false);
+              onUseTheirs();
+            }}
+            onCancel={() => setConfirmTheirs(false)}
+          />
         </>
       )}
       {(restoredAt || state.phase === "saved") && (

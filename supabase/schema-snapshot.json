@@ -3,7 +3,7 @@
   "migrations": {
     "count": 292,
     "last": "0399_client_note_drafts.sql",
-    "sha256": "5bfefd83afdfbbd2a3ec941ded5073cb11071cbcb4e0b7ac5ff9e842b74b8b4e"
+    "sha256": "049cc27e9cef0637f03e18b52c0f17d34c1740a7e579e3d7d702a83dad62ad88"
   },
   "public": {
     "tables": [
@@ -34,6 +34,7 @@
       "client_intake_forms",
       "client_legal_identities",
       "client_legal_name_access_audit",
+      "client_note_draft_enabled_studios",
       "client_note_drafts",
       "client_payment_methods",
       "client_personal_notes",

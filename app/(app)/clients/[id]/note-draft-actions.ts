@@ -66,7 +66,7 @@ export async function saveNoteDraftAction(input: {
       const theirs = sanitizeDraftFields(input.key.kind, row.fields) ?? {};
       return { status: "conflict", revision: row.revision, fields: theirs, savedAt };
     }
-    if (row.status === "gone" || row.status === "cleared" || row.status === "refused") return { status: row.status };
+    if (row.status === "gone" || row.status === "cleared" || row.status === "refused" || row.status === "disabled") return { status: row.status };
     return { status: "error" };
   } catch {
     safeLog.error(JSON.stringify({ event: "note_draft_save_threw", timestamp: new Date().toISOString() }));

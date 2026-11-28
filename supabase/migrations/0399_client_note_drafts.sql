@@ -52,6 +52,15 @@ as $$ select interval '14 days' $$;
 create unique index if not exists client_clinical_notes_id_client_studio_kind_key
   on public.client_clinical_notes (id, client_id, studio_id, kind);
 
+-- DATABASE-SIDE SWITCH. Autosave is OFF unless a studio is listed here, so "off" means off even for a user calling the save
+-- command directly with their own token. Empty by default in every environment. Writable only by service_role (or the migration
+-- owner); authenticated holds NO privilege on it, and the save command (definer) is the only reader besides service_role.
+create table if not exists public.client_note_draft_enabled_studios (
+  studio_id uuid primary key references public.studios(id) on delete cascade,
+  enabled_at timestamptz not null default now()
+);
+alter table public.client_note_draft_enabled_studios enable row level security;
+
 create table if not exists public.client_note_drafts (
   id uuid primary key default gen_random_uuid(),
   studio_id uuid not null references public.studios(id) on delete cascade,
@@ -206,6 +215,7 @@ create policy "client_note_drafts_author_select"
 --   status conflict  stored revision differs from p_expected_revision; fields = the CALLER'S OWN stored draft
 --   status gone      p_expected_revision > 0 but no draft exists
 --   status cleared   the real record was saved (draft cleared) or the revised note already has its revision: stop writing
+--   status disabled  the studio is not in client_note_draft_enabled_studios (autosave is off); nothing is stored
 --   status refused   not an active practitioner of this studio, or the client is not in it
 -- The row looked up is always the caller's own (the key includes practitioner_id), so a conflict can never return
 -- another author's text.
@@ -229,6 +239,11 @@ declare
 begin
   if (select auth.uid()) is null then
     return query select 'refused'::text, 0, '{}'::jsonb, null::timestamptz;
+    return;
+  end if;
+  -- The switch: nothing is stored for a studio that is not enabled. Closed code, no side effect.
+  if not exists (select 1 from public.client_note_draft_enabled_studios e where e.studio_id = p_studio_id) then
+    return query select 'disabled'::text, 0, '{}'::jsonb, null::timestamptz;
     return;
   end if;
   select p.id into v_practitioner
@@ -387,7 +402,7 @@ begin
   update public.client_note_drafts d
      set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null
    where d.practitioner_id = new.practitioner_id and d.client_id = new.client_id and d.kind = new.kind
-     and d.target = pg_catalog.coalesce(new.supersedes_note_id::text, 'new') and d.cleared_at is null;
+     and d.target = coalesce(new.supersedes_note_id::text, 'new') and d.cleared_at is null;
   return new;
 exception when others then
   raise exception 'note draft could not be cleared' using errcode = 'HN130';
@@ -423,6 +438,8 @@ create trigger client_note_drafts_clear_on_budget
   for each row execute function public.client_note_drafts_clear_on_budget();
 
 -- PRIVILEGES: revoke everything by name (public, anon, authenticated, service_role), then grant exactly what is intended.
+revoke all on public.client_note_draft_enabled_studios from public, anon, authenticated, service_role;
+grant select, insert, delete on public.client_note_draft_enabled_studios to service_role;
 revoke all on public.client_note_drafts from public, anon, authenticated, service_role;
 grant select on public.client_note_drafts to authenticated;
 
