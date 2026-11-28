@@ -137,10 +137,13 @@ describe("a receptionist cannot pass the staff helper (what 'staff' rests on)", 
     // lib/admin/staff-sign-in.ts is the operator-only reader (HON-82): the /admin studio page sits under the isAdmin layout gate and this loader reads
     // display_name, active and user_id on the service-role client, to LIST staff and their last sign-in. It is never used to authorize anyone, so it does not
     // feed the staff helper and a receptionist still cannot pass it.
+    // The operator's Studios list also reads active receptionist memberships to
+    // aggregate account sign-ins. That read is behind the platform-admin gate.
     expect([...out].sort()).toEqual([
       "app/(app)/settings/team/actions.ts",
       "app/(app)/settings/team/page.tsx",
       "lib/admin/staff-sign-in.ts",
+      "lib/admin/studio-list-sign-in.ts",
       "lib/desk/entry.ts",
       "lib/desk/guard.ts",
       "lib/export/resource-registry.ts",

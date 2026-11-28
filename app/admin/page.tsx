@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Suspense } from "react";
+import { loadStudioListSignIns } from "@/lib/admin/studio-list-sign-in";
 import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
@@ -231,6 +233,7 @@ export default async function AdminIndexPage() {
   await requirePlatformAdmin();
   const { studios, overview, practitioners, waitlist, waitlistTotal, demoRequests } =
     await loadConsole();
+  const lastSignIns = loadStudioListSignIns(createAdminClient(), studios.map((studio) => studio.id));
   // PR B (smart payment status): platform payment summary: capability
   // COUNTS only, current-mode, via the shared presenter. No identifiers.
   const paymentSummary = await loadPlatformPaymentSummary(createAdminClient());
@@ -256,7 +259,7 @@ export default async function AdminIndexPage() {
       <AuditLogCard />
       <OverviewCards overview={overview} />
       <ReminderSchedulerCard status={reminderScheduler} />
-      <StudiosSection studios={studios} />
+      <StudiosSection studios={studios} lastSignIns={lastSignIns} />
       <QuickLinks />
 
       <hr className="border-neutral-200 dark:border-neutral-800" />
@@ -490,7 +493,25 @@ function InviteBadge({ status }: { status: OwnerInviteStatus }) {
   return <span className="text-neutral-600 dark:text-neutral-400">{text}</span>;
 }
 
-function StudiosSection({ studios }: { studios: StudioRow[] }) {
+type StudioListSignIns = ReturnType<typeof loadStudioListSignIns>;
+
+async function LastSignIn({ studioId, lastSignIns }: { studioId: string; lastSignIns: StudioListSignIns }) {
+  const signIn = (await lastSignIns).get(studioId);
+  switch (signIn?.state) {
+    case "signed_in":
+      return <time dateTime={signIn.at}><FormattedDateTime iso={signIn.at} /></time>;
+    case "no_active_accounts":
+      return "No active staff account";
+    case "never_signed_in":
+      return "Never signed in";
+    default:
+      return "Unknown";
+  }
+}
+
+function StudiosSection({ studios, lastSignIns }: { studios: StudioRow[]; lastSignIns: StudioListSignIns }) {
+  const signInHelp = "Most recent successful sign-in by an active staff account. A sign-in can apply to more than one studio.";
+
   return (
     <SectionShell title="Studios" subtitle={`${studios.length} total`}>
       {studios.length === 0 ? (
@@ -509,6 +530,10 @@ function StudiosSection({ studios }: { studios: StudioRow[] }) {
                 <Th>Owner invite</Th>
                 <Th>Setup</Th>
                 <Th>Created</Th>
+                <Th>
+                  <span title={signInHelp}>Last sign-in</span>
+                  <span className="sr-only">. {signInHelp}</span>
+                </Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
@@ -552,6 +577,11 @@ function StudiosSection({ studios }: { studios: StudioRow[] }) {
                   </Td>
                   <Td className="text-neutral-500">
                     <FormattedDateTime iso={s.created_at} />
+                  </Td>
+                  <Td className="text-neutral-500">
+                    <Suspense fallback={<span>Loading…</span>}>
+                      <LastSignIn studioId={s.id} lastSignIns={lastSignIns} />
+                    </Suspense>
                   </Td>
                 </tr>
               ))}
