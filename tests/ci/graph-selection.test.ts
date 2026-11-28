@@ -92,7 +92,7 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
     expect(derive(root, "lib/shared.ts")).toBeNull();
   });
   it("is null when an e2e helper, a script or a config file imports the file", () => {
-    for (const outside of ["e2e/helpers/x.ts", "e2e-payment/helpers/x.ts", "scripts/x.mjs", "playwright.config.ts"]) {
+    for (const outside of ["e2e/helpers/x.ts", "e2e-payment/helpers/x.ts", "scripts/x.mjs", "playwright.config.ts", "instrumentation-client.ts", "sentry.server.config.ts", "sentry.edge.config.ts"]) {
       const root = fixture({
         "lib/shared.ts": "export const a = 1;",
         "app/(app)/calendar/page.tsx": 'import "@/lib/shared";',
@@ -100,6 +100,18 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
       });
       expect(derive(root, "lib/shared.ts"), outside).toBeNull();
     }
+  });
+  it("the real root-level Sentry and instrumentation files make what they import unprovable (extended)", () => {
+    const graph = buildImportGraph(process.cwd());
+    for (const root of ["instrumentation-client.ts", "sentry.server.config.ts", "sentry.edge.config.ts"]) {
+      const imported = [...graph.outsideImporters.entries()].filter(([, who]) => who.has(root)).map(([f]) => f);
+      for (const f of imported) {
+        if (!/^(app|components|lib|hooks)\//.test(f)) continue;
+        expect(reachingEntries(graph, f).outside, `${f} (imported by ${root})`).toContain(root);
+        expect(sel(f).extended || !/\(import graph\)/.test(sel(f).reason), f).toBe(true);
+      }
+    }
+    expect([...graph.outsideImporters.keys()].some((f) => f.startsWith("lib/observability/"))).toBe(true);
   });
   it("an entry file is its own entry", () => {
     expect(isEntry("app/(app)/calendar/page.tsx")).toBe(true);

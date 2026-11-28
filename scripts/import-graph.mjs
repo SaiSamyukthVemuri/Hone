@@ -8,7 +8,8 @@
 // WHAT IT DOES NOT PROVE, and therefore refuses to answer (the caller falls back to the extended fail-safe):
 //   - a file nothing in app/, components/, lib/, hooks/ imports (it may be loaded by path, by a script, or by a test);
 //   - a file also imported by something outside those roots that can run in a browser lane: e2e/** and e2e-*/** (helpers and specs run
-//     the code directly), scripts/** and the root-level config files;
+//     the code directly), scripts/** and EVERY root-level source file other than middleware.ts and instrumentation.ts (instrumentation-client.ts,
+//     sentry.*.config.ts, playwright, vitest and next configs);
 //   - anything that is not TypeScript source (CSS, JSON, SQL, images): no import edge is read from them.
 //   Imports are read with a regular expression over `from "x"`, `import("x")` and `require("x")` literals, resolving "@/" and relative
 //   specifiers. A specifier built at run time is not seen; the repository has none under the scanned roots today and
@@ -81,7 +82,9 @@ export function buildImportGraph(root) {
   for (const d of readdirSync(root, { withFileTypes: true })) {
     if (d.isDirectory() && /^(e2e[\w-]*|scripts)$/.test(d.name)) walkAny(root, d.name, outsideFiles);
   }
-  for (const f of readdirSync(root)) if (/^(playwright|next\.config|vitest)/.test(f) && /\.(ts|mjs|js|cjs)$/.test(f)) outsideFiles.push(f);
+  // EVERY root-level source file that is not itself a graph entry: instrumentation-client.ts, sentry.*.config.ts, the playwright, vitest and
+  // next configs. Next or a tool loads them directly, so what they import can run without any route reaching it: fail safe to extended.
+  for (const f of readdirSync(root)) if (/\.(ts|tsx|mjs|js|cjs)$/.test(f) && !ROOT_FILES.includes(f)) outsideFiles.push(f);
   for (const f of outsideFiles) {
     let src;
     try { src = readFileSync(path.join(root, f), "utf8"); } catch { continue; }
