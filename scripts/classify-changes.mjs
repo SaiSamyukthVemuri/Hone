@@ -25,7 +25,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DOCS, isDocsPath } from "./docs-paths.mjs";
 import { scanTestDependencies } from "./test-dependencies.mjs";
-import { dbHelperReach, forwardClosure } from "./import-graph.mjs";
+import { dbHelperReach, forwardClosure, reverseClosure } from "./import-graph.mjs";
 
 /** Anything here genuinely affects every lane. Kept deliberately short. */
 const FULL_MATRIX = [
@@ -478,11 +478,23 @@ export function touchesStorageDeps(text, deps) {
   return res.some((re) => re.test(text));
 }
 
+// Built once per checkout: the graph walks read about 1,500 files, and classify() is called many times in one process (tests, replays).
+const closureCache = new Map();
+function surfaceClosures(root) {
+  if (closureCache.has(root)) return closureCache.get(root);
+  const out = {
+    storageClosure: forwardClosure(root, [STORAGE_DB_TEST]),
+    // Forward: what the seeds run (a helper they import). Reverse: what renders or calls them (checkout-button, dashboard-checkout-entry, the pages).
+    webkitClosure: new Set([...forwardClosure(root, WEBKIT_PAYMENT_SEEDS), ...reverseClosure(root, WEBKIT_PAYMENT_SEEDS)]),
+  };
+  closureCache.set(root, out);
+  return out;
+}
+
 function laneSurfaces(list, full, dbDeps) {
   if (full) return { storage_photos: true, webkit_surface: true };
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const storageClosure = forwardClosure(root, [STORAGE_DB_TEST]);
-  const webkitClosure = forwardClosure(root, WEBKIT_PAYMENT_SEEDS);
+  const { storageClosure, webkitClosure } = surfaceClosures(root);
   const isMigration = (f) => /^supabase\/migrations\/.*\.sql$/.test(f);
   const storage = list.some((f) => {
     if (STORAGE_PATHS.some((re) => re.test(f)) || storageClosure.has(f) || (dbDeps[f] ?? []).includes?.(STORAGE_DB_TEST)) return true;

@@ -208,3 +208,24 @@ export function forwardClosure(root, seeds) {
   }
   return seen;
 }
+
+/**
+ * Everything that can render or call `seeds`: the seeds plus their importers, transitively, over the application roots (the reverse walk).
+ * forwardClosure answers "what does this file run"; this answers "what runs this file". A change to a file in the reverse closure can alter what
+ * the seeds do in a page (a wrapper that opens the modal, a page that renders the wrapper), so a lane built around the seeds must start for it.
+ */
+export function reverseClosure(root, seeds) {
+  const g = buildImportGraph(root);
+  const seen = new Set(seeds);
+  const stack = [...seeds];
+  while (stack.length) {
+    const x = stack.pop();
+    for (const y of g.importedBy.get(x) ?? []) {
+      if (seen.has(y)) continue;
+      seen.add(y);
+      stack.push(y);
+    }
+    for (const o of g.outsideImporters.get(x) ?? []) seen.add(o); // e2e specs, scripts and config that import it directly
+  }
+  return seen;
+}

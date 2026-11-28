@@ -5,7 +5,7 @@ import path from "node:path";
 // @ts-expect-error - .mjs utilities ship without type declarations
 import { classify, STORAGE_DB_TEST, WEBKIT_PAYMENT_SEEDS, storagePolicyDeps, touchesStorageDeps } from "../../scripts/classify-changes.mjs";
 // @ts-expect-error - .mjs utilities ship without type declarations
-import { forwardClosure } from "../../scripts/import-graph.mjs";
+import { forwardClosure, reverseClosure } from "../../scripts/import-graph.mjs";
 
 // CI-SELECT-03. storage-photos used to start on ANY database change and webkit-hon-62 on ANY payment change. Each now starts only when a changed
 // file can alter what that lane executes, and fails safe (unreadable migration, shared infrastructure, the full matrix).
@@ -153,5 +153,25 @@ describe("storage_photos: grant hardening, policies and triggers on what the sto
     expect(d.fns).toEqual(["can_see_blob"]);
     expect(touchesStorageDeps("revoke execute on function public.can_see_blob(uuid) from anon;", d)).toBe(true);
     expect(touchesStorageDeps("create or replace function public.can_see_blob(x uuid) returns boolean as 'select true' language sql;", d)).toBe(true);
+  });
+});
+
+describe("webkit_surface: what renders the quick-checkout modal and action starts the lane (reverse importers)", () => {
+  it("components/dashboard-checkout-entry.tsx and components/checkout-button.tsx import the modal, and a change to either starts WebKit", () => {
+    for (const f of ["components/dashboard-checkout-entry.tsx", "components/checkout-button.tsx"]) {
+      const r = c(f);
+      expect(r.payment, f).toBe(true);
+      expect(r.webkit_surface, f).toBe(true);
+    }
+  });
+
+  it("the reverse closure of the seeds contains the wrappers and the pages that render them, and nothing is dropped from the forward side", () => {
+    const rev = reverseClosure(process.cwd(), WEBKIT_PAYMENT_SEEDS) as Set<string>;
+    for (const f of ["components/dashboard-checkout-entry.tsx", "components/checkout-button.tsx", "app/(app)/dashboard/page.tsx"]) expect(rev.has(f), f).toBe(true);
+    for (const f of WEBKIT_PAYMENT_SEEDS) expect(c(f).webkit_surface, f).toBe(true);
+  });
+
+  it("an unrelated component is not in it", () => {
+    expect(c("components/ui/button.tsx").webkit_surface).toBe(false);
   });
 });

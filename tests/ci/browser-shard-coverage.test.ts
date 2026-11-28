@@ -379,7 +379,7 @@ describe("the step that emits the matrix actually RUNS", () => {
     const prCases: Array<[string, string[], boolean | null, boolean | null]> = [
       ["docs-only", ["docs/README.md"], false, false],
       ["migration-only (no storage reference, database lane only)", ["supabase/migrations/0391_retire_direct_public_lead_inserts.sql"], false, false],
-      ["extended via unattributed app code", ["app/(app)/dashboard/page.tsx"], false, false],
+      ["extended via unattributed app code", ["app/(app)/clients/[id]/edit/page.tsx"], false, false],
       ["full matrix", ["vitest.config.ts"], true, true],
       ["a storage photo spec", ["e2e/fett-client-portrait.spec.ts"], true, null],
       ["a webkit spec", ["e2e/availability-hours-editor.spec.ts"], null, true],
