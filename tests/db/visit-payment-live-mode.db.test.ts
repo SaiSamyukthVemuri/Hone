@@ -302,3 +302,58 @@ describe("the app probe and the SQL definition agree on the same fixtures", () =
     }
   });
 });
+
+// Insurance P3 on #1827 (ACK final1681): a pre-bill card payment (no visit_bill_id) is counted on the statement when it is live money, but the SQL position only counts attempts that
+// carry the bill. They can only disagree if a LIVE, un-refunded card payment can exist beside a bill without carrying it. These tests pin why that cannot happen.
+describe("a pre-bill card payment and the bill: the statement and the position cannot disagree about live money", () => {
+  const ensureAt = (s: PaymentScenario, livemode: boolean) =>
+    asOwner(s, (q) => q(`select * from public.ensure_visit_bill($1,$2,null,null,$3)`, [s.studioId, s.appointmentId, livemode])).then((r) => r.rows[0]);
+  const bills = async (s: PaymentScenario) => Number((await adminQuery(`select count(*)::int as n from public.visit_bills where studio_id=$1`, [s.studioId])).rows[0].n);
+  const refund = (s: PaymentScenario, full: boolean) =>
+    adminQuery(`update public.payment_charge_attempts set refund_status='succeeded', refund_amount_cents = amount_cents - $2 where studio_id=$1`, [s.studioId, full ? 0 : 1000]);
+
+  it("on a LIVE deployment a pre-bill live card refuses a bill (card_payment_exists), and nothing is written", async () => {
+    const s = await visit();
+    await card(s, 22500, true);
+    expect((await ensureAt(s, true)).result).toBe("card_payment_exists");
+    expect(await bills(s)).toBe(0);
+  });
+
+  it("a PARTLY refunded live card still refuses (the refund does not cover the payment); only a FULLY refunded one lets a bill be made", async () => {
+    const s = await visit();
+    await card(s, 22500, true);
+    await refund(s, false);                                          // $10 short of the whole payment
+    expect((await ensureAt(s, true)).result).toBe("card_payment_exists");
+    expect(await bills(s)).toBe(0);
+    await adminQuery(`update public.payment_charge_attempts set refund_amount_cents = amount_cents where studio_id=$1`, [s.studioId]);
+    expect((await ensureAt(s, true)).result).toBe("created");
+    // The refunded payment is not part of the bill: the position never counts it, and the statement (fixed in #1827) does not add it back into the bill's coverage.
+    expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500 });
+  });
+
+  it("a pre-bill TEST card on a LIVE deployment does not block a bill, and both the position and the statement leave it out (neither counts test money)", async () => {
+    const s = await visit();
+    await card(s, 22500, false);
+    expect((await ensureAt(s, true)).result).toBe("created");
+    expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500 });
+    const row = (await adminQuery(`select visit_bill_id, stripe_livemode from public.payment_charge_attempts where studio_id=$1`, [s.studioId])).rows[0];
+    expect(row.visit_bill_id).toBeNull();                            // pre-bill: not part of the bill
+    expect(row.stripe_livemode).toBe(false);                         // the statement reads live attempts only, so it is left out there too
+  });
+
+  it("on a TEST deployment any pre-bill card refuses a bill, live or not", async () => {
+    const s = await visit();
+    await card(s, 22500, false);
+    expect((await ensureAt(s, false)).result).toBe("card_payment_exists");
+    expect(await bills(s)).toBe(0);
+  });
+
+  it("once a bill exists a new card payment is stamped with the bill, so no live payment can sit beside a bill without carrying it", async () => {
+    const s = await visit();
+    expect((await ensureAt(s, true)).result).toBe("created");
+    await card(s, 5000, true);
+    const row = (await adminQuery(`select a.visit_bill_id, b.id as bill_id from public.payment_charge_attempts a join public.visit_bills b on b.appointment_id = a.appointment_id where a.studio_id=$1`, [s.studioId])).rows[0];
+    expect(row.visit_bill_id).toBe(row.bill_id);
+    expect(await position(s)).toMatchObject({ card_cents: 5000, outstanding_cents: 17500 });
+  });
+});
