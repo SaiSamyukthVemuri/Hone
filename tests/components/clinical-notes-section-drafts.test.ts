@@ -57,6 +57,31 @@ describe("a draft of a note that already has its revision", () => {
   });
 });
 
+describe("r4 (Codex P2): the note editor is locked while a Discard is pending", () => {
+  it("text typed after clicking Discard is refused (read-only, edits ignored); a FAILED discard leaves the editor and its text unchanged and still sending", async () => {
+    vi.useFakeTimers();
+    let answer!: (r: { ok: boolean }) => void;
+    const discard = () => new Promise<{ ok: boolean }>((r) => (answer = r));
+    const draft = { key: { clientId: C, kind: "consultation", target: "new" }, fields: { body: "STORED DRAFT TEXT" }, revision: 2, savedAt: "t", generation: G1 };
+    const { host, root, save } = await mount({ notes: [note(N1, null)], drafts: [draft], peek: async () => ({ ok: true, draft: null }), discard });
+    const ta = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => { button(host, "Discard draft")?.click(); });
+    expect(ta.readOnly).toBe(true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "TYPED DURING DISCARD");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { answer({ ok: false }); }); // the discard FAILED
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).readOnly).toBe(false); // unlocked again
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    const sent = save.mock.calls.map((c) => JSON.stringify(c[0]));
+    expect(sent.some((x) => x.includes("TYPED DURING DISCARD"))).toBe(false); // the refused edit was never queued or sent
+    expect(host.textContent).toMatch(/Couldn't discard|discard/i);
+    vi.useRealTimers();
+    await act(async () => root.unmount());
+  });
+});
+
 describe("Keep as new note never overwrites an occupied destination", () => {
   const notes = [note(N1, null), note(N2, N1)];
   const mine = { key: { clientId: C, kind: "consultation", target: N1 }, fields: { body: "MOVING TEXT" }, revision: 2, savedAt: "t", generation: G1 };

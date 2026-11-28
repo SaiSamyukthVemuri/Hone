@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { acquireEntry, type DraftActions, type DraftEntry } from "./draft-registry";
 import type { DraftState } from "./draft-saver";
 import type { NoteDraftFields, NoteDraftKey, StoredNoteDraft } from "./types";
@@ -22,6 +22,9 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
   const [discardFailed, setDiscardFailed] = useState(false);
   /** True while Keep as new note moves the text to another key: the editor is read-only so nothing is typed into a key that is being closed. */
   const [moving, setMoving] = useState(false);
+  /** True while a Discard is out: the editor is read-only and edits are ignored, so text typed now can neither be queued nor wiped by the settle. */
+  const [discarding, setDiscarding] = useState(false);
+  const discardingRef = useRef(false);
   const [entry] = useState<DraftEntry | null>(() => (enabled ? acquireEntry(key, restored, actions, () => undefined) : null));
   if (entry) entry.actions = actions;
   const saver = entry?.saver ?? null;
@@ -50,6 +53,7 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
 
   const change = useCallback(
     (fields: NoteDraftFields) => {
+      if (discardingRef.current) return;
       saver?.change(fields);
     },
     [saver],
@@ -60,6 +64,7 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
       state: IDLE,
       discardFailed: false,
       moving: false,
+      discarding: false,
       change,
       hold: (_fields: NoteDraftFields) => undefined,
       flush: async () => true,
@@ -80,9 +85,13 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
     state,
     discardFailed,
     moving,
+    discarding,
     change,
     /** Edits on a superseded target: kept in the registry saver (survive an unmount), never sent, carried by Keep as new. */
-    hold: (fields: NoteDraftFields) => saver.hold(fields),
+    hold: (fields: NoteDraftFields) => {
+      if (discardingRef.current) return;
+      saver.hold(fields);
+    },
     flush: () => saver.flush(),
     retry: () => saver.retry(),
     keepMine: () => saver.keepMine(),
@@ -134,21 +143,28 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
      * the server confirmed; on failure the queued text is kept and sending resumes, and `discardFailed` says so.
      */
     discard: async (): Promise<boolean> => {
-      await saver.quiesce();
-      let ok = false;
+      discardingRef.current = true;
+      setDiscarding(true);
       try {
-        ok = (await entry.actions.discard(key, entry.scope, saver.currentGeneration())).ok;
-      } catch {
-        ok = false;
+        await saver.quiesce();
+        let ok = false;
+        try {
+          ok = (await entry.actions.discard(key, entry.scope, saver.currentGeneration())).ok;
+        } catch {
+          ok = false;
+        }
+        if (ok) {
+          saver.settle();
+          setDiscardFailed(false);
+          return true;
+        }
+        saver.resume();
+        setDiscardFailed(true);
+        return false;
+      } finally {
+        discardingRef.current = false;
+        setDiscarding(false);
       }
-      if (ok) {
-        saver.settle();
-        setDiscardFailed(false);
-        return true;
-      }
-      saver.resume();
-      setDiscardFailed(true);
-      return false;
     },
   };
 }

@@ -115,3 +115,28 @@ describe("r4 (Codex P2): the card cannot be edited while its Save is pending", (
     await act(async () => root.unmount());
   });
 });
+
+describe("r4 (Codex P2): the budget card is locked while a Discard is pending", () => {
+  it("notes are read-only and the chips disabled until the answer; an edit that still arrives is not queued; a failed discard leaves the card unchanged", async () => {
+    vi.useFakeTimers();
+    let answer!: (r: { ok: boolean }) => void;
+    const discard = () => new Promise<{ ok: boolean }>((r) => (answer = r));
+    const save = vi.fn(async (_i: unknown) => ({ status: "ok", revision: 3, savedAt: "t", generation: G1 }));
+    const stored = { key, fields: { budget_level: "somewhat_limited", budget_notes: "STORED" }, revision: 2, savedAt: "t", generation: G1 };
+    const { host, root } = await mount(stored, save, discard);
+    const area = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => { btn(host, "Discard draft")?.click(); });
+    expect(area.readOnly).toBe(true);
+    for (const chip of host.querySelectorAll('[role="group"] button')) expect((chip as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(area, "TYPED DURING DISCARD");
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { answer({ ok: false }); });
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).readOnly).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(save.mock.calls.some((c) => JSON.stringify(c[0]).includes("TYPED DURING DISCARD"))).toBe(false);
+    vi.useRealTimers();
+    await act(async () => root.unmount());
+  });
+});

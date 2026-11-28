@@ -530,7 +530,7 @@ function NoteForm({
   // A superseded target is never autosaved, but the person can still edit the reopened text before choosing Keep as new note. Those edits are HELD
   // in the registry saver (never sent; they survive this editor unmounting) and are what the move carries.
   function touch(next: { body?: string; areasText?: string; occurredAt?: string }) {
-    if (!draftActions) return;
+    if (!draftActions || draft.discarding || draft.moving) return;
     const fields: NoteDraftFields = {
       body: next.body ?? body,
       areas: parseAreas(next.areasText ?? areasText),
@@ -583,7 +583,7 @@ function NoteForm({
         <textarea
           name="body"
           key={bodyKey}
-          readOnly={draft.moving}
+          readOnly={draft.moving || draft.discarding}
           defaultValue={bodyInit}
           onChange={(e) => {
             setBody(e.target.value);
@@ -606,7 +606,7 @@ function NoteForm({
           <input
             type="date"
             name="occurred_at"
-            readOnly={draft.moving}
+            readOnly={draft.moving || draft.discarding}
             value={occurredAt}
             onChange={(e) => {
               setOccurredAt(e.target.value);
@@ -622,7 +622,7 @@ function NoteForm({
             </span>
             <input
               type="text"
-              readOnly={draft.moving}
+              readOnly={draft.moving || draft.discarding}
               value={areasText}
               onChange={(e) => {
                 setAreasText(e.target.value);
