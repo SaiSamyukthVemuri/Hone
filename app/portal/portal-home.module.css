@@ -1,0 +1,85 @@
+.portal {
+  background: #fafaf7;
+  color: #141410;
+  min-height: 100vh;
+  font: 400 0.94rem/1.55 var(--font-inter), sans-serif;
+  overflow-wrap: anywhere;
+}
+.wrap { width: min(68rem, 100% - 3rem); margin-inline: auto; }
+.mast { border-bottom: 1px solid #e5e2da; background: #fff; }
+.mast .wrap, .brand, .utilities, .cardHead, .cardFoot, .later li, .footer { display: flex; align-items: center; }
+.mast .wrap { min-height: 4.5rem; justify-content: space-between; gap: 1rem; }
+.brand { gap: .75rem; line-height: 1.2; }
+.brand strong { font-size: 1rem; letter-spacing: -.03em; }
+.brand > span:last-child { border-left: 1px solid #dedbd1; padding-left: .75rem; color: #605e57; font-size: .8rem; }
+.mark { background: #141410; color: #fafaf7; display: grid; place-items: center; width: 1.85rem; height: 1.85rem; flex-shrink: 0; border-radius: .28rem; font: 620 1.4rem/1 var(--font-fraunces), Georgia, serif; }
+.utilities { gap: 1rem; font-size: .81rem; }
+.utilities a, .actionLink { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; text-underline-offset: .2em; }
+.intro { margin: clamp(2rem, 5vw, 4.3rem) 0 1.35rem; color: #141410; }
+.intro h1 { font: 470 clamp(2.45rem, 5vw, 4.1rem)/1.07 var(--font-fraunces), Georgia, serif; letter-spacing: -.056em; }
+.intro p { color: #605e57; margin-top: .65rem; max-width: 54ch; }
+.nav { display: flex; flex-wrap: wrap; gap: .1rem 1.55rem; border-bottom: 1px solid #dcd9d1; margin-bottom: 1.5rem; }
+.nav a { display: flex; align-items: center; min-height: 46px; border-bottom: 2px solid transparent; color: #605e57; font-size: .86rem; font-weight: 550; }
+.nav a[aria-current="page"] { border-color: #141410; color: #141410; }
+.grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1rem; color: #141410; }
+.appointments, .taskCard, .bookCard, .resource, .paper {
+  background: #fff; border: 1px solid #dcd9d1; border-radius: .8rem; min-width: 0; overflow-wrap: anywhere;
+}
+.appointments { grid-column: span 4; }
+.bookCard, .taskCard { grid-column: span 2; padding: clamp(1.15rem, 2.5vw, 1.75rem); display: flex; flex-direction: column; align-items: flex-start; gap: .65rem; }
+.taskCard { background: #f3f1e9; }
+.taskCard:first-child { grid-column: span 4; }
+.taskCard:first-child + .appointments { grid-column: span 2; }
+.taskCard:first-child + .appointments .visit { flex-wrap: wrap; }
+.bookCard { background: #141410; color: #fafaf7; border-color: #141410; }
+.bookCard h2, .taskCard h2, .cardHead h2, .paper > h2 { font: 470 clamp(1.4rem, 2.5vw, 2rem)/1.12 var(--font-fraunces), Georgia, serif; letter-spacing: -.045em; }
+.bookCard p, .taskCard p { font-size: .85rem; }
+.bookCard .primaryLink { margin-top: auto; color: #141410; background: #fafaf7; }
+.primaryLink { display: inline-flex; align-items: center; justify-content: space-between; gap: 1.4rem; min-height: 44px; padding: .55rem 1rem; border-radius: .4rem; background: #141410; color: white; font-weight: 600; font-size: .85rem; }
+.actionLink { font-size: .85rem; font-weight: 560; }
+.taskCard .taskCount { font-size: 1.12rem; font-weight: 550; }
+.cardHead { justify-content: space-between; gap: .65rem; padding: 1.15rem 1.35rem .7rem; }
+.cardHead h2 { font-size: 1.4rem; }
+.badge { background: #f3f1e9; border: 1px solid #dedbd1; border-radius: 1rem; padding: .16rem .6rem; font-size: .72rem; color: #484740; flex-shrink: 0; }
+.visit { display: flex; gap: 1.3rem; align-items: center; padding: .8rem 1.35rem 1.4rem; }
+.visit > div:last-child { min-width: 0; }
+.dateSlip { flex: none; display: grid; justify-items: center; align-content: center; background: #f3f1e9; border: 1px solid #dedbd1; border-radius: .5rem; min-width: 4.8rem; min-height: 5rem; }
+.dateSlip span { font: 600 .65rem/1.3 var(--font-inter), sans-serif; letter-spacing: .09em; text-transform: uppercase; }
+.dateSlip strong { font: 450 2.5rem/1 var(--font-fraunces), Georgia, serif; }
+.visit h3 { font: 470 clamp(1.4rem, 2.3vw, 2.2rem)/1.15 var(--font-fraunces), Georgia, serif; letter-spacing: -.045em; }
+.visit p, .cardNote, .later p { color: #605e57; font-size: .85rem; margin-top: .25rem; }
+.cardNote { padding: 0 1.35rem .5rem; }
+.cardFoot { border-top: 1px solid #e5e2da; justify-content: flex-end; padding: 0 1.35rem; }
+.cardBody, .later { padding: .75rem 1.35rem 1.15rem; }
+.later ul { display: grid; gap: .6rem; }
+.later li { justify-content: space-between; gap: 1rem; padding: .5rem 0; border-top: 1px solid #e5e2da; }
+.later summary, .disclosure summary { cursor: pointer; min-height: 44px; padding-block: .6rem; font-weight: 550; }
+.resource { grid-column: span 2; display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: 1.15rem; min-height: 5rem; }
+.resource strong, .resource small { display: block; }
+.resource small { margin-top: .18rem; font-size: .78rem; color: #605e57; }
+.resource > span:last-child { font-size: 1.1rem; }
+.contentGrid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.contentGrid > :only-child { grid-column: 1 / -1; }
+.paper { padding: clamp(1rem, 2.5vw, 1.7rem); }
+.paper > h2 { margin-bottom: .7rem; }
+.stack { display: grid; gap: 1rem; }
+.disclosure { border-top: 1px solid #e5e2da; padding: .3rem 0; }
+.footer { justify-content: space-between; gap: .7rem; flex-wrap: wrap; margin-top: 2rem; border-top: 1px solid #dcd9d1; padding: 1.2rem 0 2rem; color: #605e57; font-size: .78rem; }
+.skip { position:absolute; top:0; left:0; z-index:3; background:#fff; padding:.65rem; transform:translateY(-150%); }
+.skip:focus { transform:none; }
+.portal :is(a, button, summary, input, textarea, select):focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.portal :is(a, button, summary):active { text-decoration: underline; }
+@media (hover: hover) { .resource:hover, .nav a:hover { background: #f3f1e9; } }
+@media (max-width: 46rem) {
+  .wrap { width: min(100% - 2rem, 37rem); }
+  .mast .wrap { flex-wrap: wrap; align-content: center; gap: 0 .8rem; padding-block: .5rem; }
+  .brand { gap: .5rem; }
+  .utilities { gap: .5rem; }
+  .nav { gap: .05rem 1rem; }
+  .grid, .contentGrid { grid-template-columns: 1fr; gap: .75rem; }
+  .grid > *, .taskCard:first-child, .taskCard:first-child + .appointments { grid-column: 1; }
+  .visit { gap: .85rem; }
+  .intro { margin-top: 2rem; }
+  .resource { min-height: 4rem; }
+}
+.kicker { margin-block: 1.5rem .5rem; font-size: .73rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #605e57; }

@@ -554,32 +554,37 @@ export async function limitDemoRequestSubmit(args: {
   return limitMarketingForm("demo", args);
 }
 
+async function limitPortalKey(kind: "ip" | "email", value: string): Promise<RateLimitResult> {
+  const limiter = kind === "ip" ? portalIpLimiter() : portalEmailLimiter();
+  if (!limiter) return { allowed: true };
+  try {
+    const result = await limiter.limit(hashId(value));
+    if (result.success) return { allowed: true };
+    const retry = retryAfterSeconds(result.reset);
+    logRateLimitExceeded("portal_login", retry, kind);
+    return { allowed: false, retryAfterSeconds: retry };
+  } catch (err) {
+    logBackendUnavailable("portal_login", err);
+    return { allowed: true }; // Same fail-open policy as public portal login.
+  }
+}
+
+// Old-link recovery knows the IP before the lookup and the registered email
+// afterwards. Both routes draw from the same buckets, once per request.
+export function limitPortalLinkIp(headers: Headers): Promise<RateLimitResult> {
+  return limitPortalKey("ip", clientIpFromHeaders(headers));
+}
+
+export function limitPortalLinkRecipient(email: string): Promise<RateLimitResult> {
+  return limitPortalKey("email", email);
+}
+
 export async function limitPortalMagicLink(args: {
   headers: Headers;
   email: string;
 }): Promise<RateLimitResult> {
-  const ipLimiter = portalIpLimiter();
-  const emailLimiter = portalEmailLimiter();
-  if (!ipLimiter || !emailLimiter) return { allowed: true }; // disabled
-  const ip = clientIpFromHeaders(args.headers);
-  try {
-    const ipRes = await ipLimiter.limit(hashId(ip));
-    if (!ipRes.success) {
-      const retry = retryAfterSeconds(ipRes.reset);
-      logRateLimitExceeded("portal_login", retry, "ip");
-      return { allowed: false, retryAfterSeconds: retry };
-    }
-    const emailRes = await emailLimiter.limit(hashId(args.email));
-    if (!emailRes.success) {
-      const retry = retryAfterSeconds(emailRes.reset);
-      logRateLimitExceeded("portal_login", retry, "email");
-      return { allowed: false, retryAfterSeconds: retry };
-    }
-    return { allowed: true };
-  } catch (err) {
-    logBackendUnavailable("portal_login", err);
-    return { allowed: true }; // fail open
-  }
+  const ip = await limitPortalLinkIp(args.headers);
+  return ip.allowed ? limitPortalLinkRecipient(args.email) : ip;
 }
 
 // Practitioner-triggered client emails (portal link, intake resend, portal
