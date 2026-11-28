@@ -1396,14 +1396,19 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
     const paymentSpec = classify(["e2e-payment/quick-checkout-payment.spec.ts"]) as Record<string, unknown>;
     // The classifier signal the job's `if:` consumes, with no wider trigger.
     expect(paymentSpec.payment).toBe(true);
+    expect(paymentSpec.webkit_surface).toBe(true);
     expect(paymentSpec.full_matrix_required).toBe(false);
-    expect(job.if).toContain("needs.changes.outputs.payment == 'true'");
+    // CI-SELECT-03: the lane's payment term is its own surface (quick checkout), not the whole payment lane.
+    expect(job.if).toContain("needs.changes.outputs.webkit_surface == 'true'");
+    expect(job.if).not.toContain("needs.changes.outputs.payment == 'true'");
+    expect((classify(["lib/billing/stripe-webhook.ts"]) as Record<string, unknown>).webkit_surface).toBe(false);
     // Negative control: a path that touches neither payment nor the specs.
     const unrelated = classify(["docs/README.md"]) as Record<string, unknown>;
     expect(unrelated.payment).toBe(false);
     expect(unrelated.full_matrix_required).toBe(false);
     // The signal is wired from the classifier's own output, not a literal.
     expect(CI).toMatch(/payment: \$\{\{ steps\.classify\.outputs\.payment \}\}/);
+    expect(CI).toMatch(/webkit_surface: \$\{\{ steps\.classify\.outputs\.webkit_surface \}\}/);
   });
 
   it("runs only the scoped WebKit projects, which exist only under HONE_E2E_WEBKIT=1", () => {

@@ -331,7 +331,7 @@ describe("the step that emits the matrix actually RUNS", () => {
           readFileSync(outFile, "utf8").split("\n").filter(Boolean).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
         );
         const c = classify(files) as Record<string, unknown>;
-        for (const k of ["full_matrix_required", "payment", "database"]) o[k] = String(c[k]);
+        for (const k of ["full_matrix_required", "payment", "database", "storage_photos", "webkit_surface"]) o[k] = String(c[k]);
         return o;
       } finally {
         rmSync(dir, { recursive: true, force: true });
@@ -339,15 +339,17 @@ describe("the step that emits the matrix actually RUNS", () => {
     };
     // CI-COST-04: the extended term holds on a production push only.
     const SHARDS_EXTENDED = "(github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true')";
-    const DATABASE = "needs.changes.outputs.database == 'true'";
+    const DATABASE = "needs.changes.outputs.storage_photos == 'true'";
     // [name, files, storage-photos runs, webkit runs]
     const cases: Array<[string, string[], boolean, boolean]> = [
       ["docs-only", ["docs/README.md"], false, false],
-      ["migration-only (database lane, no browser)", ["supabase/migrations/0999_x.sql"], true, false],
+      ["migration-only (no storage reference, database lane only)", ["supabase/migrations/0391_retire_direct_public_lead_inserts.sql"], false, false],
+      ["migration naming storage buckets (database lane, no browser)", ["supabase/migrations/0099_treatment_image_notes.sql"], true, false],
+      ["a migration that cannot be read (deleted) fails safe to both lanes", ["supabase/migrations/0999_not_in_tree.sql"], true, true],
       ["extended via unattributed app code", ["app/(app)/dashboard/page.tsx"], true, true],
       ["full matrix", ["vitest.config.ts"], true, true],
     ];
-    expect(ifOf("storage-photos"), "storage-photos keeps the database term").toContain(DATABASE);
+    expect(ifOf("storage-photos"), "storage-photos starts on storage_photos, not on any database change").toContain(DATABASE);
     expect(ifOf("webkit-hon-62"), "webkit has no database term").not.toContain(DATABASE);
     for (const job of ["storage-photos", "webkit-hon-62"]) {
       const cond = ifOf(job);
@@ -376,7 +378,7 @@ describe("the step that emits the matrix actually RUNS", () => {
     // null: not asserted. A spec's browser group may select the other lane's specs too.
     const prCases: Array<[string, string[], boolean | null, boolean | null]> = [
       ["docs-only", ["docs/README.md"], false, false],
-      ["migration-only (database lane, no browser)", ["supabase/migrations/0999_x.sql"], true, false],
+      ["migration-only (no storage reference, database lane only)", ["supabase/migrations/0391_retire_direct_public_lead_inserts.sql"], false, false],
       ["extended via unattributed app code", ["app/(app)/dashboard/page.tsx"], false, false],
       ["full matrix", ["vitest.config.ts"], true, true],
       ["a storage photo spec", ["e2e/fett-client-portrait.spec.ts"], true, null],

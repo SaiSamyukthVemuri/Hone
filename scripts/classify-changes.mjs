@@ -24,7 +24,7 @@ import { readFileSync, appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DOCS, isDocsPath } from "./docs-paths.mjs";
 import { scanTestDependencies } from "./test-dependencies.mjs";
-import { dbHelperReach } from "./import-graph.mjs";
+import { dbHelperReach, forwardClosure } from "./import-graph.mjs";
 
 /** Anything here genuinely affects every lane. Kept deliberately short. */
 const FULL_MATRIX = [
@@ -292,6 +292,9 @@ export function classify(files, deps = dependenciesFor()) {
     mobile: false,
     ci_workflows: false,
     full_matrix_required: false,
+    // CI-SELECT-03. The two non-required lanes' own reasons (see laneSurfaces below); both true on the full matrix.
+    storage_photos: false,
+    webkit_surface: false,
     // G4. A docs-only diff runs no unit lane, so a document READ BY A UNIT TEST
     // (the ledger wording 0179 pins, the AGENTS.md text the OpenWiki guards
     // read) broke first on the production push. True when any changed file is
@@ -379,7 +382,54 @@ export function classify(files, deps = dependenciesFor()) {
       out[k] = true;
     }
   }
+  Object.assign(out, laneSurfaces(list, out.full_matrix_required, dbDeps));
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// CI-SELECT-03. The two NON-REQUIRED lanes that used to start on a whole lane flag.
+//
+// storage-photos ran on ANY database change and webkit-hon-62 on ANY payment change, although what they execute is narrow:
+//   storage-photos: tests/db/treatment-image-signed-url-route.db.test.ts and five photo specs, on a stack WITH storage-api;
+//   webkit-hon-62: four WebKit specs and e2e-payment/quick-checkout-payment.spec.ts.
+// A changed file can alter their result only if it is something they load. These flags say so, and fail SAFE: a migration whose text cannot be
+// read, or that names the surface, counts; a file the import closure of the lane's own tests reaches counts; the full matrix counts.
+// The named specs still start the lanes through browser_specs, unchanged.
+// ---------------------------------------------------------------------------
+export const STORAGE_DB_TEST = "tests/db/treatment-image-signed-url-route.db.test.ts";
+const STORAGE_PATHS = [/^lib\/images\//, /^lib\/storage\//, /storage/i, /treatment-image/i, /photo/i, /^supabase\/config\.toml$/];
+const STORAGE_SQL = /storage\.|\bbucket|treatment_image|photo|signed/i;
+export const WEBKIT_PAYMENT_SEEDS = ["components/quick-checkout-modal.tsx", "app/(app)/quick-checkout-actions.ts", "e2e-payment/quick-checkout-payment.spec.ts"];
+const WEBKIT_PATHS = [/quick-checkout/i, /^e2e-payment\//, /^playwright\.payment\.config/, /^tests\/db\/helpers\/payment-seed/];
+const WEBKIT_SQL = /payment|checkout|invoice|charge|receipt/i;
+
+function migrationText(f) {
+  try {
+    return readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
+  } catch {
+    return null; // deleted or unreadable: cannot prove it is unrelated
+  }
+}
+
+function laneSurfaces(list, full, dbDeps) {
+  if (full) return { storage_photos: true, webkit_surface: true };
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const storageClosure = forwardClosure(root, [STORAGE_DB_TEST]);
+  const webkitClosure = forwardClosure(root, WEBKIT_PAYMENT_SEEDS);
+  const isMigration = (f) => /^supabase\/migrations\/.*\.sql$/.test(f);
+  const storage = list.some((f) => {
+    if (STORAGE_PATHS.some((re) => re.test(f)) || storageClosure.has(f) || (dbDeps[f] ?? []).includes?.(STORAGE_DB_TEST)) return true;
+    if (!isMigration(f)) return false;
+    const t = migrationText(f);
+    return t === null || STORAGE_SQL.test(t);
+  });
+  const webkit = list.some((f) => {
+    if (WEBKIT_PATHS.some((re) => re.test(f)) || webkitClosure.has(f)) return true;
+    if (!isMigration(f)) return false;
+    const t = migrationText(f);
+    return t === null || WEBKIT_SQL.test(t);
+  });
+  return { storage_photos: storage, webkit_surface: webkit };
 }
 
 function parseArgs(argv) {
