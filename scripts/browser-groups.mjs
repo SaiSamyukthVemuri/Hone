@@ -246,6 +246,8 @@ export const BROWSER_GROUPS = {
       "waitlist-invitation-delivery-status.spec.ts",
       // The owner reaches invite-beyond-the-estimate through normal navigation, confirms once, and every chosen client is sent exactly once.
       "waitlist-over-invite.spec.ts",
+      // HON-124 item 7: the recipient chooser's six buttons show hover, pressed and focus, and are 44px under a coarse pointer. No selection is made and nothing is sent.
+      "recipient-chooser-feedback.spec.ts",
       // At an estimate of zero, Send asks first; Cancel sends nothing and Invite anyway sends one invitation (desktop and phone).
       "waitlist-invite-anyway.spec.ts",
       // SENTRY-BOOKING-ERR-01: the /book/[slug] error boundary contains a failed
@@ -288,6 +290,8 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // HON-131: Find time's 7-day window is stated and checked beside the field; weeks two to six are searchable; selections kept; nothing booked.
+      "calendar-find-time-window.spec.ts",
       "desk-calendar.spec.ts",
       "desk-finder-and-isolation.spec.ts",
       // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
@@ -324,6 +328,8 @@ export const BROWSER_GROUPS = {
     description: "owner/admin, onboarding, studio setup and capacity",
     specs: [
       "cancellation-fee-rules.spec.ts",
+      // The shared Button: a disabled one shows no hover or pressed change, an enabled one still does (Save rules, never clicked).
+      "disabled-button-feedback.spec.ts",
       "invitation-reconciliation.spec.ts",
       "invite-only.spec.ts",
       // Connected practitioner journey (opt-in: self-skips unless MULTI_PRACTITIONER_JOURNEY_E2E=1, so a targeted lane lists it but runs nothing).
@@ -359,6 +365,8 @@ export const BROWSER_GROUPS = {
       // 0339 (owner-only writes on services and consent wording): the owner still edits services and consent wording
       // through the shipped actions; a practitioner is shown no edit control.
       "owner-only-catalog-edit.spec.ts",
+      // HON-124 item 7. The client profile's links: hover, pressed, keyboard focus, tap size. Follows none of them.
+      "client-profile-feedback.spec.ts",
       // HON-100: the owner's Statements month controls (arrow, picker, Back/Forward, reload) all name the same month. Owner-only read surface.
       "statements-month-navigation.spec.ts",
       // HON-124 (print): the statement, the record-keeping sections and the clinical-notes export print as the document alone, unclipped and readable, on Letter and A4.
@@ -381,6 +389,10 @@ export const BROWSER_GROUPS = {
       // refusal family, and any diff that can reach it is unattributable
       // application code that already fails safe to EXTENDED.
       "dat-002-read-failure-refusal.spec.ts",
+      // HON-124 item 7. Record Keeping: section menu, stock tabs, Trace usage and the back link show hover, pressed, keyboard focus, tap size.
+      "records-feedback.spec.ts",
+      // HON-124 item 7. Record Keeping rows: the sterile and disinfectant row disclosures, their Edit/History summaries and in-row links. Never opens an edit.
+      "records-rows-feedback.spec.ts",
       // UI-01: the shared pending-navigation primitive, a sibling concern to
       // the app-shell error boundary above it — PendingLink is what every
       // query-only navigation (day nav, period pills, calendar toolbar) has
@@ -460,6 +472,8 @@ export const BROWSER_GROUPS = {
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
       "client-profile-save.spec.ts",
+      // HON-124 item 7. The client form's buttons and links: hover, pressed, keyboard focus, 44px.
+      "client-form-feedback.spec.ts",
       "client-form-saved-inline.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
@@ -470,6 +484,8 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // HON-124 item 7. The six admin header controls: hover, pressed, keyboard focus, 44px, no sideways scroll at 390 px.
+      "admin-nav-feedback.spec.ts",
       // HON-62: the weekly-hours editor's native time inputs (keyboard
       // entry, touch tap, save/reload, untouched existing hours).
       "availability-hours-editor.spec.ts",
@@ -567,6 +583,9 @@ export const BROWSER_GROUPS = {
  * SHARED paths deliberately map to `EXTENDED` (everything), because a shared
  * helper can affect any workflow and filename proximity alone would miss it.
  */
+import { fileURLToPath } from "node:url";
+import { buildImportGraph, reachingEntries } from "./import-graph.mjs";
+
 export const EXTENDED = "__extended__";
 
 const SHARED_PATTERNS = [
@@ -575,7 +594,7 @@ const SHARED_PATTERNS = [
   // full_matrix_required=true while selecting NO browser group: the lane
   // would be skipped exactly when the most caution is warranted.
   /^\.github\/workflows\//,
-  /^scripts\/(classify-changes|browser-groups|ci-plan|test-dependencies|docs-paths)\.mjs$/,
+  /^scripts\/(classify-changes|browser-groups|import-graph|ci-plan|test-dependencies|docs-paths|verify-prepush)\.mjs$/,
   /^e2e\/helpers\//,
   /^playwright\.config\./,
   /^lib\/supabase\//,
@@ -678,6 +697,22 @@ const PATH_TO_GROUP = [
   // TWO FILES ARE DELIBERATELY LEFT OUT and keep the extended fail-safe: legacy-machine.ts and profile-contract.ts are also imported by the
   // client page (app/(app)/clients/[id]/page.tsx) and the data export (app/(app)/settings/data/**), which match no group.
   { group: "sessions", patterns: [/^lib\/machines\/(?!legacy-machine\.ts$|profile-contract\.ts$)/, /^components\/machines\//, /^app\/\(app\)\/settings\/machines\//] },
+  // CI-SELECT-02. ROUTES whose browser coverage is named by the specs themselves, so the import graph can reach through them.
+  //   - the owner's Analytics screens (/financials/analytics/**): the only spec that drives them is statements-month-navigation.spec.ts, in
+  //     owner_admin.
+  //   - the receptionist Desk (app/(desk)/**): desk-calendar.spec.ts and desk-finder-and-isolation.spec.ts are in calendar and booking, and the
+  //     receptionist onboarding specs that sign into it in booking and calendar as well.
+  // The rule maps ONLY these route directories. Everything they import is attributed by scripts/import-graph.mjs from the routes that reach it
+  // (selectBrowserGroups, step "graph"), and tests/ci/graph-selection.test.ts re-proves that against the real tree on every change.
+  //
+  // THE DASHBOARD IS DELIBERATELY NOT MAPPED, although its thirteen dashboard-* specs all live in `sessions`. Thirty-one specs across six groups
+  // land on /dashboard, so a render fault in ANY dashboard component breaks specs outside `sessions`; attributing it to `sessions` would be the
+  // narrowing the test "ONE unattributable app file forces extended" records as WRONG (24 specs instead of all). Everything that only the
+  // dashboard page reaches (lib/dashboard, the dashboard components and, through them, the Checkout modal) therefore stays on the extended
+  // fail-safe. Quick Checkout's own browser coverage is e2e-payment/quick-checkout-payment.spec.ts, which the `payment` rule already selects.
+  { group: "owner_admin", patterns: [/^app\/\(app\)\/financials\/analytics\//] },
+  { group: "calendar", patterns: [/^app\/\(desk\)\//] },
+  { group: "booking", patterns: [/^app\/\(desk\)\//] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched
@@ -706,7 +741,50 @@ export function specsForGroups(groups) {
  * Decide which browser groups a diff affects.
  * Returns { groups, extended, reason }.
  */
-export function selectBrowserGroups(files) {
+/** Routes whose VISITING specs are all in the groups their path rule names (proved from the specs by tests/ci/graph-selection.test.ts). */
+export const VERIFIED_ROUTES = [/^app\/\(app\)\/financials\/analytics\//, /^app\/\(desk\)\//];
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const graphs = new Map();
+const graphFor = (root) => {
+  if (!graphs.has(root)) graphs.set(root, buildImportGraph(root));
+  return graphs.get(root);
+};
+// What selecting `f` ALONE chooses without the graph: the path rules, plus the public-booking surface (every group holding a spec that books
+// through the form). Shared infrastructure is never attributed (null), so a graph answer can never be narrower than a direct selection.
+const pathGroupsOf = (f) => {
+  const g = new Set();
+  if (SHARED_PATTERNS.some((re) => re.test(f))) return g;
+  for (const rule of PATH_TO_GROUP) if (rule.patterns.some((re) => re.test(f))) g.add(rule.group);
+  if (PUBLIC_BOOKING_PATTERNS.some((re) => re.test(f))) {
+    for (const [name, def] of Object.entries(BROWSER_GROUPS)) if (def.specs.some((spec) => PUBLIC_BOOKING_SPECS.includes(spec))) g.add(name);
+  }
+  return g;
+};
+
+/**
+ * CI-SELECT-02. The groups an UNATTRIBUTED application file needs, derived from the entries that can execute it, or null when that cannot be
+ * proved (not TypeScript, not in the graph, nothing reaches it, e2e/scripts/config import it, or any reaching entry is itself unattributed).
+ */
+export function deriveGroupsFromGraph(file, root = REPO_ROOT) {
+  if (!/^(app|components|lib|hooks)\//.test(file) || !/\.(ts|tsx)$/.test(file)) return null;
+  const graph = graphFor(root);
+  if (!graph.files.has(file)) return null;
+  const { entries, outside } = reachingEntries(graph, file);
+  if (outside.length > 0 || entries.length === 0) return null;
+  // An import edge proves which routes RUN the file, not which specs VISIT those routes: a spec in any group can navigate to any route, so a
+  // route's own group is the answer only where the visiting specs were audited. Every other reaching entry (the calendar, a layout, a shared
+  // component's host) stays on the extended fail-safe. tests/ci/graph-selection.test.ts re-proves the audit from the specs' own URLs.
+  if (!entries.every((e) => VERIFIED_ROUTES.some((re) => re.test(e)))) return null;
+  const groups = new Set();
+  for (const e of entries) {
+    const g = pathGroupsOf(e);
+    if (g.size === 0) return null;
+    for (const x of g) groups.add(x);
+  }
+  return groups;
+}
+
+export function selectBrowserGroups(files, opts = {}) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
   if (list.length === 0) {
     return { groups: [EXTENDED], extended: true, reason: "no detectable diff: failing safe to extended coverage" };
@@ -775,11 +853,17 @@ export function selectBrowserGroups(files) {
   // "Unattributable application code fails safe to extended, NEVER to a narrow
   // group." Attributing a file narrows it on purpose; failing to attribute one
   // must never narrow it by accident.
-  const unattributed = list.filter(
-    (f) =>
-      /^(app|components|lib|hooks)\//.test(f) &&
-      !PATH_TO_GROUP.some((rule) => rule.patterns.some((re) => re.test(f))),
-  );
+  const unattributed = list.filter((f) => {
+    if (!/^(app|components|lib|hooks)\//.test(f) || PATH_TO_GROUP.some((rule) => rule.patterns.some((re) => re.test(f)))) return false;
+    // CI-SELECT-02: not named by a path rule, but the import graph can PROVE which entries execute it.
+    const derived = deriveGroupsFromGraph(f, opts.root ?? REPO_ROOT);
+    if (!derived) return true;
+    for (const g of derived) {
+      if (!groups.has(g)) why.push(`${g} <- ${f} (import graph)`);
+      groups.add(g);
+    }
+    return false;
+  });
   if (unattributed.length > 0) {
     return {
       groups: [EXTENDED],

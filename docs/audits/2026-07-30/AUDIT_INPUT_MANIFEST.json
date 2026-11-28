@@ -187,7 +187,7 @@
   ],
   "pass": "accepted 2026-07-31 — register accepted as materially sound after four independent review passes (114 items, all dispositioned); no pass 5. Rebaselined onto the current production head.",
   "preserved_source_content_digests": {
-    "note": "SHA-256 over the source_* cells of MASTER_FINDINGS_REGISTER.csv, grouped by source register. Emptying, truncating or rewriting any preserved source cell changes the digest and fails tests/audits/findings-register-consistency.test.ts. Two of the three source registers live outside the repository, so this is how their content is pinned inside it. RE-PINNED 2026-11-24 (july_18 only), for the record privacy scrub: exactly one source_enabled_status cell had one studio slug replaced by the neutral alias \"the generated empty studio\"; no cell was emptied, truncated or otherwise rewritten, the row count is unchanged and the other four groups are unchanged.",
+    "note": "SHA-256 over the source_* cells of MASTER_FINDINGS_REGISTER.csv, grouped by source register. Emptying, truncating or rewriting any preserved source cell changes the digest and fails tests/audits/findings-register-consistency.test.ts. Two of the three source registers live outside the repository, so this is how their content is pinned inside it. RE-PINNED 2026-11-24 (july_18 only), for the record privacy scrub: exactly one source_enabled_status cell had one studio slug replaced by the neutral alias \"the generated empty studio\"; no cell was emptied, truncated or otherwise rewritten, the row count is unchanged and the other four groups are unchanged. Re-pinned again on 2026-11-28 (july_18) for the second privacy scrub: one personal email address replaced by a placeholder in the source cells; row count unchanged.",
     "algorithm": "For each row: source_id, then every column whose name begins with source_, joined by U+0001. Rows sorted, joined by U+0002, hashed with sha256.",
     "digests": {
       "july_27": {
@@ -196,7 +196,7 @@
       },
       "july_18": {
         "rows": 34,
-        "sha256": "5a556710d16c4415124e8056df9eb7158aac83f8e7fd6b37a75368fc0cd24649"
+        "sha256": "79027778003ea99e8605274004168211caf5e71bbf9f6e7e8da37f75482d875a"
       },
       "july_10": {
         "rows": 40,

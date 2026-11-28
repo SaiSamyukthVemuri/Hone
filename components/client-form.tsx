@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { buttonClasses } from "@/components/ui/button";
+import { CONTROL_COMPACT_FINE_POINTER, CONTROL_MIN_TOUCH, FOCUS_RING, PRESS_TRANSITION, TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { flushSync } from "react-dom";
@@ -154,7 +156,7 @@ function ConflictSideText({
             if (box && mark) box.scrollTop = scrollTopForMark(mark.offsetTop);
           }}
         >
-          <summary className="cursor-pointer text-xs underline">Show full text ({label})</summary>
+          <summary className={cx("cursor-pointer text-xs underline", TEXT_LINK_FEEDBACK)}>Show full text ({label})</summary>
           <pre
             ref={boxRef}
             className="relative mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-amber-300 bg-white p-2 text-xs [overflow-wrap:anywhere] dark:border-amber-800 dark:bg-neutral-950"
@@ -391,7 +393,7 @@ export function ClientForm({
             update("preferred_name", "");
             setClearPreferred(true);
           }}
-          className="-mt-3 self-start text-sm text-neutral-600 underline underline-offset-2 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          className={cx(CONTROL_MIN_TOUCH, "-mt-3 self-start text-sm text-neutral-600 underline underline-offset-2 dark:text-neutral-400", TEXT_LINK_FEEDBACK)}
         >
           Remove preferred name
         </button>
@@ -550,7 +552,7 @@ export function ClientForm({
               type="button"
               disabled={pending}
               onClick={keepCurrent}
-              className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
+              className={buttonClasses({ variant: "secondary" })}
             >
               Keep what is saved now
             </button>
@@ -558,7 +560,7 @@ export function ClientForm({
               type="button"
               disabled={pending || !panelRendered || !applyMineAllowed(conflicts, openedFull)}
               onClick={applyMine}
-              className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
+              className={buttonClasses({ variant: "secondary" })}
             >
               Apply my change
             </button>
@@ -581,7 +583,7 @@ export function ClientForm({
               <Link
                 key={d.clientId}
                 href={`/clients/${d.clientId}`}
-                className="min-w-0 [overflow-wrap:anywhere] font-medium underline underline-offset-2"
+                className={cx("min-w-0 [overflow-wrap:anywhere] font-medium underline underline-offset-2", TEXT_LINK_FEEDBACK)}
               >
                 Open {d.clientName}
               </Link>
@@ -590,7 +592,7 @@ export function ClientForm({
               type="button"
               disabled={pending}
               onClick={() => submit(possibleDuplicates.map((d) => d.clientId))}
-              className="rounded-md border border-amber-400 px-3 py-2 font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-900"
+              className={buttonClasses({ variant: "secondary" })}
             >
               {saveAnywayLabel}
             </button>
@@ -602,7 +604,7 @@ export function ClientForm({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-md bg-neutral-900 px-5 py-3 text-base font-medium text-white hover:bg-neutral-800 disabled:opacity-50 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+          className={buttonClasses({ variant: "primary" })}
         >
           {pending ? pendingLabel : submitLabel}
         </button>
@@ -613,7 +615,7 @@ export function ClientForm({
         )}
         <Link
           href={cancelHref}
-          className="rounded-md border border-neutral-300 px-5 py-3 text-base hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          className={buttonClasses({ variant: "secondary" })}
         >
           Cancel
         </Link>
@@ -636,7 +638,7 @@ function ChipRow({
           key={c}
           type="button"
           onClick={() => onAppend(c)}
-          className="rounded-full border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900"
+          className={cx(CONTROL_MIN_TOUCH, CONTROL_COMPACT_FINE_POINTER, FOCUS_RING, PRESS_TRANSITION, "cursor-pointer rounded-full border border-neutral-300 bg-white px-3 text-xs text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 active:bg-neutral-200 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-900 dark:active:bg-neutral-800")}
         >
           + {c}
         </button>
