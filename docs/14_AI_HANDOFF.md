@@ -681,7 +681,7 @@ Docs/launch checklist final polish
    # or as one command:
    npm run ci
    ```
-3. Commit as `SaiSamyukthVemuri <samyukth.ssv@gmail.com>` (the Vercel author gate requires this).
+3. Commit as `SaiSamyukthVemuri <26781116+SaiSamyukthVemuri@users.noreply.github.com>` (the GitHub no-reply address linked to the account).
 4. Push. Open a PR with the `.github/pull_request_template.md` checklist filled honestly.
 5. STOP. Do not merge until reviewed.
 6. On review approval: `gh pr merge <N> --merge`.
@@ -790,7 +790,7 @@ The single `paymentIntents.create` path is the **unified test-mode executor** `l
 - Migrations apply to prod BEFORE the code PR merges.
 - The PR description is the contract; if it does not match the diff, the reviewer rejects it.
 - Em-dashes in added lines: zero. Use plain hyphens or colons.
-- Commits authored as `SaiSamyukthVemuri <samyukth.ssv@gmail.com>`.
+- Commits authored as `SaiSamyukthVemuri <26781116+SaiSamyukthVemuri@users.noreply.github.com>`.
 
 ## How to write prompts for future PRs
 
@@ -815,7 +815,7 @@ Useful patterns:
 
 Repeat the list in the PR you open, every time:
 
-- Author commits as SaiSamyukthVemuri <samyukth.ssv@gmail.com>
+- Author commits as SaiSamyukthVemuri <26781116+SaiSamyukthVemuri@users.noreply.github.com>
 - Zero em-dashes in added lines.
 - Apply additive migration to prod BEFORE merging code that references new columns.
 - "Do not merge until reviewed."

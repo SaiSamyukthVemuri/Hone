@@ -321,7 +321,7 @@ Token storage: the DB only ever holds `hashToken(rawToken)`. A DB compromise doe
 
 ## 7. Production config fail-closed (PR #143)
 
-- **`ADMIN_EMAILS`**; production with no/empty `ADMIN_EMAILS` makes `isAdmin()` return `false` for everyone. The previous hardcoded `["samyukth.ssv@gmail.com"]` fallback was removed from the production path; dev still keeps it for convenience. A sanitized one-shot server-side log fires on the missing-env path in prod.
+- **`ADMIN_EMAILS`**; production with no/empty `ADMIN_EMAILS` makes `isAdmin()` return `false` for everyone. The previous hardcoded `single-address` fallback was removed from the production path; dev still keeps it for convenience. A sanitized one-shot server-side log fires on the missing-env path in prod.
 - **`PORTAL_FINGERPRINT_SALT`**; production with no salt makes `hashFingerprint()` return `null` (the diagnostic IP / UA / email-hash columns store null). No constant fallback salt in prod, so a leaked DB yields no usable reverse-lookup table. Portal login does NOT break because fingerprint hashing is diagnostic-only. Dev still has a stable fallback.
 - **`NEXT_PUBLIC_APP_ORIGIN`**; `lib/app-origin.ts:getRequiredAppOrigin()` throws in production if neither this nor `VERCEL_URL` is set. No silent fallback to `https://hone.care`. Resolution order: explicit env → `VERCEL_URL` (Preview) → `localhost:3000` (dev only) → throw.
 
