@@ -573,6 +573,9 @@ export const BROWSER_GROUPS = {
  * SHARED paths deliberately map to `EXTENDED` (everything), because a shared
  * helper can affect any workflow and filename proximity alone would miss it.
  */
+import { fileURLToPath } from "node:url";
+import { buildImportGraph, reachingEntries } from "./import-graph.mjs";
+
 export const EXTENDED = "__extended__";
 
 const SHARED_PATTERNS = [
@@ -684,6 +687,22 @@ const PATH_TO_GROUP = [
   // TWO FILES ARE DELIBERATELY LEFT OUT and keep the extended fail-safe: legacy-machine.ts and profile-contract.ts are also imported by the
   // client page (app/(app)/clients/[id]/page.tsx) and the data export (app/(app)/settings/data/**), which match no group.
   { group: "sessions", patterns: [/^lib\/machines\/(?!legacy-machine\.ts$|profile-contract\.ts$)/, /^components\/machines\//, /^app\/\(app\)\/settings\/machines\//] },
+  // CI-SELECT-02. ROUTES whose browser coverage is named by the specs themselves, so the import graph can reach through them.
+  //   - the owner's Analytics screens (/financials/analytics/**): the only spec that drives them is statements-month-navigation.spec.ts, in
+  //     owner_admin.
+  //   - the receptionist Desk (app/(desk)/**): desk-calendar.spec.ts and desk-finder-and-isolation.spec.ts are in calendar and booking, and the
+  //     receptionist onboarding specs that sign into it in booking and calendar as well.
+  // The rule maps ONLY these route directories. Everything they import is attributed by scripts/import-graph.mjs from the routes that reach it
+  // (selectBrowserGroups, step "graph"), and tests/ci/graph-selection.test.ts re-proves that against the real tree on every change.
+  //
+  // THE DASHBOARD IS DELIBERATELY NOT MAPPED, although its thirteen dashboard-* specs all live in `sessions`. Thirty-one specs across six groups
+  // land on /dashboard, so a render fault in ANY dashboard component breaks specs outside `sessions`; attributing it to `sessions` would be the
+  // narrowing the test "ONE unattributable app file forces extended" records as WRONG (24 specs instead of all). Everything that only the
+  // dashboard page reaches (lib/dashboard, the dashboard components and, through them, the Checkout modal) therefore stays on the extended
+  // fail-safe. Quick Checkout's own browser coverage is e2e-payment/quick-checkout-payment.spec.ts, which the `payment` rule already selects.
+  { group: "owner_admin", patterns: [/^app\/\(app\)\/financials\/analytics\//] },
+  { group: "calendar", patterns: [/^app\/\(desk\)\//] },
+  { group: "booking", patterns: [/^app\/\(desk\)\//] },
   { group: "calendar", patterns: [/calendar/i, /\bservices?\b/i, /disinfectant/i] },
   // OWNER-CAP Slice 1. Registering the SPEC in the group above is only half the
   // job: selection maps CHANGED PATHS to groups, and the capacity page matched
@@ -712,7 +731,44 @@ export function specsForGroups(groups) {
  * Decide which browser groups a diff affects.
  * Returns { groups, extended, reason }.
  */
-export function selectBrowserGroups(files) {
+const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const graphs = new Map();
+const graphFor = (root) => {
+  if (!graphs.has(root)) graphs.set(root, buildImportGraph(root));
+  return graphs.get(root);
+};
+// What selecting `f` ALONE chooses without the graph: the path rules, plus the public-booking surface (every group holding a spec that books
+// through the form). Shared infrastructure is never attributed (null), so a graph answer can never be narrower than a direct selection.
+const pathGroupsOf = (f) => {
+  const g = new Set();
+  if (SHARED_PATTERNS.some((re) => re.test(f))) return g;
+  for (const rule of PATH_TO_GROUP) if (rule.patterns.some((re) => re.test(f))) g.add(rule.group);
+  if (PUBLIC_BOOKING_PATTERNS.some((re) => re.test(f))) {
+    for (const [name, def] of Object.entries(BROWSER_GROUPS)) if (def.specs.some((spec) => PUBLIC_BOOKING_SPECS.includes(spec))) g.add(name);
+  }
+  return g;
+};
+
+/**
+ * CI-SELECT-02. The groups an UNATTRIBUTED application file needs, derived from the entries that can execute it, or null when that cannot be
+ * proved (not TypeScript, not in the graph, nothing reaches it, e2e/scripts/config import it, or any reaching entry is itself unattributed).
+ */
+export function deriveGroupsFromGraph(file, root = REPO_ROOT) {
+  if (!/^(app|components|lib|hooks)\//.test(file) || !/\.(ts|tsx)$/.test(file)) return null;
+  const graph = graphFor(root);
+  if (!graph.files.has(file)) return null;
+  const { entries, outside } = reachingEntries(graph, file);
+  if (outside.length > 0 || entries.length === 0) return null;
+  const groups = new Set();
+  for (const e of entries) {
+    const g = pathGroupsOf(e);
+    if (g.size === 0) return null;
+    for (const x of g) groups.add(x);
+  }
+  return groups;
+}
+
+export function selectBrowserGroups(files, opts = {}) {
   const list = (files ?? []).map((f) => f.trim()).filter(Boolean);
   if (list.length === 0) {
     return { groups: [EXTENDED], extended: true, reason: "no detectable diff: failing safe to extended coverage" };
@@ -781,11 +837,17 @@ export function selectBrowserGroups(files) {
   // "Unattributable application code fails safe to extended, NEVER to a narrow
   // group." Attributing a file narrows it on purpose; failing to attribute one
   // must never narrow it by accident.
-  const unattributed = list.filter(
-    (f) =>
-      /^(app|components|lib|hooks)\//.test(f) &&
-      !PATH_TO_GROUP.some((rule) => rule.patterns.some((re) => re.test(f))),
-  );
+  const unattributed = list.filter((f) => {
+    if (!/^(app|components|lib|hooks)\//.test(f) || PATH_TO_GROUP.some((rule) => rule.patterns.some((re) => re.test(f)))) return false;
+    // CI-SELECT-02: not named by a path rule, but the import graph can PROVE which entries execute it.
+    const derived = deriveGroupsFromGraph(f, opts.root ?? REPO_ROOT);
+    if (!derived) return true;
+    for (const g of derived) {
+      if (!groups.has(g)) why.push(`${g} <- ${f} (import graph)`);
+      groups.add(g);
+    }
+    return false;
+  });
   if (unattributed.length > 0) {
     return {
       groups: [EXTENDED],
