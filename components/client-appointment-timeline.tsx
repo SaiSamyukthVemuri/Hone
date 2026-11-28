@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 
 import { buttonClasses } from "@/components/ui/button";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -326,19 +326,19 @@ function TimelineActions({
     return (
       <div className="flex flex-wrap gap-2">
         {row.linked_session && (
-          <Link
+          <PendingLink
             href={`/clients/${clientId}/sessions/${row.linked_session.id}`}
             className={buttonClasses({ variant: "secondary", size: "sm" })}
           >
             View session
-          </Link>
+          </PendingLink>
         )}
-        <Link
+        <PendingLink
           href={`/calendar/${row.id}`}
           className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Open appointment
-        </Link>
+        </PendingLink>
       </div>
     );
   }
@@ -347,18 +347,18 @@ function TimelineActions({
   if (bucket === "charted" && row.linked_session) {
     return (
       <div className="flex flex-wrap gap-2">
-        <Link
+        <PendingLink
           href={`/clients/${clientId}/sessions/${row.linked_session.id}`}
           className={buttonClasses({ variant: "primary", size: "sm" })}
         >
           View session
-        </Link>
-        <Link
+        </PendingLink>
+        <PendingLink
           href={`/calendar/${row.id}`}
           className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Open appointment
-        </Link>
+        </PendingLink>
       </div>
     );
   }
@@ -368,18 +368,18 @@ function TimelineActions({
   if (bucket === "needsCharting") {
     return (
       <div className="flex flex-wrap gap-2">
-        <Link
+        <PendingLink
           href={`/clients/${clientId}/sessions/new?appointment_id=${encodeURIComponent(row.id)}`}
           className={buttonClasses({ variant: "primary", size: "sm" })}
         >
           Chart session
-        </Link>
-        <Link
+        </PendingLink>
+        <PendingLink
           href={`/calendar/${row.id}`}
           className={buttonClasses({ variant: "secondary", size: "sm" })}
         >
           Open appointment
-        </Link>
+        </PendingLink>
       </div>
     );
   }
@@ -390,11 +390,11 @@ function TimelineActions({
   // who insists on charting early can still do so by opening the
   // appointment and clicking the card.
   return (
-    <Link
+    <PendingLink
       href={`/calendar/${row.id}`}
       className={buttonClasses({ variant: "primary", size: "sm" })}
     >
       Open appointment
-    </Link>
+    </PendingLink>
   );
 }

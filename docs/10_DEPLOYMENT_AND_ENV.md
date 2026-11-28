@@ -22,6 +22,8 @@
 
 ## Hosts and domains
 
+`HONE_PORTAL_REDESIGN_STUDIO_IDS` is a server-only comma-separated list of studio UUIDs eligible for the redesigned client portal. An empty list serves the classic portal. Publishing a draft in one eligible studio affects that studio alone. See [pilot and rollback](./11_RUNBOOK.md#client-portal-pilot-and-rollback).
+
 - **Hosting:** Vercel.
 - **Production domain:** `https://hone.care` (also `https://www.hone.care`).
 - **Production branch:** `claude/build-hone-saas-hOex7` (the default branch on GitHub). Every push to this branch triggers a production deploy.

@@ -459,14 +459,15 @@ describe("PR CI — path-aware lane selection", () => {
     // canonical-record (the docs-only production-record lane, #825 6215529089)
     // and records-preflight (CI-COST-02) need `changes` alone. The seven heavy
     // lanes, storage-photos (E-GAPS) and webkit-hon-62 (HON-62) included, also
-    // need records-preflight, so a red ledger or receipt stops them before they start.
+    // need records-preflight, so a red ledger or receipt stops them before they start,
+    // and validate (CI-COST-03), so a red type, lint, build or unit lane does too.
     expect((CI.match(/^ {4}needs: changes$/gm) ?? []).length).toBe(3);
-    expect((CI.match(/^ {4}needs: \[changes, records-preflight\]$/gm) ?? []).length).toBe(7);
+    expect((CI.match(/^ {4}needs: \[changes, records-preflight, validate\]$/gm) ?? []).length).toBe(7);
     // CI-DRAFT-01: the seven heavy lanes (every Supabase-starting one) are wrapped in
     // the draft gate; validate, canonical-record and records-preflight stay bare. The
     // exact wrapping is proved against the base commit in tests/ci/draft-gate.test.ts.
     expect((CI.match(/^ {4}if: \$\{\{ needs\.changes\.outputs\./gm) ?? []).length).toBe(3);
-    expect((CI.match(/^ {4}if: \$\{\{ github\.event\.pull_request\.draft != true && \( needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
+    expect((CI.match(/^ {4}if: \$\{\{ !cancelled\(\) && [^\n]*? && github\.event\.pull_request\.draft != true && \( needs\.changes\.outputs\./gm) ?? []).length).toBe(7);
   });
 
   it("the required browser check is a STABLE aggregator, not a dynamic shard name", () => {
@@ -1383,7 +1384,7 @@ describe("HON-62: the WebKit time-input job is separate, scoped and never requir
   });
 
   it("runs when the HON-62 spec is selected, and on extended / full-matrix runs", () => {
-    expect(job.needs).toEqual(["changes", "records-preflight"]);
+    expect(job.needs).toEqual(["changes", "records-preflight", "validate"]);
     expect(job.if).toContain("contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts')");
     expect(job.if).toContain("needs.changes.outputs.browser_extended == 'true'");
     expect(job.if).toContain("needs.changes.outputs.full_matrix_required == 'true'");

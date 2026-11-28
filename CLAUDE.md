@@ -162,6 +162,19 @@ lanes. Logic: `scripts/classify-changes.mjs`, proved by
 A lane that does not apply is reported **skipped**, which satisfies branch
 protection — it does not silently disappear.
 
+**The heavy lanes wait for the cheap ones** (CI-COST-02, CI-COST-03). Database,
+browser shards, payment, mobile, Google, storage-photos and webkit start only
+after `records pre-flight` and `validate` have passed on a pull request. A red
+typecheck, lint, build or unit lane therefore shows the heavy lanes as
+**skipped**: fix `validate` first, they have not judged the diff. On a
+production push they wait for `validate` and then run whatever it concluded.
+
+**The two non-required lanes are narrower on a pull request** (CI-COST-04).
+`storage photos` and `webkit time inputs` no longer run on a PR merely because
+the browser shards run extended. On a PR they run for their named specs, a
+database change (storage), a payment change (webkit) and the full matrix. Every
+extended production push still runs both.
+
 **The full matrix still runs**, nightly at 07:00 UTC and on demand via
 `workflow_dispatch` (`.github/workflows/nightly.yml`). Coverage was *moved*, not
 weakened. Run it manually before a deliberate release candidate, or whenever you

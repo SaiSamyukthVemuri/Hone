@@ -40,35 +40,24 @@ const requiresOwnerOnly = (p: Pol) => {
   return /is_studio_owner|role\s*=\s*'owner'/i.test(t) && !/is_studio_member/i.test(t);
 };
 
-// Public marketing sign-up tables: no studio column, anonymous insert by design (landing page waitlist and demo requests).
-const PUBLIC_SIGNUP_TABLES = new Set(["waitlist", "demo_requests"]);
-
 describe("HON-44 catalog: every authenticated write policy is scoped to the caller's studio or identity", () => {
   it("no write policy on a tenant table is unscoped (true / no studio or identity term)", async () => {
     const all = await writePolicies();
     expect(all.length).toBeGreaterThan(20); // it examined the real catalog, not an empty list
     const offenders = all
-      .filter((p) => !PUBLIC_SIGNUP_TABLES.has(p.tablename))
       .filter((p) => !SCOPED.test(scopedText(p)))
       .map((p) => `${p.tablename}.${p.policyname} (${p.cmd})`);
     expect(offenders).toEqual([]);
   });
 
-  it("an anonymous-reachable write policy exists only on the two public sign-up tables, or can never match an anonymous caller", async () => {
+  it("an anonymous-reachable write policy can never match an anonymous caller (0391 retired the two public sign-up inserts)", async () => {
     // A policy granted to `public` or `anon` is reachable without a login. It is safe only if its expression needs auth.uid()
-    // (null for anon, so the row filter never matches), directly or through an identity-bound helper (proved by the definer-function guard below). Anything else must be a sign-up table.
+    // (null for anon, so the row filter never matches), directly or through an identity-bound helper (proved by the definer-function guard below).
     const anon = (await writePolicies()).filter((p) => /\banon\b|\{\}|public/.test(p.roles));
     const offenders = anon
-      .filter((p) => !PUBLIC_SIGNUP_TABLES.has(p.tablename))
       .filter((p) => !/auth\.uid\(\)|is_studio_owner|is_studio_member|member_owns_scoped_timed_block/i.test(`${p.qual ?? ""} ${p.with_check ?? ""}`))
       .map((p) => `${p.tablename}.${p.policyname} (${p.cmd})`);
     expect(offenders).toEqual([]);
-    const cols = await adminQuery(
-      `select table_name from information_schema.columns
-        where table_schema = 'public' and table_name = any($1) and column_name = 'studio_id'`,
-      [[...PUBLIC_SIGNUP_TABLES]],
-    );
-    expect(cols.rows).toEqual([]);
   });
 });
 

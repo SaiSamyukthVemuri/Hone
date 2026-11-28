@@ -192,6 +192,32 @@ describe("checkout method selection in the actual session payment card", () => {
     expect(control<HTMLButtonElement>("settlement-open-stripe").disabled).toBe(true);
     expect(control("settlement-open-paid_cash").getAttribute("aria-pressed")).toBe("true");
     expect(control("settlement-confirm-paid_cash").textContent).toBe("Confirm payment · $90.00 USD");
+    expect(host.querySelector("a")?.getAttribute("href")).toBe("/clients/client/sessions/new?appointment_id=appointment");
     expect(record).not.toHaveBeenCalled();
+  });
+
+  it("can recheck a failed chart lookup without creating a chart or recording payment", async () => {
+    getContext.mockResolvedValueOnce({ ok: false, isOwner: true, clientId: "client", reason: "Could not verify chart", settlement: null, retryable: true });
+    getContext.mockResolvedValueOnce({ ok: false, isOwner: true, clientId: "client", reason: "No treatment session",
+      settlement: { appointmentId: "appointment", canRecord: true, settledMethod: null, quotedAmountCents: 9000, currency: "cad" } });
+    await act(async () => root.render(createElement(QuickCheckoutModal, { appointmentId: "appointment", open: true, onClose: vi.fn() })));
+    expect(host.querySelector("a, fieldset")).toBeNull();
+    const retry = [...host.querySelectorAll("button")].find(b => b.textContent === "Retry checkout");
+    expect(retry).toBeTruthy();
+    await act(async () => retry!.click());
+    expect(getContext).toHaveBeenCalledTimes(2);
+    expect(host.querySelector("a")?.getAttribute("href")).toBe("/clients/client/sessions/new?appointment_id=appointment");
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { quotedAmountCents: 0, canRecord: true, settledMethod: null },
+    { quotedAmountCents: 9000, canRecord: false, settledMethod: null },
+    { quotedAmountCents: 9000, canRecord: true, settledMethod: "paid_cash" },
+  ])("offers no chart-for-checkout shortcut for a free, incomplete or settled visit (%j)", async state => {
+    getContext.mockResolvedValue({ ok: false, isOwner: true, clientId: "client", reason: "No treatment session",
+      settlement: { appointmentId: "appointment", settledId: null, settledAmountCents: null, settledQuotedCents: null, ...state } });
+    await act(async () => root.render(createElement(QuickCheckoutModal, { appointmentId: "appointment", open: true, onClose: vi.fn() })));
+    expect(host.querySelector("a")?.getAttribute("href")).toBe("/clients/client?tab=sessions");
   });
 });
