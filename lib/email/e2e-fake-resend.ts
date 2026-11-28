@@ -280,7 +280,14 @@ export function createFakeResendTransport(): MinimalEmailTransport {
               html_sha256: sha256(String(html ?? "")),
             }
           : {};
-        recordFakeResendSend({ t: new Date().toISOString(), pid: process.pid, mode, to: ledgerRecipients(to), subject, ...bodies });
+        // A single disposable browser fixture receives the same link as its client.
+        // Keep other recipients, message bodies and unrelated URLs out of this observation.
+        const recoveryMail = typeof to === "string" && isHarnessRecipient(to)
+          && to === process.env.HONE_E2E_PORTAL_RECOVERY_MAILBOX && fakeResendLedgerPath()
+          ? { hrefs: extractLedgerHrefs(html, text).filter((link) =>
+              /^http:\/\/localhost:\d+\/portal\/verify\/[A-Za-z0-9_-]{43}$/.test(link)) }
+          : {};
+        recordFakeResendSend({ t: new Date().toISOString(), pid: process.pid, mode, to: ledgerRecipients(to), subject, ...recoveryMail, ...bodies });
         if (mode === "hold") {
           // GENUINELY IN FLIGHT for HOLD_MS. Bounded and self-releasing: no test
           // can leave a request hanging, and nothing outside the fake changes.

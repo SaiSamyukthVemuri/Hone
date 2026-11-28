@@ -63,9 +63,8 @@ export async function sql<T = Record<string, unknown>>(
   }
 }
 
-export async function seedE2eStudio(): Promise<E2eSeed> {
+export async function seedE2eStudio(studioId: string = randomUUID()): Promise<E2eSeed> {
   const runId = randomUUID().slice(0, 8);
-  const studioId = randomUUID();
   const slug = `e2e-studio-${runId}`;
   const studioName = `E2E Studio ${runId}`;
   const ownerEmail = `e2e-owner-${runId}@harness.local`;

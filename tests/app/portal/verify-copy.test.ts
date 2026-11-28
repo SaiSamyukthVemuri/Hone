@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Portal verify-page TTL copy fix (copy only). The login page + email were
-// already correct ("1 hour"); the verify page still said "30 minutes" (stale
-// since the TTL was raised to 60 min in PR #166). Fix the copy only — no token /
-// hashing / TTL / verify-behavior / enumeration change.
+// The email and fresh sign-in page explain the TTL. Someone using an old
+// message gets an actionable recovery prompt without diagnosing their session.
 function read(rel: string): string {
   return readFileSync(path.resolve(__dirname, "../../../", rel), "utf8");
 }
@@ -18,8 +16,9 @@ describe("portal verify-page expiry copy matches the 60-minute TTL", () => {
   it("verify page no longer says 30 minutes", () => {
     expect(VERIFY).not.toMatch(/30 minutes/);
   });
-  it("verify page says 1 hour", () => {
-    expect(VERIFY).toMatch(/expire after 1 hour/);
+  it("offers a fresh sign-in link without a contradictory expiry headline", () => {
+    expect(VERIFY).toMatch(/Get a fresh sign-in link/);
+    expect(VERIFY).not.toMatch(/link has expired|secure link can.t be used/i);
   });
   it("login page still says 1 hour (unchanged since PR #367)", () => {
     expect(LOGIN).toMatch(/expires in 1 hour/);
@@ -29,7 +28,7 @@ describe("portal verify-page expiry copy matches the 60-minute TTL", () => {
     expect(ISSUANCE).toMatch(/const MAGIC_LINK_TTL_MS = 60 \* 60 \* 1000;/);
     expect(HELPER).toMatch(/PORTAL_MAGIC_LINK_TTL_MS = 60 \* 60 \* 1000;/);
   });
-  it("copy-only: verify behavior + token handling in the verify page are intact", () => {
+  it("the verify page still uses the one-time token and keeps its checks", () => {
     // the token hash-lookup + expiry + single-use checks are still present.
     expect(VERIFY).toMatch(/hashToken/);
     expect(VERIFY).toMatch(/expires_at/);

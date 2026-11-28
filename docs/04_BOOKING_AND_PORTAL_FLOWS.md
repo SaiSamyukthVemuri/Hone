@@ -230,6 +230,12 @@ When the picked reason is `schedule_changed` or `prefer_reschedule`, the cancel 
 
 Surface: `/portal` (post-magic-link), `/portal/login`, `/portal/verify/<token>`.
 
+### Studio portal pilot
+
+The classic and redesigned portals use the same `/portal` route, client session, appointment rows, form signatures, messages and payment method. The redesigned overview surfaces outstanding tasks and upcoming appointments. Studio owners can save and preview their own portal wording before publishing. Public contact copy uses the name the studio provides, with the studio name as the fallback. Service preparation, aftercare, versioned consent and card authorization each keep their existing editor and source of truth. See the [pilot and rollback procedure](./11_RUNBOOK.md#client-portal-pilot-and-rollback).
+
+A client reschedule cancels the old appointment and creates a confirmed replacement for the same studio and client. A staff move updates the existing booking. Both views select future confirmed appointments for that identity, order the results by time and appointment ID, and show the studio’s time zone. A failed appointment read gives the client a retry. Only a successful empty read produces the empty-calendar message.
+
 ### Magic-link sign-in
 
 See [docs/03 §3](./03_SECURITY_AND_PRIVACY.md#3-portal-session-model). Generic-success response on `requestPortalMagicLinkAction` regardless of match. GET on `/portal/verify/<token>` is non-consuming so email scanners do not burn the token; POST consumes via conditional UPDATE.
@@ -260,7 +266,7 @@ What Replace does NOT do:
 
 ### Portal layout (PR #136 zones, PR #159 cleanup)
 
-The portal home (`/portal`) renders one header + one Needs you block + four top-level information sections. The legacy "Your info" wrapper used to group everything below Needs you under a single heading; PR #159 retired it after Chloe's smoke-test feedback ("the portal's a little cluttered looking").
+The classic portal home (`/portal`) renders one header + one Needs you block + four top-level information sections. The legacy "Your info" wrapper used to group everything below Needs you under a single heading; PR #159 retired it after Chloe's smoke-test feedback ("the portal's a little cluttered looking").
 
 **Header (PR #159).** Studio name eyebrow, greeting, one-line intro. Top-right cluster carries the contact-the-studio action (`Email <studio>` button, gated on `studio.postcare_contact_email`) and the Sign out button. Same `mailto:` shape as the previous bottom-of-page block; the bottom block is now removed to avoid duplicating the affordance.
 
@@ -307,7 +313,7 @@ Practitioner-side message thread surface has a "Mark reviewed" action that flips
 | Same email in two studios | Each studio has its own `clients` row. Portal sign-in goes through `/portal/login?studio=<slug>`; the action narrows the find-or-create to that studio. |
 | Archived client tries to sign in | `findActiveClientsForPortalLogin` only returns `status='active'`. No magic link is sent; the generic success message hides the archived state. |
 | Invalid / unknown / expired cancel token | All three collapse to the same generic "this cancellation link can't be used right now" message. |
-| Expired portal magic link | Same collapse to the generic unavailable surface; the visitor requests a new link from `/portal/login`. |
+| Previously used or expired portal magic link | An active session for that exact studio and client opens the portal. Otherwise the visitor can request a fresh email from the link itself. |
 | No availability in the booking window | `PublicBookForm` shows "no available slots in this window" plus the "Next available day" button. |
 | Drag-to-block carved out of availability | The public booking slot list excludes any window intersecting a `studio_timed_blocks` row. The all-day block uses `[utc(date 00:00), utc(date+1 00:00))` so a midnight-spanning block is exclusive of the end. |
 

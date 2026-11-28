@@ -1002,6 +1002,10 @@ export const NON_SEARCHABLE_ROUTES: ReadonlyArray<{
       "Doorway or legacy URL that only redirects to a focused settings view. Each view is registered individually.",
   },
   {
+    route: "/settings/studio/client-portal",
+    reason: "Owner-only portal pilot. Only enrolled owners see its Studio settings entry; global search does not have the pilot enrollment context.",
+  },
+  {
     route: "/settings/studio",
     reason:
       "Doorway or legacy URL that only redirects to a focused settings view. Each view is registered individually.",

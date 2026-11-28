@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { defaultPortalPresentation } from "@/lib/portal/presentation";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 import { refused, shapeOf, vacuityPlan } from "./receptionist-callable-surface.classify";
@@ -136,6 +137,7 @@ function callSql(f: FnRow): string | null {
   return `select to_jsonb(t) as j from ${fn} as t`;
 }
 function paramsFor(f: FnRow, studio: SeededStudio): unknown[] {
+  if (f.name === "edit_studio_portal_presentation") return [studio.studioId, 1, "publish", null];
   if (f.name === "receptionist_find_openings_v2") {
     const date = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     return [studio.studioId, serviceId, [studio.practitionerId], date, date, "00:00", null];
@@ -213,6 +215,11 @@ let before: Record<string, number> = {};
 beforeAll(async () => {
   A = await seedStudio("surf-a");
   B = await seedStudio("surf-b");
+  // Use the owner's normal save path so table probes have a private draft and the publish probe has a valid revision.
+  await asUser(A.userId, (q) => q(
+    "select public.edit_studio_portal_presentation($1, 0, 'save', $2::jsonb)",
+    [A.studioId, JSON.stringify({ ...defaultPortalPresentation(), welcomeHeading: "Unpublished studio draft" })],
+  ));
   ({ sessionId, blockId } = await seedSession(A));
   apptId = randomUUID();
   serviceId = (await adminQuery(`insert into public.services (studio_id, name, default_duration_minutes, active, modality) values ($1,'Probe service',30,true,'electrolysis') returning id`, [A.studioId])).rows[0].id as string;
@@ -341,6 +348,9 @@ describe("C2 + C4: the actor matrix with real ids", () => {
       if (!c || c.cls === "pure" || c.cls === "platform" || c.cls === "invite") continue;
       const o = await probe(owner, f, A);
       const r = await probe(actors.recA, f, A);
+      if (f.name === "edit_studio_portal_presentation") {
+        expect(o, "the owner publishes the seeded draft inside the rolled-back probe").toMatchObject({ kind: "data", writes: 1 });
+      }
       compared++;
       if (c.cls === "desk" && /create|cancel|move/.test(f.name)) continue; // the desk's writes are proven by their own refusal status below
       if (sig(o) === sig(r)) undistinguished.push(`${f.schema}.${f.key}: ${sig(r)}`);

@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 295,
-    "last": "0391_retire_direct_public_lead_inserts.sql",
-    "sha256": "05ef0ca685e9026ce3bd8979b5c7e46d411c8fe004ea1edebe9ebffda2cb26d9"
+    "count": 296,
+    "last": "0398_studio_portal_presentations.sql",
+    "sha256": "fa79c6f2e2c7939aaf5bbf3804a5dffdec2f8780cd1f841dce6d4c57896a2f92"
   },
   "public": {
     "tables": [
@@ -124,6 +124,7 @@
       "studio_payment_jurisdiction_changes",
       "studio_payment_jurisdictions",
       "studio_payment_settings",
+      "studio_portal_presentations",
       "studio_receptionists",
       "studio_recurring_break_occurrences",
       "studio_recurring_break_rules",
@@ -329,6 +330,7 @@
       "dismiss_attention_item",
       "edit_client_pinned_note",
       "edit_session_started_at",
+      "edit_studio_portal_presentation",
       "effective_new_client_admission",
       "email_delivery_health",
       "email_outbound_messages_identity_guard",
@@ -436,7 +438,6 @@
       "move_or_reassign_appointment",
       "my_hone_billing_status",
       "my_hone_solo_impact",
-      "my_hone_studio_canceled",
       "my_hone_team_seats",
       "my_pending_invitation",
       "new_client_waitlist_entries_erase_on_remove",
