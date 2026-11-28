@@ -109,6 +109,12 @@ export const TEXT_LINK_FEEDBACK = cx(
 );
 
 export const PRESS_TRANSITION = "hone-transition-press";
+
+/**
+ * A whole logbook row that is a disclosure (<summary>): a mouse hover tints it, a press darkens it, and a keyboard focus draws an inset ring. The ring is INSET because
+ * these rows sit in an `overflow-hidden` rounded card, which would clip an outer ring.
+ */
+export const DISCLOSURE_ROW_FEEDBACK = cx("hover:bg-surface-sunken active:bg-line", NAV_ROW_FOCUS, PRESS_TRANSITION);
 export const UI_TRANSITION = "hone-transition-ui";
 
 /** Disabled/pending look, spelled once. 168 of 191 existing sites use opacity-50. */
