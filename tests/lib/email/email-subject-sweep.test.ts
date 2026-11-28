@@ -255,6 +255,9 @@ const SEND_SITES: Record<string, string[] | { inline: string }> = {
   "app/(app)/clients/[id]/portal-messages-actions.ts": ["buildPortalMessageNotificationEmail"],
   "app/(app)/settings/team/actions.ts": ["buildInvitationEmail"],
   "lib/billing/payment-receipt.ts": ["buildPaymentReceiptEmail"],
+  "app/api/cron/subscription-emails/route.ts": {
+    inline: "sandbox owner billing notices, restricted to the configured acceptance inbox; production subject/threading review belongs to HON-89 before activation",
+  },
   "lib/ops/alert-email.ts": {
     inline: "operator alert; subject is `[Hone CRITICAL] <event slug>`: grouping one failure class in one thread is intended, and it names no client, record or time",
   },

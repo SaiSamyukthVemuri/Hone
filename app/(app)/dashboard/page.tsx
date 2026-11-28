@@ -1,3 +1,4 @@
+import { StaffWelcome } from "@/components/onboarding/staff-welcome";
 import { Suspense } from "react";
 import { SummaryStrip } from "./summary-strip";
 import { dashboardRebookCalendarHref } from "@/lib/calendar/dashboard-rebook";
@@ -252,7 +253,7 @@ export default async function DashboardPage({
 }: {
   // `day` is browser-controlled and Next hands repeated params through as an
   // array, so the type says so rather than lying about it.
-  searchParams: Promise<{ period?: string; day?: string | string[]; unpaid?: string }>;
+  searchParams: Promise<{ period?: string; day?: string | string[]; unpaid?: string; setup?: string }>;
 }) {
   const sp = await searchParams;
   // PR #208: practice-snapshot period filter. Default: this week.
@@ -799,7 +800,7 @@ export default async function DashboardPage({
         const model = buildOnboardingModel(signals, toPersisted(row));
         // Auto-open on load until the owner dismisses it or finishes; the pinned
         // card re-opens it thereafter.
-        const initialOpen = !model.dismissed && !model.isComplete;
+        const initialOpen = !model.isComplete && (!model.dismissed || sp.setup === "resume");
         return { model, initialOpen };
       })()
     : null;
@@ -827,6 +828,8 @@ export default async function DashboardPage({
           Book appointment
         </Link>
       </header>
+
+      {practitioner.role === "practitioner" && <StaffWelcome role="practitioner" membershipId={practitioner.id} />}
 
       {/* Onboarding v2: pinned setup-progress card + auto-opening guided wizard,
           above the fold. Opt-in per studio + owner-only; supersedes the legacy

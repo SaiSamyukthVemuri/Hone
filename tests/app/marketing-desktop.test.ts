@@ -204,10 +204,10 @@ describe("one filled button per view", () => {
   // REVISION 3. The homepage's opening row carries the request a few hundred
   // pixels below the header, so the header drops its copy there, and only
   // there: on every other page the header's request is the way back to it.
-  it("only the homepage turns the header's request off", () => {
+  it("the homepage hides the walkthrough in the header and can offer sandbox signup", () => {
     const header = read("app/_components/marketing/SiteHeader.tsx");
     expect(header).toMatch(/export function SiteHeader\(\{ cta = true \}/);
-    expect(header).toMatch(/\{cta \? \(\s*<CTAButton/);
+    expect(header).toMatch(/\{cta \|\| selfServe \? \(\s*<CTAButton/);
     expect(read("app/page.tsx")).toMatch(/<SiteHeader cta=\{false\} \/>/);
     const others = [...PAGE_FILES.filter((p) => p !== "app/page.tsx"), "app/_components/PolicyLayout.tsx"];
     for (const f of others) {

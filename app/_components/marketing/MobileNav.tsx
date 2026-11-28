@@ -18,7 +18,7 @@ import { MK_FONT_DISPLAY } from "./tokens";
 // while still keeping the opacity fade. On open, focus moves into the dialog and
 // Tab is trapped; Escape or a link click closes it and restores focus to the
 // trigger. Body scroll-locks while open; 44px targets; no horizontal overflow.
-export function MobileNav() {
+export function MobileNav({ selfServe = false }: { selfServe?: boolean } = {}) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -148,12 +148,12 @@ export function MobileNav() {
             </Link>
           ))}
           <Link
-            href={WALKTHROUGH.href}
+            href={selfServe ? "/pricing" : WALKTHROUGH.href}
             onClick={close}
             data-event={ANALYTICS_EVENTS.primaryCtaClick}
             className="mt-4 inline-flex min-h-[48px] items-center justify-center rounded-[8px] bg-mineral px-5 text-[1rem] font-semibold text-paper"
           >
-            {WALKTHROUGH.primaryLabelShort}
+            {selfServe ? "Sign up" : WALKTHROUGH.primaryLabelShort}
           </Link>
         </nav>
       </div>

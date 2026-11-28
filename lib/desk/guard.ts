@@ -3,6 +3,7 @@ import { cache } from "react";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { readSelectedStudioId } from "@/lib/supabase/selected-studio";
+import { isSelfServeCheckoutEnabled } from "@/lib/subscriptions/plans";
 import { isDeskEnabled } from "@/lib/desk/flag";
 import { resolveDeskMembership, type ReceptionistRow } from "@/lib/desk/membership";
 
@@ -48,6 +49,12 @@ export async function requireReceptionistWithStudio(): Promise<DeskIdentity> {
   const membership = resolveDeskMembership(identity.rows, await readSelectedStudioId());
   if (membership.kind === "none") redirect("/no-access");
   if (membership.kind === "choose") redirect("/desk/choose");
+  if (isSelfServeCheckoutEnabled(process.env)) {
+    const db = await createClient();
+    const { data: canceled, error } = await db.rpc("my_hone_studio_canceled", { p_studio: membership.value.studioId });
+    if (error || typeof canceled !== "boolean") throw new Error("Could not verify studio access.");
+    if (canceled) redirect(identity.rows.length > 1 ? "/subscription-paused?desk=choose" : "/subscription-paused?desk=single");
+  }
   return membership.value;
 }
 

@@ -30,6 +30,43 @@ async function seedReadyStudio() {
   return seed;
 }
 
+test("owner saves real availability, resumes setup and opens the studio calendar", async ({ page }) => {
+  const seed = await seedReadyStudio();
+  await setStudioOnboardingV2Enabled(seed.studioId, true);
+  await sql("delete from public.studio_availability_default where studio_id = $1", [seed.studioId]);
+  await loginAsOwner(page, seed);
+
+  const wizard = page.locator(WIZARD);
+  await wizard.getByRole("button", { name: "Get started" }).click();
+  await wizard.getByRole("button", { name: "Continue" }).click();
+  await wizard.getByRole("link", { name: "Configure availability" }).click();
+  await expect(page).toHaveURL(/\/settings\/availability$/);
+  await page.getByRole("button", { name: "Weekdays 9–5" }).click();
+  await page.getByRole("button", { name: "Replace", exact: true }).click();
+  await expect(page.getByRole("button", { name: /^(Replace|Applying…)$/ })).toHaveCount(0);
+
+  const hours = await sql<{ day_of_week: number }>(
+    "select day_of_week from public.studio_availability_default where studio_id = $1 and is_open and open_time = '09:00' and close_time = '17:00' order by day_of_week",
+    [seed.studioId],
+  );
+  expect(hours.map((day) => day.day_of_week)).toEqual([1, 2, 3, 4, 5]);
+  await page.getByRole("link", { name: "Return to studio setup" }).click();
+  await expect(wizard).toBeVisible();
+  // All required steps now read as complete from the database. Continue from
+  // the saved position when the service/availability action won the write race.
+  const skip = wizard.getByRole("button", { name: "Skip for now" });
+  for (let i = 0; i < 3 && !(await skip.isVisible()); i++) {
+    await wizard.getByRole("button", { name: "Continue" }).click();
+  }
+  await skip.click();
+  await wizard.getByRole("button", { name: "Open calendar" }).click();
+  await expect(page).toHaveURL(/\/calendar(?:\?|$)/);
+  await page.goto("/dashboard");
+  await expect(wizard).toHaveCount(0);
+  await page.goto("/settings/availability");
+  await expect(page.getByRole("link", { name: "Return to studio setup" })).toHaveCount(0);
+});
+
 test.describe("onboarding v2 — flag OFF (default) is unchanged", () => {
   test("no wizard, and the legacy getting-started link is shown", async ({
     page,

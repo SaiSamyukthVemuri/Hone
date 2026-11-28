@@ -12,6 +12,7 @@ import { SettingsDirectory } from "./settings-directory";
 import { SettingIcon } from "./setting-icon";
 
 type Props = {
+  showSetupReturn?: boolean;
   sections: OverviewSection[];
   reachable?: { label: string; href: string }[];
   studioName: string;
@@ -23,7 +24,7 @@ const navItem = "flex min-h-11 items-center gap-2.5 rounded-md px-2.5 py-2 text-
 const selected = "border-l-2 border-fg bg-surface-sunken font-medium";
 const shellControl = cx(CONTROL_MIN_TOUCH, "min-w-[44px] pointer-fine:min-h-10");
 
-export function SettingsShell({ sections, reachable = [], studioName, roleLabel, children }: Props) {
+export function SettingsShell({ sections, reachable = [], studioName, roleLabel, showSetupReturn = false, children }: Props) {
   const pathname = usePathname() ?? "";
   const query = useSearchParams()?.toString() ?? "";
   const reachableHere = reachable.find(link => pathname === link.href || pathname.startsWith(link.href + "/"));
@@ -206,6 +207,11 @@ export function SettingsShell({ sections, reachable = [], studioName, roleLabel,
               {link.label}
             </PendingLink>)}
           </nav>}
+          {showSetupReturn && (
+            <PendingLink href="/dashboard?setup=resume" prefetch={false} className="mb-4 inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-4">
+              Return to studio setup
+            </PendingLink>
+          )}
           {children}
         </div>
         <dialog id={dialogId} ref={popup} aria-label={panel === "search" ? "Find a setting" : "Settings menu"} onClose={() => setOpen(false)}

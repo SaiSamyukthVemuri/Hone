@@ -192,4 +192,3 @@ describe("the down file refuses to run over 0382", () => {
     expect(DOWN).toContain("0380 down check: % is not the reviewed restored body");
   });
 });
-

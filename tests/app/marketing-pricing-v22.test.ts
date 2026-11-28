@@ -210,9 +210,9 @@ describe("the FAQ answers what it asks", () => {
     // passed. This file's own header says a rule a comment can satisfy is not
     // a rule, and the first draft was exactly that.
     const raw = strip(read("app/pricing/page.tsx"));
-    const start = raw.indexOf("const FAQ:");
+    const start = raw.indexOf("function pricingFaq(");
     expect(start, "the FAQ array exists").toBeGreaterThan(-1);
-    return raw.slice(start, raw.indexOf("\n];", start));
+    return raw.slice(start, raw.indexOf("\n}", start));
   })();
 
   const questions = [...FAQ_BLOCK.matchAll(/^\s*q:\s*"([^"]+)"/gm)].map((m) => m[1]);

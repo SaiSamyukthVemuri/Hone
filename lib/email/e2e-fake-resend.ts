@@ -221,7 +221,7 @@ export type MinimalEmailTransport = {
       text: string;
       replyTo?: string;
       attachments?: ReadonlyArray<{ filename: string; content: Buffer }>;
-    }) => Promise<{
+    }, options?: { idempotencyKey: string }) => Promise<{
       data?: { id?: string } | null;
       // The error envelope carries what `classifyResendError` in
       // lib/email/send-appointment.ts actually READS -- `statusCode` and

@@ -1,6 +1,8 @@
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { getSettingsNavigation } from "@/lib/settings/nav-registry";
 import { buildSettingsOverview } from "@/lib/settings/overview";
+import { getOnboardingRow } from "@/lib/onboarding/state";
+import { ownerWorkspacePaused } from "@/lib/subscriptions/owner-billing";
 import { SettingsShell } from "@/components/settings/settings-shell";
 
 // Settings layout. The rail is evaluated on the SERVER from the nav registry
@@ -17,10 +19,18 @@ export default async function SettingsLayout({
 }) {
   const { practitioner, studio } = await requirePractitionerWithStudio();
   const role = practitioner.role === "owner" ? "owner" : "practitioner";
-  const { items, reachable } = await getSettingsNavigation(role, studio);
+  if (role === "owner" && await ownerWorkspacePaused(studio.id)) {
+    return <>{children}</>;
+  }
+  const hasSetup = role === "owner" && studio.onboarding_v2_enabled === true;
+  const [{ items, reachable }, setup] = await Promise.all([
+    getSettingsNavigation(role, studio),
+    hasSetup ? getOnboardingRow(studio.id) : null,
+  ]);
 
   return (
     <SettingsShell
+      showSetupReturn={hasSetup && !setup?.completed_at}
       sections={buildSettingsOverview(items, {
         isOwner: role === "owner",
         googleCalendarEnabled: studio.google_calendar_connection_enabled === true,

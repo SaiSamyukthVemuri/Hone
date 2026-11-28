@@ -13,7 +13,7 @@ const categories = [
   { name: "Messages", ids: ["studio-email", "studio-text-messages", "integrations-sms"] },
   { name: "Payments & fees", ids: ["payments-setup", "payments-card-on-file", "payments-fees"] },
   { name: "Client forms & care", ids: ["consent", "forms-intake-preview", "forms-postcare", "forms-cancellation-policy"] },
-  { name: "Studio & team", ids: ["studio-details", "team", "calendar-display", "launch"] },
+  { name: "Studio & team", ids: ["studio-details", "team", "subscription", "calendar-display", "launch"] },
   { name: "Services & machines", ids: ["services", "machines"] },
   { name: "Connections & data", ids: ["integrations-google", "integrations-marketing", "import", "data"] },
   { name: "My profile", ids: ["profile-details", "settings-calendar-feed", "settings-google-calendar-own"] },

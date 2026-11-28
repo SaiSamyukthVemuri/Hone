@@ -1,5 +1,8 @@
-import { WAITLIST_PATH } from "@/lib/waitlist/paths";
+import { ownerWorkspacePaused } from "@/lib/subscriptions/owner-billing";
+import { signOutFromGate } from "@/app/(auth)/no-access/actions";
+import { OwnerBillingNotice } from "@/lib/subscriptions/OwnerBillingNotice";
 import { PendingLink } from "@/components/pending-link";
+import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import { PrimaryNavLink } from "./PrimaryNavLink";
 import { AppMain } from "./AppMain";
 import { HeaderCluster } from "./HeaderCluster";
@@ -40,6 +43,15 @@ export default async function AppLayout({
   const { practitioner, studio } = await timed("shell.identity", () =>
     requirePractitionerWithStudio(),
   );
+  if (practitioner.role === "owner" && await ownerWorkspacePaused(studio.id)) {
+    return <div className="mx-auto max-w-5xl px-5 py-6">
+      <header className="mb-6 flex items-center gap-4 border-b border-line pb-4">
+        <strong className="mr-auto">Hone</strong>
+        {(await listActiveStudioMemberships()).length > 1 && <PendingLink href="/no-access?reason=multiple-studios" className="underline">Switch studio</PendingLink>}
+        <form action={signOutFromGate}><button className="underline">Sign out</button></form>
+      </header><main>{children}</main>
+    </div>;
+  }
   const admin = isAdmin(practitioner.email);
 
   // Identify the practitioner SERVER-SIDE (opaque UUID + validated coarse role
@@ -236,6 +248,7 @@ export default async function AppLayout({
       </SearchProvider>
       </NotificationsProvider>
       </SignOutFlightProvider>
+      {practitioner.role === "owner" && <OwnerBillingNotice studioId={studio.id} />}
       <AppMain>{children}</AppMain>
       <AppFooter />
       {/* PR #142. Analytics mounts here (and at the other safe-tree

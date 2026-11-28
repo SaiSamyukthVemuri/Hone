@@ -1,0 +1,9 @@
+<h2>Sign in to Hone</h2>
+{{ if eq .RedirectTo (printf "%s/signup" .SiteURL) }}
+<p>Enter this code in Hone to continue.</p>
+<p><strong>{{ .Token }}</strong></p>
+{{ else }}
+<p><a href="{{ .ConfirmationURL }}">Continue to Hone</a></p>
+<p>If Hone asked for a code, enter <strong>{{ .Token }}</strong>.</p>
+{{ end }}
+<p>If you didn’t request this email, you can ignore it.</p>

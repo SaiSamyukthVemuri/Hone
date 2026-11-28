@@ -338,7 +338,7 @@ describe("dashboard cleanup — completed setup and pilot tooling do not render"
       /\{!model\.isComplete && !completedLocally && \(\s*<OnboardingProgressCard/,
     );
     // The local flag is never set except on a RECORDED completion.
-    expect(surface).toMatch(/if \(res\.ok\) setCompletedLocally\(true\)/);
+    expect(surface).toMatch(/if \(res\.ok\)\s*\{?\s*setCompletedLocally\(true\)/);
     expect(surface).not.toMatch(/setCompletedLocally\(true\);?\s*\n?\s*\}?\s*startTransition/);
   });
 
