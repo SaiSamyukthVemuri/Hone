@@ -296,24 +296,16 @@ test.describe("portal rebooking", () => {
 
     await sql(`update public.clients set archived_at = now() where id = $1`, [clientId]);
 
-    // THE REFUSAL IS ASSERTED ON THE RESPONSE, NOT BY NAVIGATING.
-    //
-    // /portal redirects an archived client to /portal/login, and /portal/login
-    // redirects anyone holding a live session back to /portal — so an archived
-    // client whose portal session is still live bounces between the two and a
-    // real navigation dies with ERR_TOO_MANY_REDIRECTS. Both halves of that
-    // loop exist verbatim at production a7265e38 and neither is touched by this
-    // change; it is a pre-existing portal session/archival defect, reported
-    // separately rather than fixed in an emergency booking lane.
-    //
-    // Asserting the loop would pin a defect as a guarantee. Asserting the ONE
-    // redirect is the true, durable statement: the archived client is refused
-    // at the portal home and is never served a booking surface.
+    // Check the home redirect itself and then navigate with the very same
+    // cookie. The login page must stay put after the client is archived.
     const refused = await page.request.get("/portal", { maxRedirects: 0 });
     expect(refused.status(), "archived client must be redirected away").toBeGreaterThanOrEqual(300);
     expect(refused.status()).toBeLessThan(400);
     expect(refused.headers()["location"]).toContain("/portal/login");
     expect(await refused.text()).not.toContain("portal-rebook");
+    await page.goto("/portal");
+    await expect(page).toHaveURL(/\/portal\/login$/);
+    await expect(page.getByRole("heading", { name: "Sign in to your secure portal" })).toBeVisible();
 
     // And nothing was booked along the way.
     expect(await appointmentsFor(seed.studioId, clientId)).toHaveLength(0);

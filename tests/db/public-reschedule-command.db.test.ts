@@ -1,4 +1,7 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { E2E_SERVICE_ROLE_KEY, E2E_SUPABASE_URL } from "@/e2e/helpers/local-env";
+import { getPortalUpcomingAppointments } from "@/lib/portal/queries";
+import { verifyCancellationToken } from "@/lib/booking/tokens";
 import { adminQuery, asRole, closePool } from "./helpers/harness";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -295,6 +298,40 @@ describe("0171 reschedule_appointment_v2 — the successful reschedule", () => {
     expect(new Date(out.original_starts_at!).toISOString()).toBe(
       new Date(f.originalStart).toISOString(),
     );
+  });
+
+  it("the original portal identity sees exactly the replacement at its new time after rescheduling", async () => {
+    const f = await seed("portal-reschedule", { tz: "America/Toronto" });
+    const other = await seed("portal-other");
+    // 01:00 UTC is still the previous calendar day in this studio.
+    const target = at(12, 1);
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", E2E_SUPABASE_URL);
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", E2E_SERVICE_ROLE_KEY);
+    vi.stubEnv("APPOINTMENT_SIGNING_SECRET", "portal-reschedule-synthetic-local-test-secret");
+    try {
+      const readOriginalClient = () => getPortalUpcomingAppointments(f.studioId, f.clientId);
+      const before = await readOriginalClient();
+      expect(before?.map(appointment => appointment.id)).toEqual([f.originalId]);
+
+      const moved = await reschedule(f, target);
+      expect(moved.result).toBe("success");
+      const after = await readOriginalClient();
+      expect(after?.map(appointment => appointment.id)).toEqual([moved.new_appointment_id]);
+      const next = after![0];
+      expect(new Date(next.startsAt).toISOString()).toBe(target);
+      expect(next.serviceName).toBe("Consultation");
+      expect(verifyCancellationToken(next.manageToken!)).toMatchObject({
+        ok: true,
+        appointment_id: moved.new_appointment_id,
+      });
+
+      expect(await getPortalUpcomingAppointments(other.studioId, f.clientId)).toEqual([]);
+      expect(await getPortalUpcomingAppointments(f.studioId, other.clientId)).toEqual([]);
+      expect((await getPortalUpcomingAppointments(other.studioId, other.clientId))?.map(a => a.id))
+        .toEqual([other.originalId]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("writes exactly two audit rows with the canonical shapes", async () => {

@@ -343,6 +343,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
     updateStudioPostcareAction: "owner(self)",
     updateStudioPolicyAction: "owner(self)",
   },
+  "app/(app)/settings/studio/client-portal/actions.ts": { editPortalPresentation: "owner(self)" },
   "app/(app)/settings/studio/sms-settings-actions.ts": {
     setStudioSmsSettingsAction: "owner(self)",
   },
@@ -573,6 +574,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   },
   "app/portal/verify/[token]/actions.ts": {
     verifyPortalMagicLinkAction: "not_staff(portal)+admin",
+    requestReplacementPortalLink: "not_staff(portal)+admin",
   },
   "app/reschedule/[token]/actions.ts": {
     fetchAppointmentForRescheduleAction: "not_staff(token_link)+admin",
@@ -586,6 +588,7 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
 // permission-coverage.test.ts checks the set; tests/db/permission-rpc-privileges.db.test.ts reads the real execute
 // privileges of each from a migrated database.
 export const RPC_NAMES: readonly string[] = [
+  "edit_studio_portal_presentation",
   "acknowledge_waitlist_times_feedback",
   "add_electrolysis_pass",
   "admin_accept_pending_invitation",
@@ -797,6 +800,7 @@ export const RPC_NAMES: readonly string[] = [
 // receptionist too, once one has a session, so each of those needs its own gate in the function body, not only in the
 // action that calls it. Read from a database with the permission engine installed; the engine adds no command the app calls.
 export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
+  edit_studio_portal_presentation: "-u-D",
   acknowledge_waitlist_times_feedback: "--sD",
   add_electrolysis_pass: "-u-D",
   admin_accept_pending_invitation: "--sD",

@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { isRepoMax } from "./helpers/migration-state";
 
 // 0394: the visit payment commands. Source contract; behaviour is proved in tests/db/visit-payment-commands.db.test.ts.
 const UP = readFileSync("supabase/migrations/0394_visit_payment_commands.sql", "utf8");
@@ -17,7 +16,6 @@ const COMMANDS = [
 ];
 
 describe("0394 is shaped like a sealed migration", () => {
-  it("is the repository's newest migration (this file is the current maximum's own test)", () => expect(isRepoMax("0394")).toBe(true));
 
   it("opens its own transaction and arms lock_timeout inside it, in the up and the down", () => {
     for (const f of [UP, DOWN]) {

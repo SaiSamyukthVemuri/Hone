@@ -1,3 +1,4 @@
+import { portalRedesignEnrolled } from "@/lib/portal/presentation-server";
 import { WAITLIST_PATH } from "@/lib/waitlist/paths";
 import "server-only";
 import { cache } from "react";
@@ -88,6 +89,8 @@ export const SETTINGS_NAV: ReadonlyArray<SettingsNavEntry> = [
       { id: "studio-details", label: "Studio details", href: "/settings/studio/details" },
       { id: "studio-email", label: "Email notifications", href: "/settings/studio/email" },
       { id: "studio-text-messages", label: "Text-message preferences", href: "/settings/studio/text-messages" },
+      { id: "studio-client-portal", label: "Client portal", href: "/settings/studio/client-portal",
+        visibleWhen: ({ studio }) => portalRedesignEnrolled(studio.id) },
       { id: "studio-client-self-service", label: "Client self-service", href: "/settings/studio/client-self-service" },
     ],
     order: 10,

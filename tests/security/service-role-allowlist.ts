@@ -20,6 +20,12 @@ export type ServiceRoleAllowlistEntry = {
 
 export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   {
+    path: "lib/portal/presentation-server.ts",
+    purpose: "Render only published client portal copy for an enrolled studio.",
+    why: "Portal sessions have no Supabase authenticated identity. The route resolves the studio from its validated portal session, then reads only its published copy.",
+    scopeGuard: "portalRedesignEnrolled(studioId)",
+  },
+  {
     path: "lib/audit/governed-writes.ts",
     purpose: "SEC-003: only the existing archive/unarchive and owner-export audit emissions after direct member INSERT closure.",
     why: "Internal server-only existing archive/unarchive and owner-export writers. Session getUser and exact active actor/user/studio checks precede service-client construction; archive additionally checks exact client via RLS and export requires owner plus bounded registry metadata. Final membership FOR UPDATE and hardcoded audit insertion are in two explicit narrow service-only 0242 commands under their same existing trusted non-runtime owner. Owner/context/ACL and runtime MEMBER/SET assumptions are checked fail-closed;0178 keeps service_role SELECT-only on practitioner identity, with no new UPDATE grant. There is no separate app-read/direct-INSERT authority decision. Missing/refused/malformed commands fail closed, no old API/table fallback. New command EXECUTE capability needs explicit source/ACL approval; no user/table grants. No generic caller-supplied action/entity/actor metadata. Export refuses bytes on failure; archive failures, including thrown audit reads/transport, return the curated best-effort refusal so committed state/revalidation/redirect survive.",
@@ -633,14 +639,14 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
   },
   {
     path: "app/portal/verify/[token]/actions.ts",
-    purpose: "Public, unauthenticated token-scoped route/query.",
-    why: "No session; the bearer signed/hashed token is verified (hashToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
+    purpose: "Consume a fresh client sign-in proof or request a replacement email.",
+    why: "A hashed bearer token identifies a studio/client pair. Sign-in also requires the current normalized email, active client and studio, an unexpired link and a successful atomic single-use claim. Recovery only sends to the registered mailbox on that same active studio/client record. Both public login rate limits apply and the browser cannot choose a recipient.",
     scopeGuard: "hashToken",
   },
   {
     path: "app/portal/verify/[token]/page.tsx",
-    purpose: "Public, unauthenticated token-scoped route/query.",
-    why: "No session; the bearer signed/hashed token is verified (hashToken) and resolves the exact appointment/intake/portal row. Scope comes from the verified token, so service-role is required.",
+    purpose: "Read-only check of a client portal email link.",
+    why: "The hash identifies the linked studio/client pair server-side. Direct entry requires a matching active session and active client. Otherwise only a valid sign-in POST form or a generic recovery surface is rendered.",
     scopeGuard: "hashToken",
   },
   {

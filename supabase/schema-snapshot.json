@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 294,
-    "last": "0394_visit_payment_commands.sql",
-    "sha256": "82e249f4087d0a562846a1358016d0ff4c763f5bc8c0a00e50bcb6c067c67556"
+    "count": 295,
+    "last": "0398_studio_portal_presentations.sql",
+    "sha256": "53b6b329c842685d7975b14b054b442da7205262490e9bf85e4e3246b98b2fc8"
   },
   "public": {
     "tables": [
@@ -122,6 +122,7 @@
       "studio_payment_jurisdiction_changes",
       "studio_payment_jurisdictions",
       "studio_payment_settings",
+      "studio_portal_presentations",
       "studio_receptionists",
       "studio_recurring_break_occurrences",
       "studio_recurring_break_rules",
@@ -324,6 +325,7 @@
       "dismiss_attention_item",
       "edit_client_pinned_note",
       "edit_session_started_at",
+      "edit_studio_portal_presentation",
       "effective_new_client_admission",
       "email_delivery_health",
       "email_outbound_messages_identity_guard",
