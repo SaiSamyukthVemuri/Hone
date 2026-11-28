@@ -36,7 +36,7 @@ Hone collapses that into one practice surface where the calendar is informed by 
 |---|---|
 | `/book/<slug>` | Book a consultation (new clients) or a service (existing clients) with the studio. |
 | Email from confirmation | Click `/cancel/<token>`, `/reschedule/<token>`, `/manage/<token>` to manage the appointment, with policy acknowledgement before cancelling/rescheduling, and an optional cancellation reason + note + follow-up flag (PR #144). |
-| Email magic link | Sign into `/portal` to see upcoming appointments, signed forms, postcare information, and messages from the studio. |
+| Email magic link | Open the studio portal to see upcoming appointments, complete outstanding forms, read care instructions and messages, and manage the saved payment method. A returning client can reopen the original email. |
 | Portal | Reply to studio messages; sign consent / photo consent / card authorization forms; add a card on file via Stripe Elements (live or test, per the studio's Stripe mode; adding a card never charges it); see policies and cancellation/no-show terms before they commit. |
 | Intake | Complete the intake wizard (one-time per studio) before the first appointment. |
 
