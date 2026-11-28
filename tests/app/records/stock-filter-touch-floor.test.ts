@@ -12,7 +12,8 @@ const linkClass = /<PendingLink[\s\S]*?className=\{cx\(\s*"([^"]*)"/.exec(body)?
 const classesOf = (c: string) => c.replace(/\$\{[^}]*\}/g, " ").split(/\s+/).filter(Boolean);
 const classes = classesOf(linkClass);
 // The sterile row's "Trace usage" link is the same family: a thumb press inside a logbook row.
-const traceClass = /<Link href=\{`\/records\?section=sterile&lot=[^`]*`\} className="([^"]*)">Trace usage<\/Link>/.exec(src)?.[1] ?? "";
+// The link's className is cx("<sizing>", TEXT_LINK_FEEDBACK): the sizing is the first string, the per-state feedback follows it.
+const traceClass = /<Link href=\{`\/records\?section=sterile&lot=[^`]*`\} className=\{cx\("([^"]*)"[^)]*\)\}>Trace usage<\/Link>/.exec(src)?.[1] ?? "";
 const traceClasses = classesOf(traceClass);
 
 describe("the logbook filter and row controls keep the 44px floor on a coarse pointer", () => {

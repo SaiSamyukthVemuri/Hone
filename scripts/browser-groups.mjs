@@ -389,6 +389,8 @@ export const BROWSER_GROUPS = {
       "dat-002-read-failure-refusal.spec.ts",
       // HON-124 item 7. Record Keeping: section menu, stock tabs, Trace usage and the back link show hover, pressed, keyboard focus, tap size.
       "records-feedback.spec.ts",
+      // HON-124 item 7. Record Keeping rows: the sterile and disinfectant row disclosures, their Edit/History summaries and in-row links. Never opens an edit.
+      "records-rows-feedback.spec.ts",
       // UI-01: the shared pending-navigation primitive, a sibling concern to
       // the app-shell error boundary above it — PendingLink is what every
       // query-only navigation (day nav, period pills, calendar toolbar) has
