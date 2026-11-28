@@ -23,7 +23,7 @@
 // app/intake/*, app/cancel/*, app/reschedule/*, app/api/cron/* or
 // app/api/stripe/*.
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
 import { NoteDraftStatus } from "@/components/note-draft-status";
 import type { NoteDraftFields, NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "@/lib/note-drafts/types";
@@ -95,23 +95,31 @@ export function ClientBudgetCard({
     (restored?.fields.budget_level as ClientBudgetLevel | undefined) ?? initial.budgetLevel,
   );
   // HON-130: budget draft. The saved record is written only by the Save button; the same transaction clears the draft.
-  const [notes, setNotes] = useState(restored?.fields.budget_notes ?? initial.budgetNotes);
+  const [budgetText, setBudgetText] = useState(restored?.fields.budget_notes ?? initial.budgetNotes);
   // Uncontrolled textarea (defaultValue, as before); a reset remounts it with a new key.
-  const [notesInit, setNotesInit] = useState(notes);
+  const [notesInit, setBudgetInit] = useState(budgetText);
   const [notesKey, setNotesKey] = useState(0);
-  function resetNotes(next: string) {
-    setNotes(next);
-    setNotesInit(next);
+  function resetBudgetText(next: string) {
+    setBudgetText(next);
+    setBudgetInit(next);
     setNotesKey((k) => k + 1);
   }
   const draftKey: NoteDraftKey = { clientId, kind: "budget", target: "current" };
   const draft = useNoteDraft(draftKey, restored, draftActions ?? { save: async () => ({ status: "error" }), discard: async () => ({ ok: false }) });
   const [restoredAt, setRestoredAt] = useState<string | null>(restored ? restored.savedAt : null);
+  // A chip change is a draft change too (the chips keep their original one-line handlers; this effect reports the change).
+  const levelSeen = useRef(level);
+  useEffect(() => {
+    if (levelSeen.current === level) return;
+    levelSeen.current = level;
+    touch({ level });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [level]);
   function touch(next: { level?: ClientBudgetLevel | null; notes?: string }) {
     if (!draftActions) return;
     setRestoredAt(null);
     const l = next.level !== undefined ? next.level : level;
-    draft.change({ budget_level: l ?? "", budget_notes: next.notes ?? notes });
+    draft.change({ budget_level: l ?? "", budget_notes: next.notes ?? budgetText });
   }
 
   const [state, formAction] = useActionState(
@@ -165,11 +173,7 @@ export function ClientBudgetCard({
                 key={value}
                 type="button"
                 aria-pressed={selected}
-                onClick={() => {
-                  const next = selected ? null : value;
-                  setLevel(next);
-                  touch({ level: next });
-                }}
+                onClick={() => setLevel(selected ? null : value)}
                 // min-h-11 == 44px: the iPad/phone touch-target floor.
                 className={
                   selected
@@ -186,10 +190,7 @@ export function ClientBudgetCard({
           <div>
             <button
               type="button"
-              onClick={() => {
-                setLevel(null);
-                touch({ level: null });
-              }}
+              onClick={() => setLevel(null)}
               className="text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-900 dark:hover:text-neutral-100"
             >
               Clear budget level
@@ -211,7 +212,7 @@ export function ClientBudgetCard({
           key={notesKey}
           defaultValue={notesInit}
           onChange={(e) => {
-            setNotes(e.target.value);
+            setBudgetText(e.target.value);
             touch({ notes: e.target.value });
           }}
           rows={5}
@@ -231,14 +232,14 @@ export function ClientBudgetCard({
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) {
-              if (t.budget_notes !== undefined) resetNotes(t.budget_notes);
+              if (t.budget_notes !== undefined) resetBudgetText(t.budget_notes);
               if (t.budget_level !== undefined) setLevel((t.budget_level || null) as ClientBudgetLevel | null);
             }
           }}
           onDiscard={async () => {
             await draft.discard();
             setRestoredAt(null);
-            resetNotes(initial.budgetNotes);
+            resetBudgetText(initial.budgetNotes);
             setLevel(initial.budgetLevel);
           }}
         />

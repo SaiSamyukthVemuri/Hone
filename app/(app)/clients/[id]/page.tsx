@@ -379,6 +379,7 @@ export default async function ClientCheatSheetPage({
     importedMemory,
     portalAccessEvents,
     overviewVisitAppointments,
+    noteDrafts,
   ] = await Promise.all([
     // PR #157: full appointment history joined to the linked session via the
     // PR #156 appointment_id FK. Rendered only by <ClientAppointmentTimeline>
@@ -466,6 +467,10 @@ export default async function ClientCheatSheetPage({
     isOverview
       ? getOverviewVisitAppointments(studio.id, client.id, new Date(visitNowMs).toISOString())
       : Promise.resolve([] as Awaited<ReturnType<typeof getOverviewVisitAppointments>>),
+    // HON-130: this practitioner's own autosaved note drafts (author-only RLS; empty while the server-side switch is off). Treatment tab only.
+    needsConsultationNotes
+      ? loadNoteDrafts(client.id)
+      : Promise.resolve([] as Awaited<ReturnType<typeof loadNoteDrafts>>),
   ]);
 
   // Pre-0246 SELECT * rows genuinely lack this field. Only that absent-field
@@ -500,8 +505,6 @@ export default async function ClientCheatSheetPage({
 
   // Migration 0126: dated consultation + skin/hair analysis clinical notes.
   // Loaded only when the Consultation tab is active so other tabs pay no cost.
-  // HON-130: this practitioner's own autosaved drafts (author-only RLS). Started beside the notes read, awaited with it.
-  const noteDraftsPromise = needsConsultationNotes ? loadNoteDrafts(client.id) : Promise.resolve([] as Awaited<ReturnType<typeof loadNoteDrafts>>);
   const clinicalNoteSections =
     needsConsultationNotes
       ? await buildClinicalNoteSections(client.id, { historyLimit: 25 })
@@ -515,7 +518,6 @@ export default async function ClientCheatSheetPage({
       ? await getClientBudgetContext(client.id)
       : null;
 
-  const noteDrafts = await noteDraftsPromise;
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
     0,
