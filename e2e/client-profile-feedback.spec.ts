@@ -8,7 +8,7 @@ import { seedE2eClientWithPreviousAreas, seedE2eIntake, seedE2eStudio, sql } fro
 //   pressed : (mouse button held) differs from BOTH rest and hover
 //   focus   : reached by Tab, it draws a ring (box-shadow) that rest does not
 // Reached states (one synthetic client, signed in as the owner): the Overview tab with a SUBMITTED intake and a charted past session (the "<- Clients" back link, the header
-// "Edit", "+ Log session", "Add skin & hair analysis", the Client info "Edit", "View intake"), the Photos tab ("Open treatment photos") and the Sessions tab ("Open session").
+// "Edit", "+ Log session", "Add skin & hair analysis", the Client info "Edit"), the Health tab ("View intake"), the Photos tab ("Open treatment photos") and the Sessions tab ("Open session").
 // Not covered: "View statement" (the statements area is being changed elsewhere), the emergency-contact phone link (plain text), and the "View intake" links of the
 // in-progress and reviewed intake states (the same class list as the submitted one).
 // Every control here is a LINK: every press is released off the control, so nothing is followed; the page's address is read back unchanged, and the client, intake and
@@ -80,8 +80,12 @@ const OVERVIEW: Target = {
     ["+ Log session", page.getByRole("link", { name: "+ Log session" })],
     ["Add skin & hair analysis", page.getByRole("link", { name: "Add skin & hair analysis" })],
     ["Edit (Client info)", page.getByRole("link", { name: "Edit", exact: true }).nth(1)],
-    ["View intake", page.getByRole("link", { name: "View intake" })],
   ],
+};
+const HEALTH: Target = {
+  path: (id) => `/clients/${id}?tab=health`,
+  ready: (page) => page.getByRole("link", { name: "View intake" }),
+  links: (page) => [["View intake", page.getByRole("link", { name: "View intake" })]],
 };
 const PHOTOS: Target = {
   path: (id) => `/clients/${id}?tab=photos`,
@@ -96,7 +100,7 @@ const SESSIONS: Target = {
 
 async function walk(page: Page) {
   const { clientId, before } = await setUp(page);
-  for (const target of [OVERVIEW, PHOTOS, SESSIONS]) {
+  for (const target of [OVERVIEW, HEALTH, PHOTOS, SESSIONS]) {
     await page.goto(target.path(clientId));
     await expect(target.ready(page)).toBeVisible({ timeout: T });
     const url = page.url();
@@ -128,7 +132,7 @@ test.describe("on a touch device", () => {
   test("the client profile's links are at least 44px tall where the pointer is coarse", async ({ page }) => {
     const { clientId, before } = await setUp(page);
     let checked = false;
-    for (const target of [OVERVIEW, PHOTOS, SESSIONS]) {
+    for (const target of [OVERVIEW, HEALTH, PHOTOS, SESSIONS]) {
       await page.goto(target.path(clientId));
       await expect(target.ready(page)).toBeVisible({ timeout: T });
       if (!checked) {
