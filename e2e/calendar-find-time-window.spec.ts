@@ -57,6 +57,17 @@ test("Find time: the 7-day window is stated and checked beside the field, weeks 
   expect(chosen.practitioner).toBe(member.practitionerId);
   expect(chosen.rebookFor, "the client being rebooked is shown").toBeGreaterThan(0);
 
+  // Rebooking starts with a week preset. Check the selected week and the ordinary appointment
+  // context in the signed-in flow before exercising the original manual-date validation.
+  const interval = find.getByLabel("Rebook in");
+  await expect(interval).toHaveValue("1");
+  await expect(find.getByRole("group", { name: "Duration" })).toHaveCount(0);
+  await interval.selectOption("6");
+  await find.getByRole("button", { name: "Search availability" }).click();
+  await expect(find.getByRole("region", { name: "Available times" })).toBeVisible({ timeout: T });
+  expect(await selections(page, find, client.name)).toEqual(chosen);
+  await interval.selectOption("custom");
+
   const from = find.getByLabel("From");
   const through = find.getByLabel("Through");
   const search = find.getByRole("button", { name: "Search availability" });
