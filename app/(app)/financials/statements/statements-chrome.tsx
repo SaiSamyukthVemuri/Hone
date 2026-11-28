@@ -1,3 +1,4 @@
+import { PendingGetForm, PendingSubmit } from "@/components/pending-get-form";
 import { PendingLink } from "@/components/pending-link";
 import { MonthPickerInput } from "./month-picker-input";
 import { CONTROL_MIN_TOUCH, FOCUS_RING, cx } from "@/components/ui/control-base";
@@ -51,14 +52,14 @@ export function MonthControls({ base, month, maxMonth, extra = "" }: { base: str
           <span className="sr-only">Previous month</span>
         </PendingLink>
       ) : null}
-      <form method="get" action={base} className="flex items-center gap-1" aria-label="Choose a month">
+      <PendingGetForm native action={base} className="flex items-center gap-1" aria-label="Choose a month">
         {extra ? <input type="hidden" name="view" value="month" /> : null}
         <label className="text-fg">
           <span className="sr-only">Month</span>
           <MonthPickerInput defaultValue={month} min={STATEMENT_MIN_MONTH} max={maxMonth} className={PICKER} />
         </label>
-        <button type="submit" className="sr-only focus:not-sr-only focus:rounded-lg focus:border focus:border-line-strong focus:bg-white focus:px-3 focus:py-2">Show month</button>
-      </form>
+        <PendingSubmit className="sr-only focus:not-sr-only focus:rounded-lg focus:border focus:border-line-strong focus:bg-white focus:px-3 focus:py-2">Show month</PendingSubmit>
+      </PendingGetForm>
       {next <= maxMonth ? (
         <PendingLink href={href(next)} className={ARROW}>
           <span aria-hidden="true">›</span>

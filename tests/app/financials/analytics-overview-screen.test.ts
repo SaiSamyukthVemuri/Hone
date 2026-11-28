@@ -311,7 +311,7 @@ describe("the Overview layout", () => {
   });
   it("Export data and Print / Save PDF are the existing routes; no explore links to unbuilt pages", () => {
     expect(html).toMatch(/<a href="\/financials\/analytics\/export\.csv[^"]*"[^>]*>Export data<\/a>/);
-    expect(html).toMatch(/<a href="\/financials\/analytics\/print[^"]*"[^>]*>Print \/ Save PDF<\/a>/);
+    expect(html).toMatch(/<a[^>]*href="\/financials\/analytics\/print[^"]*"[^>]*>[\s\S]*?Print \/ Save PDF[\s\S]*?<\/a>/);
     expect(html).not.toMatch(/Explore client history|View all clients|Explore completed visits/);
   });
   it("the line chart draws two lines (current solid, previous dashed) when the previous period is readable, with the chart data closed on screen and open in print", () => {
@@ -416,7 +416,7 @@ describe("compact controls, whole-dollar headline figures and the area under the
     const form = render(healthy()).match(/<form[^>]*aria-label="Period and team member"[\s\S]*?<\/form>/)?.[0] ?? "";
     expect(form).toMatch(/<select[^>]*name="period"/);
     expect(form).toMatch(/<select[^>]*name="practitioner"/);
-    expect(form).toMatch(/<button type="submit"[^>]*>Show<\/button>/);
+    expect(form).toMatch(/<button type="submit"[^>]*>[\s\S]*?Show[\s\S]*?<\/button>/);
     const custom = form.match(/<div[^>]*data-custom-range=""[\s\S]*?<\/div>/)?.[0] ?? "";
     expect(custom).toMatch(/name="from"/);
     expect(custom).toMatch(/name="to"/);
