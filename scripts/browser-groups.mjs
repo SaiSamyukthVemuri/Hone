@@ -484,6 +484,8 @@ export const BROWSER_GROUPS = {
       "onboarding.spec.ts",
       "quick-import.spec.ts",
       "welcome-email-admin.spec.ts",
+      // HON-124 item 7. The six admin header controls: hover, pressed, keyboard focus, 44px, no sideways scroll at 390 px.
+      "admin-nav-feedback.spec.ts",
       // HON-62: the weekly-hours editor's native time inputs (keyboard
       // entry, touch tap, save/reload, untouched existing hours).
       "availability-hours-editor.spec.ts",
