@@ -104,7 +104,7 @@ function positionOf(l: VisitLedger, studioLive: boolean): (Omit<VisitBalance, "c
   const liveCardCents = sum(l.cards.filter((c) => ["ready", "pending_stripe", "succeeded"].includes(c.status) && c.test !== true).map((c) => c.amountCents));
   const reducedRealCents = sum(l.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction" && r.test !== true).map((r) => r.amountCents));
   const collectableCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - liveCardCents + reducedRealCents);
-  // The ONE use of the live distinction: the room for a new TEST card (test_card_room_cents), so test lanes and trial studios cannot stack test charges past the bill.
+  // The ONE use of the live distinction: the room for a new TEST card (test_card_room_cents), so test lanes and trial studios cannot stack test payments past the bill.
   const testCardRoomCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - cardCents + reducedCents);
   return { totalCents: l.bill.totalCents, confirmedCents, pendingCents, cardCents: liveCardCents, refundedCents, collectableCents, testCardRoomCents, owedCents: collectableCents + pendingCents };
 }

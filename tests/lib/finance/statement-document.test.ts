@@ -679,3 +679,18 @@ describe("what a visit's amount is called: 'Agreed fee' only when price evidence
     expect(awaitingVisitLine(d2.visits[0], fmt)).toBe("Nov 19, 2026 · $60 agreed fee · No payment recorded");
   });
 });
+
+describe("Codex P2 (#1827): a card payment refunded BEFORE the split bill is not part of the bill's coverage", () => {
+  const bill100 = (extra: StatementMoneyLine[]) => visit({ feeCandidates: [quote(10000)], lines: [line("bill_note", null, "settlement"), line("collected_cash", 4000, "settlement"), ...extra] });
+  it("$100 legacy card payment fully refunded BEFORE a new $100 bill, then $40 cash: $60 is still due (not paid, no add-back)", () => {
+    const pre: StatementMoneyLine = { ...line("refunded_card_session", 10000), preBill: true };
+    const v = classifyVisit(bill100([pre]));
+    expect(v.state).toBe("confirmed_unpaid");
+    expect(v.owedCents).toBe(6000);
+  });
+  it("the same refunded payment made AFTER the bill (part of it) still counts, exactly as before: $100 on the bill refunded in full, $40 cash on top is paid in full", () => {
+    const inBill: StatementMoneyLine = line("refunded_card_session", 10000);
+    const v = classifyVisit(bill100([inBill]));
+    expect(v.state).toBe("paid");
+  });
+});

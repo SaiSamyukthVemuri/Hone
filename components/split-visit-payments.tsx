@@ -67,7 +67,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const fmt = (c: number) => formatMoney(c, currency);
   const ownCollectable = balance?.collectableCents ?? 0;
   const cardCollectable = balance?.cardCollectableCents ?? 0;
-  // The database judges a tender by its mode: cash and transfers on REAL money only (an old test charge never blocks them); a card by its own row's mode. The screen never offers what the database would refuse.
+  // The database judges a tender by its mode: cash and transfers on REAL money only (an old test payment never blocks them); a card by its own row's mode. The screen never offers what the database would refuse.
   const collectable = tender === "card" ? cardCollectable : ownCollectable;
 
   useEffect(() => { setAmount((a) => (a === "" && collectable > 0 ? (collectable / 100).toFixed(2) : a)); }, [collectable]);

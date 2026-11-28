@@ -33,7 +33,7 @@ export type StatementAppointment = {
   startsAt: string;
 };
 
-export type StatementCardRow = CollectedMoneyRow & { appointmentId: string };
+export type StatementCardRow = CollectedMoneyRow & { appointmentId: string; /** false = a card payment made BEFORE the visit's split bill (not part of it); undefined = not known (treated as part of the bill). */ inBill?: boolean };
 
 export type StatementSettlementRow = {
   appointmentId: string;
@@ -109,6 +109,8 @@ export type StatementBucket = {
 
 export type StatementMoneyLine = {
   kind: StatementKind; cents: number | null; source: "card" | "settlement" | "legacy_fee";
+  /** Only on a card line: true when the payment was made before the visit's split bill, so it is not part of the bill and its refund is never added back into the bill's coverage. */
+  preBill?: boolean;
   /** Only on a `bill_note` line: cents of SUCCEEDED price reductions already inside the bill (the bill dropped by them). A payment reversal never appears here: it does not reopen a balance. */
   reducedCents?: number;
   /** Only on an `unresolved` line from a refund still in flight (or an open review): the cents awaiting confirmation. Never in a total; shown as "Refund pending". */
@@ -216,7 +218,7 @@ export function buildStatement(input: {
     appointmentId: string,
     source: StatementMoneyLine["source"],
     c: { kind: StatementKind; cents: number | null },
-    extra?: { reducedCents?: number; pendingCents?: number },
+    extra?: { reducedCents?: number; pendingCents?: number; preBill?: boolean },
   ): void => {
     rowsIn += 1;
     const appt = apptById.get(appointmentId);
@@ -230,11 +232,11 @@ export function buildStatement(input: {
     if (appt) {
       let v = visitMap.get(appt.id);
       if (!v) visitMap.set(appt.id, (v = { appointmentId: appt.id, startsAt: appt.startsAt, practitionerId: pid, lines: [] }));
-      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source, ...(c.kind === "bill_note" && extra?.reducedCents ? { reducedCents: extra.reducedCents } : {}), ...(c.kind === "unresolved" && extra?.pendingCents ? { pendingCents: extra.pendingCents } : {}) });
+      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source, ...(extra?.preBill ? { preBill: true } : {}), ...(c.kind === "bill_note" && extra?.reducedCents ? { reducedCents: extra.reducedCents } : {}), ...(c.kind === "unresolved" && extra?.pendingCents ? { pendingCents: extra.pendingCents } : {}) });
     }
   };
 
-  for (const r of input.cardRows) place(r.appointmentId, "card", classifyCardRow(r, input.studioCurrency));
+  for (const r of input.cardRows) place(r.appointmentId, "card", classifyCardRow(r, input.studioCurrency), r.inBill === false ? { preBill: true } : undefined);
   for (const r of input.settlementRows) place(r.appointmentId, "settlement", classifySettlementRow(r, input.studioCurrency), { reducedCents: r.reducedCents, pendingCents: r.pendingCents });
   for (const r of input.legacyFeeRows) place(r.appointmentId, "legacy_fee", classifyLegacyFeeRow(r, input.studioCurrency));
 

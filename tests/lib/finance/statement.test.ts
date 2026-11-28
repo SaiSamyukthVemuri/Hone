@@ -63,6 +63,13 @@ describe("group 1: every money form lands in exactly one kind", () => {
     expect(s.all.kinds.refunded_card_session).toEqual({ count: 1, cents: 10000 });
     expect(s.all.collectedCents).toBe(0);
   });
+  it("a card payment made BEFORE the split bill is marked preBill on its line (Codex P2 #1827); unknown membership and a bill's own payment are not", () => {
+    const refunded = { refundStatus: "succeeded", refundAmountCents: 10000, providerRefundStatus: "succeeded" };
+    const lineOf = (inBill?: boolean) => build({ cardRows: [{ ...card(refunded), ...(inBill === undefined ? {} : { inBill }) }] }).visits[0].lines[0];
+    expect(lineOf(false)).toMatchObject({ kind: "refunded_card_session", preBill: true });
+    expect(lineOf(true).preBill).toBeUndefined();
+    expect(lineOf(undefined).preBill).toBeUndefined();
+  });
   it("still_owes is a note: never an amount, never summed", () => {
     const s = build({ settlementRows: [settle({ method: "still_owes", amountCents: 99999 })] });
     expect(s.all.kinds.still_owes_note).toEqual({ count: 1, cents: 0 });

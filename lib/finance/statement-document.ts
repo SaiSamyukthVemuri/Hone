@@ -358,7 +358,9 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
     // PRODUCT RULE (Sam, 27 Nov 2026), the same as visit_payment_position (0394): refunding a paid visit does not by itself reopen a balance. What was RECEIVED counts in full
     // (a payment reversal, even a legacy full card refund, leaves it counted), and only a succeeded price reduction, whose bill already dropped, is added back.
     const reduced = billed ? lines.reduce((n, l) => n + (l.kind === "bill_note" && typeof l.reducedCents === "number" ? l.reducedCents : 0), 0) : 0;
-    const retained = billed ? Math.max(0, paid + sumKinds(lines, ["refunded_card_session"]) - reduced) : paid;
+    // Only a card payment that BELONGS to the split bill is added back: a payment fully refunded BEFORE the bill was made is not part of it (Codex P2), so $100 refunded then a $100 bill with $40 cash is $60 due.
+    const refundedInBill = sumKinds(lines.filter((l) => l.preBill !== true), ["refunded_card_session"]);
+    const retained = billed ? Math.max(0, paid + refundedInBill - reduced) : paid;
     const shortfall = feeCents === null ? 0 : feeCents - retained - waived;
     if (feeCents !== null && shortfall > 0) {
       if ((attestedOwes || billed) && quoteRecorded) {

@@ -83,6 +83,7 @@ export async function readAppointmentsKeyset(
 
 type CardDb = {
   id: string;
+  visit_bill_id?: string | null;
   charge_reason: string | null;
   status: string | null;
   amount_cents: number | null;
@@ -97,7 +98,7 @@ type CardDb = {
   session_id: string | null;
 };
 const CARD_COLS =
-  "id, charge_reason, status, amount_cents, currency, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, stripe_livemode, appointment_id, session_id";
+  "id, charge_reason, status, amount_cents, currency, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, stripe_livemode, appointment_id, session_id, visit_bill_id";
 
 export type MoneyRows = { cardRows: StatementCardRow[]; settlementRows: AssembleSettlementRow[]; legacyFeeRows: StatementLegacyFeeRow[] };
 
@@ -216,6 +217,8 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
       stripeRefundId: splitRefundedAttempts.has(r.id) ? null : r.stripe_refund_id,
       cumulativeFullRefundVerified: !splitRefundedAttempts.has(r.id) && typeof r.stripe_charge_refund_event_id === "string" && r.stripe_charge_refund_event_id.length > 0,
       stripeLivemode: r.stripe_livemode,
+      // Membership of the visit's split bill: a payment made BEFORE the bill (no visit_bill_id) is not part of it, so the bill's coverage never adds its refund back.
+      inBill: typeof r.visit_bill_id === "string" && r.visit_bill_id.length > 0,
     });
   }
   return {
