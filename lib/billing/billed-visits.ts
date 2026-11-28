@@ -1,7 +1,5 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createAdminClient } from "@/lib/supabase/admin-server";
-import { readStudioLive } from "@/lib/billing/studio-live";
 import { readInChunks } from "@/lib/dashboard/in-chunks";
 import { aggregateRefundGaps, billedOutstanding, keepsRefundForBilledVisit, type BilledOutstanding, type BilledVisitRows } from "@/lib/billing/visit-payments-core";
 
@@ -36,21 +34,18 @@ export async function readBilledVisits(
       supabase.from("payment_refund_reviews").select("appointment_id, amount_cents").eq("studio_id", studioId).is("resolved_at", null).in("appointment_id", chunk)),
   ]);
   if (!ext.ok || !refs.ok || !attempts.ok || !reviews.ok) return { ok: false };
-  // studio_has_gone_live (0394): once the studio is live (a live Connect account, or a succeeded LIVE card attempt), a price reduction on a non-live card adds back nothing (that card was never subtracted).
-  const studioLiveRead = await readStudioLive(createAdminClient(), studioId);
-  if (studioLiveRead === null) return { ok: false };
-  const studioLive = studioLiveRead;
+  // Real money only, in EVERY studio (Sam, 28 Nov 2026): a Stripe TEST card payment is not listed and a price reduction on it adds back nothing (that card was never subtracted).
   const testAttempts = new Set(attempts.rows.filter((a) => a.stripe_livemode !== true).map((a) => a.id));
   const billedAttempts = new Set(attempts.rows.map((a) => a.id));
   for (const b of bills.rows) {
     billed.set(b.appointment_id, {
       totalCents: b.total_cents,
       currency: b.currency,
-      // Card money by appointment, not through live charts. Once the studio has gone live (0394) a non-live card is not subtracted, so it is not listed.
-      cards: attempts.rows.filter((a) => a.appointment_id === b.appointment_id && !(studioLive && a.stripe_livemode !== true)).map((a) => ({ status: a.status, amountCents: a.amount_cents, currency: a.currency })),
+      // Card money by appointment, not through live charts. A non-live (test) card is never subtracted (0394), so it is not listed.
+      cards: attempts.rows.filter((a) => a.appointment_id === b.appointment_id && a.stripe_livemode === true).map((a) => ({ status: a.status, amountCents: a.amount_cents, currency: a.currency })),
       externals: ext.rows.filter((r) => r.appointment_id === b.appointment_id).map((r) => ({ amountCents: r.amount_cents, state: r.state })),
       refunds: [
-        ...refs.rows.filter((r) => r.appointment_id === b.appointment_id && keepsRefundForBilledVisit({ legacy: r.legacy, attemptId: r.attempt_id }, billedAttempts)).map((r) => ({ amountCents: r.amount_cents, status: r.status, kind: r.kind, ...(studioLive && r.attempt_id && testAttempts.has(r.attempt_id) ? { uncounted: true } : {}) })),
+        ...refs.rows.filter((r) => r.appointment_id === b.appointment_id && keepsRefundForBilledVisit({ legacy: r.legacy, attemptId: r.attempt_id }, billedAttempts)).map((r) => ({ amountCents: r.amount_cents, status: r.status, kind: r.kind, ...(r.attempt_id && testAttempts.has(r.attempt_id) ? { uncounted: true } : {}) })),
         // The attempt's own refund columns (Stripe's cumulative statement) can say more came back than its rows do: that difference is returned money (payment_refund_money, 0393).
         ...attempts.rows.filter((a) => a.appointment_id === b.appointment_id && a.status === "succeeded" && typeof a.amount_cents === "number").flatMap((a) => {
           const mine = refs.rows.filter((r) => r.attempt_id === a.id);

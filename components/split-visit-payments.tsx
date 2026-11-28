@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "
 import { BALANCE_DUE_LABEL, moneyRows, refundStatusLabel, visitMoneySummary } from "@/lib/billing/visit-money";
 import { formatMoney } from "@/lib/billing/payment-jurisdiction";
 import {
-  canStartCharge, cardReduce, TEST_CARD_HOLDS_NOTE, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
+  canStartCharge, cardReduce, CHECKING_PAYMENT_STATUS, historyLines, methodLabel, parseDollarsToCents, showCheckingStatus,
   STATUS_LABEL, TEST_EXCLUDED_NOTE, unresolvedCardAttempt, chargeFingerprint, refundFingerprint, submissionFor, settleSubmission, idDisposition, awaitRefund, awaitFromAnswer, settleFromLedger, releaseRefund, bindAttempt, releaseCardAttempt, type Awaiting, type AttemptBindings, reconcileRefundSelection, refundSendable, type Submissions, type CardPhase, type ExternalMethod, type VisitCurrency,
 } from "@/lib/billing/visit-payments-core";
 import {
@@ -67,9 +67,8 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
   const fmt = (c: number) => formatMoney(c, currency);
   const ownCollectable = balance?.collectableCents ?? 0;
   const cardCollectable = balance?.cardCollectableCents ?? 0;
-  // A card is judged by the card wall as a live row (a live deployment); cash and transfers by the database's own position, so the screen never offers what the database would refuse.
+  // The database judges a tender by its mode: cash and transfers on REAL money only (an old test charge never blocks them); a card by its own row's mode. The screen never offers what the database would refuse.
   const collectable = tender === "card" ? cardCollectable : ownCollectable;
-  const testCardHolds = tender !== "card" && cardCollectable > ownCollectable;
 
   useEffect(() => { setAmount((a) => (a === "" && collectable > 0 ? (collectable / 100).toFixed(2) : a)); }, [collectable]);
 
@@ -303,7 +302,7 @@ export function SplitVisitPayments({ appointmentId, currency, country, state, on
             Amount ({currency.toUpperCase()})
             <input inputMode="decimal" autoComplete="off" className={input} value={amount} onChange={(e) => setAmount(e.target.value)} aria-describedby="split-amount-help" />
           </label>
-          <p id="split-amount-help" className="text-sm text-neutral-600 dark:text-neutral-400">Up to {fmt(collectable)} can be collected now.{testCardHolds && <span data-testid="split-test-card-holds"> {TEST_CARD_HOLDS_NOTE}</span>}</p>
+          <p id="split-amount-help" className="text-sm text-neutral-600 dark:text-neutral-400">Up to {fmt(collectable)} can be collected now.</p>
           <button type="button" className={primary} disabled={cents === null || cents > collectable || busy}
             onClick={() => (tender === "card" ? void chargeCard() : void recordExternal())}>
             {submitLabel}

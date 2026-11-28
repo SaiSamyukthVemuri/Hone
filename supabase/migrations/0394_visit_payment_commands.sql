@@ -99,25 +99,30 @@ as $$
       or exists (select 1 from public.payment_charge_attempts a where a.studio_id = p_studio and a.stripe_livemode = true and a.status = 'succeeded');
 $$;
 create index payment_charge_attempts_live_succeeded_idx on public.payment_charge_attempts (studio_id) where stripe_livemode = true and status = 'succeeded';
--- p_assume_live is set ONLY by the card wall, from the row being inserted (new.stripe_livemode is true): a live card about to be made is itself the proof the studio is going live, so
--- an old test charge must not refuse the studio's first real card. It is never a command input.
-create function public.card_counts_toward_capacity(p_studio uuid, p_livemode boolean, p_assume_live boolean default false) returns boolean
+-- MONEY, one rule (Sam, 28 Nov 2026): what is STILL TO COLLECT (`outstanding_cents` in the position below) counts REAL money only (cash, transfers, LIVE card payments). A Stripe TEST payment never counts, in any studio,
+-- so an old test charge can never block a genuine payment, and the visit, the statement and analytics cannot disagree. The ONE thing that still uses the live distinction is the room for a new TEST card
+-- (`test_card_room_cents`, via this function): a test card counts against another test card until the studio is live, so test lanes and trial studios cannot stack test charges past the bill.
+-- The mode a tender is made in comes from the row or the command, never from a caller's argument.
+create function public.card_counts_toward_capacity(p_studio uuid, p_livemode boolean) returns boolean
 language sql stable security definer set search_path = pg_catalog, pg_temp
 as $$
-  select p_livemode is true or not (coalesce(p_assume_live, false) or public.studio_has_gone_live(p_studio));
+  select p_livemode is true or not public.studio_has_gone_live(p_studio);
 $$;
 revoke all privileges on function public.studio_has_gone_live(uuid) from public, anon, authenticated, service_role;
-revoke all privileges on function public.card_counts_toward_capacity(uuid, boolean, boolean) from public, anon, authenticated, service_role;
+revoke all privileges on function public.card_counts_toward_capacity(uuid, boolean) from public, anon, authenticated, service_role;
 
-create function public.visit_payment_position(p_studio uuid, p_appointment uuid, p_assume_live boolean default false)
+create function public.visit_payment_position(p_studio uuid, p_appointment uuid)
 returns table (bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
-               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean)
+               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean, test_card_room_cents integer)
 language sql stable security definer set search_path = pg_catalog, pg_temp
 as $$
   select b.id, b.currency, b.total_cents,
-         x.confirmed, x.pending, c.card, r.refunded,
-         greatest(0, b.total_cents - x.confirmed - x.pending - c.card + d.reduced),
-         exists (select 1 from public.payment_refund_reviews v where v.studio_id = p_studio and v.appointment_id = p_appointment and v.resolved_at is null)
+         x.confirmed, x.pending, c.live_card, r.refunded,
+         -- outstanding_cents ("still to collect") counts REAL money only: cash, transfers (confirmed or pending) and LIVE card payments. A Stripe TEST payment never counts, in ANY studio.
+         greatest(0, b.total_cents - x.confirmed - x.pending - c.live_card + d.reduced_real),
+         exists (select 1 from public.payment_refund_reviews v where v.studio_id = p_studio and v.appointment_id = p_appointment and v.resolved_at is null),
+         -- the room a new TEST card has: test money is judged by the older rule (a test card counts until the studio is live), so test lanes and trial studios cannot stack test charges past the bill
+         greatest(0, b.total_cents - x.confirmed - x.pending - c.card + d.reduced)
     from public.visit_bills b
     cross join lateral (
       select coalesce(sum(e.amount_cents) filter (where e.state = 'confirmed'), 0)::integer as confirmed,
@@ -125,11 +130,12 @@ as $$
         from public.visit_external_payments e
        where e.studio_id = p_studio and e.appointment_id = p_appointment) x
     cross join lateral (
-      select coalesce(sum(a.amount_cents), 0)::integer as card
+      select coalesce(sum(a.amount_cents), 0)::integer as card,
+             coalesce(sum(a.amount_cents) filter (where a.stripe_livemode is true), 0)::integer as live_card
         from public.payment_charge_attempts a
        where a.studio_id = p_studio and a.appointment_id = p_appointment and a.charge_reason = 'session_payment'
          and a.visit_bill_id is not null and a.status in ('ready', 'pending_stripe', 'succeeded')
-         and public.card_counts_toward_capacity(p_studio, a.stripe_livemode, p_assume_live)) c
+         and public.card_counts_toward_capacity(p_studio, a.stripe_livemode)) c
     -- Money returned: payment_refund_money (0393), the one definition, for every settled payment of the visit.
     cross join lateral (
       select coalesce(sum(m.succeeded_cents), 0)::integer as refunded
@@ -142,28 +148,33 @@ as $$
         cross join lateral public.payment_refund_money(pay.aid, pay.eid) m) r
     -- Price reductions that SUCCEEDED: the only refunds that add back to what is outstanding (the bill dropped by the same amount).
     cross join lateral (
-      select coalesce(sum(pr.amount_cents), 0)::integer as reduced
+      select coalesce(sum(pr.amount_cents), 0)::integer as reduced,
+             coalesce(sum(pr.amount_cents) filter (where pr.attempt_id is null or pa.stripe_livemode is true), 0)::integer as reduced_real
         from public.payment_refunds pr
         left join public.payment_charge_attempts pa on pa.id = pr.attempt_id
        where pr.studio_id = p_studio and pr.appointment_id = p_appointment and pr.kind = 'price_reduction' and pr.status = 'succeeded'
          -- a reduction on a card payment that does not count (see studio_has_gone_live) adds back nothing: the card itself was never subtracted
-         and (pr.attempt_id is null or public.card_counts_toward_capacity(p_studio, pa.stripe_livemode, p_assume_live))) d
+         and (pr.attempt_id is null or public.card_counts_toward_capacity(p_studio, pa.stripe_livemode))) d
    where b.studio_id = p_studio and b.appointment_id = p_appointment and b.superseded_at is null;
 $$;
-revoke all privileges on function public.visit_payment_position(uuid, uuid, boolean) from public, anon, authenticated, service_role;
+revoke all privileges on function public.visit_payment_position(uuid, uuid) from public, anon, authenticated, service_role;
 
 -- The reason a tender of p_amount is refused, or null when it fits. Pending transfers are what 'reserved' refers to.
-create function public.visit_payment_refusal(p_studio uuid, p_appointment uuid, p_amount integer, p_assume_live boolean default false)
+create function public.visit_payment_refusal(p_studio uuid, p_appointment uuid, p_amount integer, p_tender_livemode boolean default null)
 returns text
 language plpgsql stable security definer set search_path = pg_catalog, pg_temp
 as $$
 declare
   p record;
+  v_room integer;
 begin
-  select * into p from public.visit_payment_position(p_studio, p_appointment, p_assume_live);
+  select * into p from public.visit_payment_position(p_studio, p_appointment);
   if not found then return 'no_bill'; end if;
-  if p_amount <= p.outstanding_cents then return null; end if;
-  if p.pending_cents > 0 and p_amount <= p.outstanding_cents + p.pending_cents then return 'reserved_for_pending_transfer'; end if;
+  -- The tender's mode: NULL = cash / a transfer / other, TRUE = a live card, FALSE = a TEST card. A real tender is judged on REAL money only (an old test charge never blocks it);
+  -- a test card keeps the balance-due rule, so test lanes and trial studios behave as before.
+  v_room := case when p_tender_livemode is false then p.test_card_room_cents else p.outstanding_cents end;
+  if p_amount <= v_room then return null; end if;
+  if p.pending_cents > 0 and p_amount <= v_room + p.pending_cents then return 'reserved_for_pending_transfer'; end if;
   return 'exceeds_balance';
 end;
 $$;
@@ -741,7 +752,7 @@ $$;
 -- The batch read for the money readers: the position of up to 200 visits of ONE studio, owner only, with review_open.
 create function public.get_visit_payment_positions(p_studio_id uuid, p_appointment_ids uuid[])
 returns table (appointment_id uuid, bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
-               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean)
+               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean, test_card_room_cents integer)
 language plpgsql stable security definer set search_path = pg_catalog, pg_temp
 as $$
 begin
@@ -752,7 +763,7 @@ begin
     raise exception 'get_visit_payment_positions: at most 200 visits per call' using errcode = '22023';
   end if;
   return query select u.id, p.bill_id, p.currency, p.total_cents, p.confirmed_cents, p.pending_cents, p.card_cents, p.refunded_cents,
-                      p.outstanding_cents, p.review_open
+                      p.outstanding_cents, p.review_open, p.test_card_room_cents
                  from unnest(p_appointment_ids) as u(id)
                  cross join lateral public.visit_payment_position(p_studio_id, u.id) p;
 end;
@@ -761,7 +772,7 @@ $$;
 -- The one read the screens use. The studio's OWNER only, as the tables themselves (0393).
 create function public.get_visit_payment_position(p_studio_id uuid, p_appointment_id uuid)
 returns table (bill_id uuid, currency text, total_cents integer, confirmed_cents integer, pending_cents integer,
-               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean)
+               card_cents integer, refunded_cents integer, outstanding_cents integer, review_open boolean, test_card_room_cents integer)
 language plpgsql stable security definer set search_path = pg_catalog, pg_temp
 as $$
 begin
@@ -844,7 +855,7 @@ comment on function public.flag_payment_refund_review(uuid, text, text, integer,
 comment on function public.resolve_payment_refund_review(uuid) is '0394. Owner only: acknowledges a settled dashboard refund (no amount argument) and records it in the ledger once.';
 comment on function public.get_visit_payment_positions(uuid, uuid[]) is '0394. Owner only: the position of up to 200 visits, with review_open.';
 
-comment on function public.visit_payment_position(uuid, uuid, boolean) is '0394. The one definition of how much of a billed visit is still collectable. Internal.';
+comment on function public.visit_payment_position(uuid, uuid) is '0394. The one definition of how much of a billed visit is still collectable. Internal.';
 comment on function public.visit_payment_refusal(uuid, uuid, integer, boolean) is '0394. Why a tender of this amount is refused (reserved_for_pending_transfer, exceeds_balance, no_bill) or null. Internal.';
 comment on function public.ensure_visit_bill(uuid, uuid, integer, text, boolean) is '0394. Creates the one bill of a completed visit (split_payments studios only); idempotent.';
 comment on function public.record_visit_external_payment(uuid, uuid, text, integer, uuid, text) is '0394. Records cash (confirmed) or a transfer (pending, amount reserved); a repeated submission returns the first row.';
@@ -871,7 +882,7 @@ begin
     'public.flag_payment_refund_review(uuid,text,text,integer,text,text,bigint,text,text)',
     'public.resolve_payment_refund_review(uuid)',
     'public.get_visit_payment_positions(uuid,uuid[])',
-    'public.visit_payment_position(uuid,uuid,boolean)',
+    'public.visit_payment_position(uuid,uuid)',
     'public.visit_payment_refusal(uuid,uuid,integer,boolean)',
     'public.visit_bill_supersede(uuid,uuid,integer,text,uuid)',
     'public.payment_charge_attempts_visit_bill_guard()'] loop
@@ -880,7 +891,7 @@ begin
     end if;
   end loop;
   if has_function_privilege('authenticated', 'public.finish_payment_refund(uuid,text,text,text,text,text,integer)', 'execute')
-     or has_function_privilege('authenticated', 'public.visit_payment_position(uuid,uuid,boolean)', 'execute')
+     or has_function_privilege('authenticated', 'public.visit_payment_position(uuid,uuid)', 'execute')
      or has_function_privilege('authenticated', 'public.flag_payment_refund_review(uuid,text,text,integer,text,text,bigint,text,text)', 'execute')
      or has_function_privilege('authenticated', 'public.record_refund_sent(uuid,text)', 'execute')
      or has_function_privilege('service_role', 'public.resolve_payment_refund_review(uuid)', 'execute')

@@ -222,38 +222,43 @@ describe("a reload while a card payment is unresolved (Codex P1)", () => {
   });
 });
 
-// 0394 studio_has_gone_live / card_counts_toward_capacity: the app mirror. Before a studio has a succeeded LIVE card attempt every card counts (test lanes unchanged); after it a
-// non-live card no longer counts toward capacity, and a price reduction on it adds nothing back. Test-mode money stays in the visit's Collected / Refunded / Net (labelling only).
-describe("visitBalance mirrors which card money counts (studio_has_gone_live)", () => {
+// Sam, 28 Nov 2026: REAL money only. Still to collect (`collectableCents`) counts cash, transfers and LIVE card payments; a Stripe TEST payment never counts, in ANY studio (live, connected with no
+// card, never connected), and a price reduction on a test card adds back nothing. The ONE use of the live distinction is the room for a new TEST card (`cardCollectableCents` in a test deployment).
+// (These replace the earlier "a test card counts until the studio is live" assertions, deliberately: that behaviour was dropped.)
+describe("visitBalance counts REAL money only, in every studio", () => {
   const testCard = { kind: "card" as const, id: "t", amountCents: 22500, status: "succeeded", at: "t", platformFeeCents: null, test: true };
   const liveCard = { kind: "card" as const, id: "l", amountCents: 10000, status: "succeeded", at: "t", platformFeeCents: null };
-  it("a test-only studio: a test card reduces the balance, exactly as before", () => {
-    expect(visitBalance(ledger({ cards: [testCard] }))).toMatchObject({ cardCents: 22500, collectableCents: 0 });
-    expect(visitBalance(ledger({ studioLive: false, cards: [testCard] }))).toMatchObject({ cardCents: 22500, collectableCents: 0 });
+  it("a test card never reduces Still to collect, whether or not the studio is live", () => {
+    for (const studioLive of [undefined, false, true]) {
+      expect(visitBalance(ledger({ studioLive, cards: [testCard] }))).toMatchObject({ cardCents: 0, collectableCents: 22500 });
+    }
   });
-  it("after going live: an old test charge no longer blocks, and a mixed visit counts only the live card", () => {
-    expect(visitBalance(ledger({ studioLive: true, cards: [testCard] }))).toMatchObject({ cardCents: 0, collectableCents: 22500 });
-    expect(visitBalance(ledger({ studioLive: true, cards: [testCard, liveCard] }))).toMatchObject({ cardCents: 10000, collectableCents: 12500 });
+  it("a mixed visit counts only the live card: $225 bill, $225 test charge + $100 live card leaves $125", () => {
+    for (const studioLive of [false, true]) expect(visitBalance(ledger({ studioLive, cards: [testCard, liveCard] }))).toMatchObject({ cardCents: 10000, collectableCents: 12500 });
   });
-  it("a price reduction on a non-live card adds nothing back once live; on a live card it still does", () => {
+  it("a price reduction on a test card adds nothing back; on a live card it still does", () => {
     const red = (attemptId: string, test?: boolean) => ({ id: "r", amountCents: 3000, kind: "price_reduction" as const, status: "succeeded" as const, attemptId, externalPaymentId: null, reason: "x", at: "t", platformFeeReturnedCents: null, ...(test ? { test: true } : {}) });
-    expect(visitBalance(ledger({ studioLive: true, cards: [testCard], refunds: [red("t", true)] }))?.collectableCents).toBe(22500);
-    expect(visitBalance(ledger({ studioLive: true, cards: [liveCard], refunds: [red("l")] }))?.collectableCents).toBe(12500 + 3000);
+    expect(visitBalance(ledger({ cards: [testCard], refunds: [red("t", true)] }))?.collectableCents).toBe(22500);
+    expect(visitBalance(ledger({ cards: [liveCard], refunds: [red("l")] }))?.collectableCents).toBe(12500 + 3000);
+  });
+  it("real cash and transfers (confirmed or pending) and live cards reduce it; the $225 acceptance case: $225 test charge then $225 cash leaves $0, and a second tender gets nothing", () => {
+    const cash = { id: "e", method: "paid_cash", amountCents: 22500, state: "confirmed", at: "t" } as never;
+    expect(visitBalance(ledger({ cards: [testCard], externals: [cash] }))).toMatchObject({ confirmedCents: 22500, collectableCents: 0 });
+    const pend = { id: "p", method: "paid_e_transfer", amountCents: 1000, state: "pending_confirmation", at: "t" } as never;
+    expect(visitBalance(ledger({ cards: [testCard, liveCard], externals: [{ ...(cash as object), amountCents: 2000 } as never, pend] }))).toMatchObject({ collectableCents: 22500 - 10000 - 2000 - 1000 });
   });
 });
 
-// Cash and transfers use the database's own position; only the CARD path assumes the studio is going live (it mirrors the card wall, which judges a live row that way).
-describe("visitBalance: cash/transfer collectable vs card collectable (not-yet-live studio, $100 test charge on a $100 bill)", () => {
+describe("visitBalance: the room for a new card by tender mode ($100 bill, a $100 test charge on it)", () => {
   const b100 = { ...bill, totalCents: 10000 };
   const testCard = { kind: "card" as const, id: "t", amountCents: 10000, status: "succeeded", at: "t", platformFeeCents: null, test: true };
-  it("a live deployment: cash is offered $0, a real card the full $100", () => {
-    const b = visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: false, cardAssumesLive: true });
-    expect(b).toMatchObject({ collectableCents: 0, cardCollectableCents: 10000 });
+  it("a live deployment (a live card): the full $100, because real money is judged only", () => {
+    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: false, cardAssumesLive: true })).toMatchObject({ collectableCents: 10000, cardCollectableCents: 10000 });
   });
-  it("a test deployment: both follow the database position", () => {
-    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: false, cardAssumesLive: false })).toMatchObject({ collectableCents: 0, cardCollectableCents: 0 });
+  it("a test deployment in a TRIAL studio: a second TEST card has no room (a test card counts against another test card), while cash still has the full $100", () => {
+    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: false, cardAssumesLive: false })).toMatchObject({ collectableCents: 10000, cardCollectableCents: 0 });
   });
-  it("a studio that has gone live: both are $100", () => {
-    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: true, cardAssumesLive: true })).toMatchObject({ collectableCents: 10000, cardCollectableCents: 10000 });
+  it("a test deployment in a LIVE studio: the test charge no longer counts against a new test card either", () => {
+    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: true, cardAssumesLive: false })).toMatchObject({ collectableCents: 10000, cardCollectableCents: 10000 });
   });
 });

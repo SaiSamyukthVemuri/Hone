@@ -31,7 +31,7 @@ function fake(tables: Record<string, unknown[]>) {
 const base = {
   visit_bills: [{ appointment_id: A, total_cents: 10000, currency: "cad" }],
   visit_external_payments: [],
-  payment_charge_attempts: [{ id: ATT, appointment_id: A }],
+  payment_charge_attempts: [{ id: ATT, appointment_id: A, stripe_livemode: true }],
 };
 const card = [{ status: "succeeded", amount_cents: 10000, currency: "cad" }];
 
@@ -60,7 +60,7 @@ describe("a billed visit's roster read counts a legacy full-refund mirror of a b
 
 // v1 refund truth: the same money as payment_refund_money (0393), read in bulk. The attempt's own columns are Stripe's cumulative statement of the whole payment.
 describe("a billed visit's roster read: the dashboard refund of the rest, and an unconfirmed review", () => {
-  const withAttempt = (extra: Record<string, unknown>) => ({ ...base, payment_charge_attempts: [{ id: ATT, appointment_id: A, status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, ...extra }] });
+  const withAttempt = (extra: Record<string, unknown>) => ({ ...base, payment_charge_attempts: [{ id: ATT, appointment_id: A, stripe_livemode: true, status: "succeeded", amount_cents: 10000, refund_status: null, refund_amount_cents: null, ...extra }] });
   it("$40 refunded here, then the owner refunds the rest in the dashboard (attempt succeeded/100): returned is $100 (the greater, never the sum), the visit is still paid (a refund never reopens a balance)", async () => {
     const r = await readBilledVisits(fake({ ...withAttempt({ refund_status: "succeeded", refund_amount_cents: 10000 }), payment_refunds: [{ appointment_id: A, attempt_id: ATT, amount_cents: 4000, status: "succeeded", legacy: false }] }), STUDIO, [A]);
     expect(r.ok && r.billed.get(A)?.refunds).toEqual([{ amountCents: 4000, status: "succeeded" }, { amountCents: 6000, status: "succeeded" }]);

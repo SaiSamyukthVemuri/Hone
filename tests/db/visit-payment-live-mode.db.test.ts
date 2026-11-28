@@ -58,82 +58,72 @@ const goLive = (s: PaymentScenario) =>
     [s.studioId, s.clientId, s.sessionId, s.practitionerId, `pi_${tok()}`, `ch_${tok()}`],
   );
 
-describe("0394 which card money counts toward a bill's capacity", () => {
-  it("a TEST-ONLY studio behaves as before: a succeeded test card reduces the balance, and the over-collect cap holds", async () => {
+// Sam, 28 Nov 2026: what is STILL TO COLLECT (outstanding_cents) counts REAL money only (cash, transfers, LIVE cards). A Stripe TEST payment never counts, in ANY studio. `card_cents` is live card money.
+// The one use of the live distinction left is test_card_room_cents (the room for a new TEST card). These tests replace the earlier "test money counts until the studio is live" assertions, deliberately.
+describe("0394 real money only: which money counts toward a bill's capacity", () => {
+  it("a TEST-ONLY studio: a test card never reduces Still to collect, real cash does, and the over-collect cap holds", async () => {
     const s = await visit();
     await ensure(s);
     await card(s, 10000, false);
     expect(await goneLive(s)).toBe(false);
-    expect(await position(s)).toMatchObject({ card_cents: 10000, outstanding_cents: 12500 });
+    expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500, test_card_room_cents: 12500 });
     expect((await cash(s, 12500)).result).toBe("recorded");
-    expect((await cash(s, 100)).result).toBe("exceeds_balance");
+    expect(await position(s)).toMatchObject({ outstanding_cents: 10000, test_card_room_cents: 0 });
+    expect((await cash(s, 10001)).result).toBe("exceeds_balance");   // never more than the agreed balance minus REAL money
+    expect((await cash(s, 10000)).result).toBe("recorded");
+    expect(await position(s)).toMatchObject({ outstanding_cents: 0 });
   });
 
-  it("a studio with a LIVE charge: an old test charge that covers the whole bill no longer blocks real money", async () => {
+  it("an old test charge that covers the whole bill never blocks genuine cash, before or after the studio goes live", async () => {
     const s = await visit();
     await ensure(s);
     await card(s, 22500, false);                                   // the old pilot test charge
-    expect(await position(s)).toMatchObject({ card_cents: 22500, outstanding_cents: 0 });
-    expect((await cash(s, 100)).result).toBe("exceeds_balance");   // before going live it counts, as it always did
+    expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500 });
     await goLive(s);
     expect(await goneLive(s)).toBe(true);
     expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500 });
     expect((await cash(s, 22500)).result).toBe("recorded");
+    expect((await cash(s, 1)).result).toBe("exceeds_balance");
   });
 
-  it("a mixed visit after going live: only the live card plus cash or transfer count, and the cap still holds", async () => {
+  it("a mixed visit: only the live card plus cash or transfer count, and the cap still holds", async () => {
     const s = await visit();
     await ensure(s);
-    await card(s, 10000, false);                                   // test card, made before the studio went live
+    await card(s, 10000, false);                                   // a test card
     await goLive(s);
     await card(s, 10000, true);                                    // a real $100 card on the same visit
     expect(await position(s)).toMatchObject({ card_cents: 10000, outstanding_cents: 12500 });
     expect((await cash(s, 5000)).result).toBe("recorded");
     expect(await position(s)).toMatchObject({ card_cents: 10000, confirmed_cents: 5000, outstanding_cents: 7500 });
-    expect((await cash(s, 7501)).result).toBe("exceeds_balance"); // never over-collect: $100 live card + $50 cash + more than $75 is refused
+    expect((await cash(s, 7501)).result).toBe("exceeds_balance"); // $100 live card + $50 cash + more than $75 is refused
     expect((await cash(s, 7500)).result).toBe("recorded");
     expect(await position(s)).toMatchObject({ outstanding_cents: 0 });
   });
 
-  it("the card wall: after going live, a real card is accepted over an old test charge, and a card over the real balance is still refused", async () => {
+  it("the card wall: a live card is judged on real money (an old test charge does not refuse it) and over the real balance is refused; a TEST card is judged on the test room", async () => {
     const s = await visit();
     await ensure(s);
     await card(s, 22500, false);
-    await goLive(s);
-    await card(s, 20000, true);                                    // fits: the test charge no longer counts
-    await expect(card(s, 5000, true)).rejects.toThrow(/exceeds_balance/); // $200 live + $50 > $225: refused
-  });
-
-  it("the FIRST real card of a not-yet-live studio: a $100 test charge on a $100 bill does not refuse it, and the studio then reads live", async () => {
-    const s = await visit();
-    await ensure(s);
-    await card(s, 22500, false);                                   // the whole $225 bill was paid with a TEST card
-    expect(await goneLive(s)).toBe(false);
-    await card(s, 22500, true);                                    // the row being inserted is live: the position is computed as if the studio had gone live
-    expect(await goneLive(s)).toBe(true);
-    expect(await position(s)).toMatchObject({ card_cents: 22500, outstanding_cents: 0 });
-    expect((await cash(s, 100)).result).toBe("exceeds_balance");   // over-collection on live money is still refused
+    await card(s, 22500, true);                                    // the whole real balance, accepted even in a studio that was not live (the row is live)
+    await expect(card(s, 1, true)).rejects.toThrow(/exceeds_balance/);
+    const t = await visit();
+    await ensure(t);
+    await card(t, 22500, false);
+    await expect(card(t, 100, false)).rejects.toThrow(/exceeds_balance/);   // test money stacking past the bill in a trial studio is refused
   });
 
   it("a $60 test charge: the first live card may take the full remaining REAL balance, and one cent more is refused", async () => {
     const s = await visit();
     await ensure(s);
     await card(s, 6000, false);
-    await expect(card(s, 22501, true)).rejects.toThrow(/exceeds_balance/);   // over the bill: refused even for a live row
-    await card(s, 22500, true);                                              // the whole real balance, not $165
+    await expect(card(s, 22501, true)).rejects.toThrow(/exceeds_balance/);
+    await card(s, 22500, true);
     expect(await position(s)).toMatchObject({ card_cents: 22500, outstanding_cents: 0 });
-  });
-
-  it("a TEST row still cannot claim the assumption: a second test card is judged with the test charge counted", async () => {
-    const s = await visit();
-    await ensure(s);
-    await card(s, 22500, false);
-    await expect(card(s, 100, false)).rejects.toThrow(/exceeds_balance/);
   });
 
   it("no command takes the mode as an input: the mode functions are not callable by the signed-in owner", async () => {
     const s = await visit();
-    for (const sql of [`select public.studio_has_gone_live($1)`, `select public.card_counts_toward_capacity($1, false, false)`]) {
+    for (const sql of [`select public.studio_has_gone_live($1)`, `select public.card_counts_toward_capacity($1, false)`]) {
       await expect(asOwner(s, (q) => q(sql, [s.studioId]))).rejects.toThrow(/permission denied/);
     }
   });
@@ -150,66 +140,111 @@ const connectLive = (s: PaymentScenario) =>
      values ($1, $2, 'pending', false, false, true)`,   // any bound live account counts, whatever its status: not required to be charges-enabled
     [s.studioId, `acct_live_${tok()}_${acct++}`],
   );
+// A studio that never connected Stripe: no settings row, and so no customer or saved card either (they are bound to it).
+const neverConnect = async (s: PaymentScenario) => {
+  for (const t of ["client_payment_methods", "client_stripe_customers", "studio_payment_settings"]) await adminQuery(`delete from public.${t} where studio_id = $1`, [s.studioId]);
+};
 const transfer = async (s: PaymentScenario, cents: number) => {
   const r = (await asOwner(s, (q) => q(`select * from public.record_visit_external_payment($1,$2,'paid_e_transfer',$3,$4,null)`, [s.studioId, s.appointmentId, cents, randomUUID()]))).rows[0];
-  await asOwner(s, (q) => q(`select * from public.confirm_visit_external_payment($1,$2)`, [s.studioId, r.id]));
+  await asOwner(s, (q) => q(`select * from public.confirm_visit_external_payment($1,$2)`, [s.studioId, r.payment_id]));
   return r;
 };
 
-describe("0394 live studio = a live Connect account (no live card needed)", () => {
-  it("a TRIAL studio (a test settings row only) is not live and counts test money exactly as before", async () => {
+describe("0394 live studio = a live Connect account (no live card needed); real-money acceptance cases", () => {
+  it("a TRIAL studio (a test settings row only) is not live: a test card never counts, and an old test charge NEVER blocks genuine cash", async () => {
     const s = await visit();
     expect(await goneLive(s)).toBe(false);
     await ensure(s);
     await card(s, 22500, false);
-    expect(await position(s)).toMatchObject({ card_cents: 22500, outstanding_cents: 0 });
-    expect((await cash(s, 100)).result).toBe("exceeds_balance");
+    expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500, test_card_room_cents: 0 });
+    await expect(card(s, 100, false)).rejects.toThrow(/exceeds_balance/);        // a second TEST card has no room in a trial studio
+    expect((await cash(s, 22500)).result).toBe("recorded");
+    expect((await cash(s, 1)).result).toBe("exceeds_balance");
+    expect(await position(s)).toMatchObject({ confirmed_cents: 22500, outstanding_cents: 0 });
   });
 
   it("CASH-FIRST: a studio that connects live Stripe before any payment records cash as its first real money, with no live card run", async () => {
     const s = await visit();
     await ensure(s);
-    await card(s, 22500, false);                                   // an old pilot test charge covers the bill
-    expect((await cash(s, 22500)).result).toBe("exceeds_balance"); // still a trial studio
+    await card(s, 22500, false);                                   // an old pilot test charge
     await connectLive(s);                                          // live Stripe connected: no payment of any kind yet
     expect(await goneLive(s)).toBe(true);
-    expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500 });
-    expect((await cash(s, 22500)).result).toBe("recorded");        // the first REAL money is cash
+    expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500, test_card_room_cents: 22500 });
+    expect((await cash(s, 22500)).result).toBe("recorded");
     expect(await position(s)).toMatchObject({ confirmed_cents: 22500, outstanding_cents: 0 });
-    expect((await cash(s, 100)).result).toBe("exceeds_balance");   // the over-collect cap still holds
+    expect((await cash(s, 100)).result).toBe("exceeds_balance");
     expect((await adminQuery(`select count(*)::int as n from public.payment_charge_attempts where studio_id=$1 and stripe_livemode = true`, [s.studioId])).rows[0].n).toBe(0);
   });
 
-  it("the mixed example ($100 test charge, $50 cash, $75 transfer on a $125 bill) in a live studio: only real money counts and the bill is paid", async () => {
+  it("NEVER CONNECTED studio (no settings row at all), cash and transfer only: both recorded, totals right, no Stripe anywhere", async () => {
     const s = await visit();
+    await neverConnect(s);
+    expect(await goneLive(s)).toBe(false);
     await ensure(s, 12500, "Loyalty price");
-    await card(s, 10000, false);
-    await connectLive(s);
     expect((await cash(s, 5000)).result).toBe("recorded");
     await transfer(s, 7500);
     expect(await position(s)).toMatchObject({ total_cents: 12500, card_cents: 0, confirmed_cents: 12500, outstanding_cents: 0 });
-  });
-
-  it("REOPEN pinned: connecting live while a visit is held ONLY by a test card reopens that balance by the test amount", async () => {
-    const s = await visit();
-    await ensure(s);
-    await card(s, 22500, false);
-    expect(await position(s)).toMatchObject({ outstanding_cents: 0 });
-    await connectLive(s);
-    expect(await position(s)).toMatchObject({ outstanding_cents: 22500 });
-  });
-
-  it("a live row with no account is not a binding (the pair check forbids it), and clearing the binding flips the studio back to trial: test money counts again", async () => {
-    const s = await visit();
-    await ensure(s);
-    await card(s, 22500, false);
-    await connectLive(s);
-    expect(await position(s)).toMatchObject({ outstanding_cents: 22500 });
-    await expect(adminQuery(`update public.studio_payment_settings set stripe_account_id = null where studio_id = $1 and stripe_livemode = true`, [s.studioId])).rejects.toThrow(/account_mode_pair_check/);
-    await adminQuery(`update public.studio_payment_settings set stripe_account_id = null, stripe_livemode = null where studio_id = $1 and stripe_livemode = true`, [s.studioId]); // the only shape the CHECK allows
-    expect(await goneLive(s)).toBe(false);
-    expect(await position(s)).toMatchObject({ outstanding_cents: 0 });                // the test charge counts again: a cash-first visit is held by it
     expect((await cash(s, 100)).result).toBe("exceeds_balance");
+    expect((await adminQuery(`select count(*)::int as n from public.payment_charge_attempts where studio_id=$1`, [s.studioId])).rows[0].n).toBe(0);
+  });
+
+  // ACCEPTANCE (Sam, 28 Nov 2026): a $225 visit, a $225 TEST charge, then $225 confirmed cash. Still to collect is $0 and a second real payment of ANY kind is refused with nothing written.
+  // Three studios: a trial (test Connect), a live-connected one, and a studio with no Stripe connection (its binding cleared: a leftover test charge on a studio that is no longer connected).
+  for (const kind of ["trial", "connected live", "no Stripe connection"] as const) {
+    it(`ACCEPTANCE (${kind}): $225 test charge + $225 cash leaves $0 to collect; a second cash, transfer or live card is refused exceeds_balance and nothing is written`, async () => {
+      const s = await visit();
+      await ensure(s);
+      if (kind === "no Stripe connection") {
+        // A studio with no Stripe connection at all (no settings row, customer or saved card) that still carries a leftover TEST charge on the visit: the row is written bare.
+        await neverConnect(s);
+        await adminQuery(
+          `insert into public.payment_charge_attempts (studio_id, charge_reason, client_id, session_id, appointment_id, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode, stripe_payment_intent_id, stripe_charge_id, charged_at)
+           values ($1,'session_payment',$2,$3,$4,$5,22500,'cad','succeeded',false,$6,$7,now())`,
+          [s.studioId, s.clientId, s.sessionId, s.appointmentId, s.practitionerId, `pi_${tok()}`, `ch_${tok()}`],
+        );
+      } else await card(s, 22500, false);
+      if (kind === "connected live") await connectLive(s);
+      expect(await position(s)).toMatchObject({ card_cents: 0, outstanding_cents: 22500 });
+      expect((await cash(s, 22500)).result).toBe("recorded");
+      expect(await position(s)).toMatchObject({ confirmed_cents: 22500, card_cents: 0, outstanding_cents: 0 });
+      const rows = async () => [
+        (await adminQuery(`select count(*)::int as n from public.visit_external_payments where studio_id=$1`, [s.studioId])).rows[0].n,
+        (await adminQuery(`select count(*)::int as n from public.payment_charge_attempts where studio_id=$1`, [s.studioId])).rows[0].n,
+      ];
+      const before = await rows();
+      expect((await cash(s, 1)).result).toBe("exceeds_balance");
+      const tr = (await asOwner(s, (q) => q(`select * from public.record_visit_external_payment($1,$2,'paid_e_transfer',$3,$4,null)`, [s.studioId, s.appointmentId, 1, randomUUID()]))).rows[0];
+      expect(tr.result).toBe("exceeds_balance");
+      await expect(card(s, 1, true)).rejects.toThrow(/exceeds_balance/);
+      expect(await rows()).toEqual(before);
+      expect(await position(s)).toMatchObject({ confirmed_cents: 22500, outstanding_cents: 0 });
+    });
+  }
+
+  it("the mixed example ($100 test charge, $50 cash, $75 transfer on a $125 bill): only real money counts and the bill is paid, in a live studio and a trial one", async () => {
+    for (const live of [true, false]) {
+      const s = await visit();
+      await ensure(s, 12500, "Loyalty price");
+      await card(s, 10000, false);
+      if (live) await connectLive(s);
+      expect((await cash(s, 5000)).result).toBe("recorded");
+      await transfer(s, 7500);
+      expect(await position(s)).toMatchObject({ total_cents: 12500, card_cents: 0, confirmed_cents: 12500, outstanding_cents: 0 });
+    }
+  });
+
+  it("connecting live changes NOTHING about Still to collect (a test charge never counted), and clearing the binding flips only the room for a test card", async () => {
+    const s = await visit();
+    await ensure(s);
+    await card(s, 22500, false);
+    expect(await position(s)).toMatchObject({ outstanding_cents: 22500, test_card_room_cents: 0 });
+    await connectLive(s);
+    expect(await position(s)).toMatchObject({ outstanding_cents: 22500, test_card_room_cents: 22500 });
+    await expect(adminQuery(`update public.studio_payment_settings set stripe_account_id = null where studio_id = $1 and stripe_livemode = true`, [s.studioId])).rejects.toThrow(/account_mode_pair_check/);
+    await adminQuery(`update public.studio_payment_settings set stripe_account_id = null, stripe_livemode = null where studio_id = $1 and stripe_livemode = true`, [s.studioId]);
+    expect(await goneLive(s)).toBe(false);
+    expect(await position(s)).toMatchObject({ outstanding_cents: 22500, test_card_room_cents: 0 });
+    expect((await cash(s, 22500)).result).toBe("recorded");
   });
 
   it("an owner cannot make a studio live: no insert, update or delete on the settings table, and none of the provisioning functions is executable by authenticated", async () => {

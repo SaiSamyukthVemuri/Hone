@@ -28,7 +28,10 @@ import {
   type BuildDocumentInput,
   type DocumentVisitInput,
   type FeeCandidate,
+  partialRefundedCents,
+  refundPendingCents,
 } from "@/lib/finance/statement-document";
+import { statementMoneySummary } from "@/lib/billing/visit-money";
 import { AMOUNT_KINDS, type StatementKind, type StatementMoneyLine } from "@/lib/finance/statement";
 
 // Synthetic rows only. Amounts are chosen by each test; nothing here is a real price. The one pinned example is the agreed missing-payment wording.
@@ -587,6 +590,16 @@ describe("a payment on an uncompleted booking (Sam's rule)", () => {
     const d = doc([], { feeItems: [{ appointmentId: "c-1", clientId: "client-1", localDate: "2026-11-10", startsAt: "2026-11-10T15:00:00Z", reason: "cancelled_booking_payment", feeCandidates: [], lines: [line("collected_card_session", 4000)] }] });
     expect(d.totals.paidCents).toBe(4000);
     expect(toSnapshot(d).lineItems[0].reason).toBe("cancelled_booking_payment");
+  });
+  it("Codex P2 (#1827): $100 cash with a $40 split refund on an uncompleted booking reads $100 collected, $40 refunded, $60 net and $100 originally paid", () => {
+    const cashItem: FeeItemInput = { ...pay, lines: [line("collected_cash", 10000, "settlement"), line("refunded_partial", 4000, "card")] };
+    const d = doc([unfinished], { feeItems: [cashItem], scope: { kind: "full_history" } });
+    expect(partialRefundedCents(d)).toBe(4000);
+    expect(d.totals.paidCents).toBe(10000);
+    expect(d.totals.refundedCents).toBe(4000);
+    expect(d.totals.originalPaidCents).toBe(10000);                 // was $140: the partial refund was added to a payment that stays in `paid` in full
+    const m = statementMoneySummary(d.totals, partialRefundedCents(d), d.awaiting.length, refundPendingCents(d));
+    expect([m.collectedCents, m.refundedCents, m.netCents]).toEqual([10000, 4000, 6000]);
   });
   it("the pairing is the ONLY allowed one: the payment line needs its Not completed row, and cannot share an id with a visit or another reason", () => {
     expect(build([], { feeItems: [pay] })).toEqual({ ok: false, error: "orphan_uncompleted_payment" });

@@ -30,6 +30,18 @@ async function shots(page: Page, name: string, target?: Locator) {
 }
 const money = (c: number) => `$${(c / 100).toFixed(2)} CAD`;
 let seed: PaymentSeed;
+// Sam, 28 Nov 2026: Still to collect and the visit totals count REAL money only, in every studio, so a Stripe TEST card payment no longer "pays" a visit. The fake-Stripe lane can only make TEST cards, so the
+// specs that need a card to count as real money mark that one card live in the database AFTER its charge (and after any refund, which the app only allows in the payment's own mode).
+const markCardLive = () => adminQuery(`update public.payment_charge_attempts set stripe_livemode = true where appointment_id = $1`, [seed.appointmentId]);
+// A studio with no Stripe connection at all: no settings row, saved card or customer (they are bound to it; a payment that references the saved card is added after, bare).
+const neverConnect = async () => {
+  for (const t of ["client_payment_methods", "client_stripe_customers", "studio_payment_settings"]) await adminQuery(`delete from public.${t} where studio_id = $1`, [seed.studioId]);
+};
+// C (Sam, 28 Nov 2026): a studio is LIVE once it has a live-mode Stripe Connect settings row with an account id (no payment needed). Any status counts.
+const connectLive = () => adminQuery(
+  `insert into public.studio_payment_settings (studio_id, stripe_account_id, stripe_account_status, stripe_charges_enabled, stripe_payouts_enabled, stripe_livemode) values ($1, $2, 'pending', false, false, true)`,
+  [seed.studioId, `acct_live_${seed.scenario.runId}`],
+);
 
 test.beforeEach(async () => {
   resetFakeStripeLedger();
@@ -58,10 +70,11 @@ test("the $225 / $40 / $185 case reads the same on checkout, the visit page and 
 
   await amount("100.00");
   await panel.getByRole("button", { name: `Charge card ${money(10000)}`, exact: true }).click();
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500), { timeout: 30_000 });
+  // CHANGED (Sam, 28 Nov 2026): the card is a Stripe TEST payment, so it does not reduce Still to collect: $225 (was $125).
+  await expect.poll(async () => (await adminQuery(`select status from public.payment_charge_attempts where appointment_id = $1`, [seed.appointmentId])).rows[0]?.status, { timeout: 30_000 }).toBe("succeeded");
   await pick("Cash"); await amount("50.00");
   await panel.getByRole("button", { name: `Record cash received ${money(5000)}`, exact: true }).click();
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(7500));
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(17500));   // was $75
   await pick("E-transfer"); await amount("75.00");
   await panel.getByRole("button", { name: `Record transfer ${money(7500)}`, exact: true }).click();
   await expect(panel.getByTestId("split-pending-transfer")).toBeVisible();
@@ -85,11 +98,14 @@ test("the $225 / $40 / $185 case reads the same on checkout, the visit page and 
   expect([Number(refundMoney.payment_cents), Number(refundMoney.succeeded_cents), Number(refundMoney.reserved_cents)]).toEqual([10000, 4000, 0]);
   expect(Number((await adminQuery(`select total_cents from public.visit_bills where appointment_id = $1 and superseded_at is null`, [seed.appointmentId])).rows[0].total_cents)).toBe(22500);
 
-  // While the transfer is still pending it is Waiting, not Collected: $100 card + $50 cash collected, $40 refunded, $110 net.
-  await expect(panel.getByTestId("money-collected")).toHaveText(money(15000), { timeout: 30_000 });
-  await expect(panel.getByTestId("money-refunded")).toHaveText(money(4000));
-  await expect(panel.getByTestId("money-net")).toHaveText(money(11000));
+  // While the transfer is still pending it is Waiting, not Collected. CHANGED (Sam, 28 Nov 2026): the card and its refund are TEST entries, so only the $50 cash is collected: $50 / $0 / $50
+  // (was $150 / $40 / $110), the $75 transfer is Waiting.
+  await expect(panel.getByTestId("money-collected")).toHaveText(money(5000), { timeout: 30_000 });
+  await expect(panel.getByTestId("money-refunded")).toHaveText(money(0));
+  await expect(panel.getByTestId("money-net")).toHaveText(money(5000));
   await expect(panel.getByTestId("money-waiting")).toHaveText(money(7500));
+  // From here the card stands for a real (live) card payment, so the headline $225 / $40 / $185 case is read on a real-money visit. The refund above was made in the payment's own (test) mode.
+  await markCardLive();
 
   // 1. CHECKOUT, in the window where the panel can still be open. A visit that is paid in full has no Checkout button on the roster (the modal belongs to that button and unmounts
   //    with it), so the final $225 / $40 / $185 / $0.00 checkout figures are pinned by tests/components/visit-money-screens.test.ts and the database figures below, not a browser read.
@@ -126,8 +142,7 @@ test("the $225 / $40 / $185 case reads the same on checkout, the visit page and 
   await expect(region.getByText(/Not paid/i)).toHaveCount(0);
   await shots(page, "2-visit");
 
-  // 3. STATEMENT, with the card attempt read as live money (see the note at the top).
-  await adminQuery(`update public.payment_charge_attempts set stripe_livemode = true where appointment_id = $1`, [seed.appointmentId]);
+  // 3. STATEMENT (the card was marked live above).
   await page.goto(`/financials/statements/${seed.clientId}`);
   await expect(page.getByTestId("statement-money-collected")).toContainText("$225.00");
   await expect(page.getByTestId("statement-money-refunded")).toHaveText("$40.00");
@@ -148,7 +163,9 @@ test("a genuinely unpaid bill still shows what is owed: $225 bill, $185 received
   const pick = (label: string) => panel.getByText(label, { exact: true }).first().click();
   await amount("100.00");
   await panel.getByRole("button", { name: `Charge card ${money(10000)}`, exact: true }).click();
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500), { timeout: 30_000 });
+  // CHANGED (Sam, 28 Nov 2026): wait for the charge in the database, then mark the card live (a real card); a TEST card would not reduce Still to collect.
+  await expect.poll(async () => (await adminQuery(`select status from public.payment_charge_attempts where appointment_id = $1`, [seed.appointmentId])).rows[0]?.status, { timeout: 30_000 }).toBe("succeeded");
+  await markCardLive();
   await pick("Cash"); await amount("50.00");
   await panel.getByRole("button", { name: `Record cash received ${money(5000)}`, exact: true }).click();
   await expect(panel.getByTestId("split-collectable")).toHaveText(money(7500));
@@ -176,7 +193,6 @@ test("a genuinely unpaid bill still shows what is owed: $225 bill, $185 received
   await expect(region.getByTestId("visit-money-still_to_collect")).toHaveText(money(4000));
   await shots(page, "u2-visit");
 
-  await adminQuery(`update public.payment_charge_attempts set stripe_livemode = true where appointment_id = $1`, [seed.appointmentId]);
   await page.goto(`/financials/statements/${seed.clientId}`);
   await expect(page.getByTestId("statement-money-net")).toHaveText("$185.00");
   await expect(page.locator("main")).toContainText("Not paid");
@@ -197,10 +213,11 @@ test("a Stripe TEST card payment and its refund add nothing to the studio statem
   const pick = (label: string) => panel.getByText(label, { exact: true }).first().click();
   await amount("100.00");
   await panel.getByRole("button", { name: `Charge card ${money(10000)}`, exact: true }).click();
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500), { timeout: 30_000 });
+  // CHANGED (Sam, 28 Nov 2026): the TEST card does not reduce Still to collect (it stays $225, was $125), and the later figures follow (cash leaves $175, was $75).
+  await expect.poll(async () => (await adminQuery(`select status from public.payment_charge_attempts where appointment_id = $1`, [seed.appointmentId])).rows[0]?.status, { timeout: 30_000 }).toBe("succeeded");
   await pick("Cash"); await amount("50.00");
   await panel.getByRole("button", { name: `Record cash received ${money(5000)}`, exact: true }).click();
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(7500));
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(17500));
   await pick("E-transfer"); await amount("75.00");
   await panel.getByRole("button", { name: `Record transfer ${money(7500)}`, exact: true }).click();
   await panel.getByRole("button", { name: `Confirm ${money(7500)} transfer received`, exact: true }).click();
@@ -239,6 +256,26 @@ test("a Stripe TEST card payment and its refund add nothing to the studio statem
   await expect(entryList.getByText("Excluded from statements and analytics.")).toHaveCount(2);
   await shots(page, "t1-visit-test-labels");
 
+  // Sam, 28 Nov 2026: the visit's Collected / Refunded / Net are REAL money only in EVERY studio. This studio is a TRIAL (test Stripe only): $50 cash + $75 transfer = $125 / $0 / $125 on the visit
+  // (was $225 / $40 / $185 here), while the test payment and test refund stay listed and labelled. The statement and analytics below read the same $125.
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  const trial = page.getByRole("region", { name: "Session payment" });
+  await expect(trial.getByTestId("visit-money-collected")).toHaveText(money(12500));
+  await expect(trial.getByTestId("visit-money-refunded")).toHaveText(money(0));
+  await expect(trial.getByTestId("visit-money-net")).toHaveText(money(12500));
+  await expect(trial.getByTestId("visit-money-still_to_collect")).toHaveText(money(10000));
+  await shots(page, "t1b-visit-trial-real-money-only");
+  // And the same once the studio connects live Stripe (nothing about the real money changes).
+  await connectLive();
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  const live = page.getByRole("region", { name: "Session payment" });
+  await expect(live.getByTestId("visit-money-collected")).toHaveText(money(12500));
+  await expect(live.getByTestId("visit-money-refunded")).toHaveText(money(0));
+  await expect(live.getByTestId("visit-money-net")).toHaveText(money(12500));
+  await expect(live.getByTestId("visit-money-entry").filter({ hasText: "Test payment" })).toHaveCount(1);
+  await expect(live.getByTestId("visit-money-entry").filter({ hasText: "Test refund" })).toHaveCount(1);
+  await shots(page, "t2-visit-live-real-money-only");
+
   await page.goto("/financials/statement");
   const summary = page.getByRole("region", { name: "Summary" });
   await expect(summary).toContainText("Total collected");
@@ -258,4 +295,136 @@ test("a Stripe TEST card payment and its refund add nothing to the studio statem
   await expect(collected).toContainText(/\$125(\.00)?\s*CAD/);
   await expect(collected).not.toContainText(/\$(225|185|100)(\.00)?\s*CAD/);
   await shots(page, "s2-analytics");
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// C + real-money rule (Sam, 28 Nov 2026): cash-first studios, and the ACCEPTANCE case: a $225 visit, a $225 TEST charge, then $225 confirmed cash.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+async function openSplit(page: Page) {
+  await page.goto("/dashboard");
+  const modal = await openCheckout(page);
+  await modal.getByRole("button", { name: "Split this payment", exact: true }).click();
+  const panel = modal.getByTestId("split-visit-payments");
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(22500));
+  return { modal, panel };
+}
+async function recordCashAndTransfer(page: Page, cash: string, transfer: string) {
+  const { modal, panel } = await openSplit(page);
+  const amount = (v: string) => panel.getByLabel(/^Amount \(CAD\)/).fill(v);
+  const pick = (label: string) => panel.getByText(label, { exact: true }).first().click();
+  const c = money(Math.round(Number(cash) * 100));
+  const t = money(Math.round(Number(transfer) * 100));
+  await pick("Cash"); await amount(cash);
+  await panel.getByRole("button", { name: `Record cash received ${c}`, exact: true }).click();
+  await expect(panel.getByTestId("money-collected")).toHaveText(c, { timeout: 30_000 });
+  await pick("E-transfer"); await amount(transfer);
+  await panel.getByRole("button", { name: `Record transfer ${t}`, exact: true }).click();
+  await panel.getByRole("button", { name: `Confirm ${t} transfer received`, exact: true }).click();
+  await expect(panel.getByTestId("money-collected")).toHaveText(money(22500), { timeout: 30_000 });
+  return { modal, panel };
+}
+// What the visit page, the studio statement and analytics show for ONE visit whose only real money is $225 cash (a labelled TEST payment may sit beside it).
+async function expectThreeScreensReal225(page: Page, tag: string, testEntry: boolean) {
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  const region = page.getByRole("region", { name: "Session payment" });
+  await expect(region.getByTestId("visit-money-collected")).toHaveText(money(22500));
+  await expect(region.getByTestId("visit-money-refunded")).toHaveText(money(0));
+  await expect(region.getByTestId("visit-money-net")).toHaveText(money(22500));
+  await expect(region.getByTestId("visit-money-still_to_collect")).toHaveText(money(0));
+  const entries = region.getByTestId("visit-money-entries").getByTestId("visit-money-entry");
+  if (testEntry) {
+    await expect(entries.filter({ hasText: "Test payment" })).toHaveCount(1);
+    await expect(entries.filter({ hasText: "Test payment" })).toContainText("Excluded from statements and analytics.");
+    await expect(entries.filter({ hasText: "Test payment" })).toContainText("$225.00");
+    await expect(entries.filter({ hasText: "Cash" })).toContainText("$225.00");
+  }
+  await shots(page, `${tag}-visit`);
+  await page.goto("/financials/statement");
+  const summary = page.getByRole("region", { name: "Summary" });
+  await expect(summary).toContainText("$225.00");
+  await expect(summary).not.toContainText("$450.00");
+  await expect(summary.getByRole("listitem").filter({ hasText: "Cash" })).toContainText("$225.00");
+  await page.goto("/financials/analytics");
+  const collected = page.locator('section[aria-labelledby="ov-collected-total"]');
+  await expect(collected).toContainText(/\$225(\.00)?\s*CAD/);
+  await expect(collected).not.toContainText(/\$450(\.00)?\s*CAD/);
+}
+
+test("(a) a studio that connected live Stripe and never ran a card: cash $100 + transfer $125 are the first real money, totals right, balance $0, no card attempt", async ({ page }) => {
+  await connectLive();
+  await loginAsOwner(page, seed);
+  const { modal, panel } = await recordCashAndTransfer(page, "100.00", "125.00");
+  await expect(panel.getByTestId("money-refunded")).toHaveText(money(0));
+  await expect(panel.getByTestId("money-net")).toHaveText(money(22500));
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(0));
+  expect(Number((await adminQuery(`select count(*)::int as n from public.payment_charge_attempts where appointment_id = $1`, [seed.appointmentId])).rows[0].n)).toBe(0);
+  await shots(page, "k1-cashfirst-live-checkout", modal);
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  const region = page.getByRole("region", { name: "Session payment" });
+  await expect(region.getByTestId("visit-money-collected")).toHaveText(money(22500));
+  await expect(region.getByTestId("visit-money-net")).toHaveText(money(22500));
+  await shots(page, "k2-cashfirst-live-visit");
+});
+
+test("(b) a studio that NEVER connected Stripe and takes only cash and transfers: both recorded, totals right, no Stripe wording on the panel", async ({ page }) => {
+  await neverConnect();
+  await loginAsOwner(page, seed);
+  const { modal, panel } = await recordCashAndTransfer(page, "100.00", "125.00");
+  await expect(panel.getByTestId("money-net")).toHaveText(money(22500));
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(0));
+  await expect(panel).not.toContainText(/stripe/i);
+  await shots(page, "k3-never-connected-checkout", modal);
+  await page.goto(`/clients/${seed.clientId}/sessions/${seed.sessionId}`);
+  await expect(page.getByRole("region", { name: "Session payment" }).getByTestId("visit-money-net")).toHaveText(money(22500));
+  await shots(page, "k4-never-connected-visit");
+});
+
+// ACCEPTANCE, studio 1: a TRIAL studio (test Stripe only). A $225 test charge, then $225 confirmed cash.
+test("ACCEPTANCE (trial studio): a $225 TEST charge then $225 cash reads $225 collected / $0 refunded / $225 net / $0 still to collect on the visit, the statement and analytics; the test charge is listed and labelled", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  const { modal, panel } = await openSplit(page);
+  await panel.getByLabel(/^Amount \(CAD\)/).fill("225.00");
+  await panel.getByRole("button", { name: `Charge card ${money(22500)}`, exact: true }).click();
+  await expect.poll(async () => (await adminQuery(`select status from public.payment_charge_attempts where appointment_id = $1`, [seed.appointmentId])).rows[0]?.status, { timeout: 30_000 }).toBe("succeeded");
+  await page.reload();
+  const m1 = await openCheckout(page);
+  const p1 = m1.getByTestId("split-visit-payments");
+  await expect(p1.getByTestId("split-collectable")).toHaveText(money(22500));    // a test charge does not pay the visit
+  await p1.getByText("Cash", { exact: true }).first().click();
+  await expect(p1.locator("#split-amount-help")).toContainText(money(22500));    // what staff see: real cash may be taken up to the agreed balance
+  await shots(page, "h1-trial-test-charge-cash-offered", m1);
+  await p1.getByLabel(/^Amount \(CAD\)/).fill("225.00");
+  await p1.getByRole("button", { name: `Record cash received ${money(22500)}`, exact: true }).click();
+  await expect(p1.getByTestId("money-collected")).toHaveText(money(22500), { timeout: 30_000 });
+  await expect(p1.getByTestId("split-collectable")).toHaveText(money(0));
+  await shots(page, "h2-trial-after-cash", m1);
+  expect(Number((await adminQuery(`select outstanding_cents from public.visit_payment_position((select studio_id from public.visit_bills where appointment_id = $1 and superseded_at is null), $1)`, [seed.appointmentId])).rows[0].outstanding_cents)).toBe(0);
+  await markCardLive();   // statements and analytics read live money only; the cash is the only real money, so they must show $225 whether or not this is read
+  await adminQuery(`update public.payment_charge_attempts set stripe_livemode = false where appointment_id = $1`, [seed.appointmentId]);
+  await expectThreeScreensReal225(page, "h3-trial", true);
+});
+
+// ACCEPTANCE, studio 2: a studio with NO Stripe connection that still carries a leftover TEST charge on the visit; this is the cash-only studio whose visit page goes in the review package.
+test("ACCEPTANCE (no Stripe connection, cash only): a leftover $225 TEST charge then $225 cash reads $225 / $0 / $225 / $0 still to collect; the test charge is listed and labelled; phone and desktop screenshots", async ({ page }) => {
+  await loginAsOwner(page, seed);
+  const { panel: p0 } = await openSplit(page);                // the bill is made while the studio can still open checkout
+  await expect(p0).toBeVisible();
+  await neverConnect();
+  await adminQuery(
+    `insert into public.payment_charge_attempts (studio_id, charge_reason, client_id, session_id, appointment_id, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode, stripe_payment_intent_id, stripe_charge_id, charged_at)
+     select $1, 'session_payment', $2, $3, $4, (select id from public.practitioners where studio_id = $1 limit 1), 22500, 'cad', 'succeeded', false, $5, $6, now()`,
+    [seed.studioId, seed.clientId, seed.sessionId, seed.appointmentId, `pi_leftover_${seed.scenario.runId}`, `ch_leftover_${seed.scenario.runId}`],
+  );
+  await page.goto("/dashboard");
+  const m = await openCheckout(page);
+  const panel = m.getByTestId("split-visit-payments");
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(22500));
+  await panel.getByText("Cash", { exact: true }).first().click();
+  await panel.getByLabel(/^Amount \(CAD\)/).fill("225.00");
+  await panel.getByRole("button", { name: `Record cash received ${money(22500)}`, exact: true }).click();
+  await expect(panel.getByTestId("money-collected")).toHaveText(money(22500), { timeout: 30_000 });
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(0));
+  await expect(panel).not.toContainText(/stripe/i);
+  await shots(page, "n1-cashonly-checkout", m);
+  await expectThreeScreensReal225(page, "n2-cashonly", true);
 });

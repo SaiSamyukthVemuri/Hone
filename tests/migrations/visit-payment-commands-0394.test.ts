@@ -89,20 +89,27 @@ describe("0394 is shaped like a sealed migration", () => {
     const c = code(UP);
     expect(c).toMatch(/function public\.studio_has_gone_live\(p_studio uuid\)/);
     expect(c).toMatch(/a\.stripe_livemode = true and a\.status = 'succeeded'/);
-    expect(c).toMatch(/function public\.card_counts_toward_capacity\(p_studio uuid, p_livemode boolean, p_assume_live boolean default false\)/);
+    expect(c).toMatch(/function public\.card_counts_toward_capacity\(p_studio uuid, p_livemode boolean\)/);
     // the position's card term and its price-reduction term both go through it
     expect((c.match(/public\.card_counts_toward_capacity\(p_studio, /g) ?? []).length).toBeGreaterThanOrEqual(2);
-    // no 0394 command takes a livemode argument: an owner could otherwise claim any mode
-    // the money commands (cash, transfer, refund, position, refusal) do not take a mode: only ensure_visit_bill's existing p_livemode (bill creation over live card money) and the helper do
-    for (const fn of ["record_visit_external_payment", "request_payment_refund", "visit_payment_position", "visit_payment_refusal"]) {
+    // no 0394 money command takes a livemode argument: an owner could otherwise claim any mode (only ensure_visit_bill's existing p_livemode and the internal refusal's tender mode, never a command input)
+    for (const fn of ["record_visit_external_payment", "request_payment_refund", "visit_payment_position"]) {
       const sig = c.slice(c.indexOf(`function public.${fn}(`), c.indexOf(")", c.indexOf(`function public.${fn}(`)));
       expect(sig, fn).not.toMatch(/livemode/);
     }
-    // p_assume_live is passed true ONLY by the card wall, from the row being inserted; no command passes it
+    // the first-live-card assumption is gone: a live card is judged on REAL money only
+    expect(c).not.toMatch(/p_assume_live/);
+    // REAL-MONEY RULE (Sam, 28 Nov 2026): outstanding_cents counts cash, transfers and LIVE cards only (a test card never counts, in any studio); test_card_room_cents keeps the older rule for a new TEST card only
+    expect(c).toMatch(/test_card_room_cents integer\)/);
+    expect(c).toMatch(/greatest\(0, b\.total_cents - x\.confirmed - x\.pending - c\.live_card \+ d\.reduced_real\)/);
+    expect(c).toMatch(/greatest\(0, b\.total_cents - x\.confirmed - x\.pending - c\.card \+ d\.reduced\)/);
+    // the refusal judges a real tender (NULL external / TRUE live card) on it and a TEST card on the balance due; the card wall passes the ROW's mode, the external commands pass nothing
+    expect(c).toMatch(/function public\.visit_payment_refusal\(p_studio uuid, p_appointment uuid, p_amount integer, p_tender_livemode boolean default null\)/);
+    expect(c).toContain("v_room := case when p_tender_livemode is false then p.test_card_room_cents else p.outstanding_cents end;");
     expect(c).toContain("new.amount_cents, new.stripe_livemode is true)");
-    expect((c.match(/p_assume_live/g) ?? []).length).toBeGreaterThan(0);
-    expect(c).not.toMatch(/visit_payment_refusal\(p_studio_id, p_appointment_id, p_amount_cents, true/);
-    for (const fn of ["studio_has_gone_live(uuid)", "card_counts_toward_capacity(uuid, boolean, boolean)"]) {
+    expect(c).toContain("visit_payment_refusal(p_studio_id, p_appointment_id, p_amount_cents)");
+    expect(c).not.toMatch(/visit_payment_refusal\(p_studio_id, p_appointment_id, p_amount_cents, /);
+    for (const fn of ["studio_has_gone_live(uuid)", "card_counts_toward_capacity(uuid, boolean)"]) {
       expect(c).toContain(`revoke all privileges on function public.${fn} from public, anon, authenticated, service_role;`);
       expect(DOWN).toContain(`drop function public.${fn};`);
     }

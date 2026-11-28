@@ -12,7 +12,7 @@ vi.mock("@/app/(app)/visit-payment-actions", () => ({
   sendSplitCardReceiptAction: vi.fn(), refundCardPaymentAction: vi.fn(), voidTransferAction: vi.fn(), cancelSplitCardAttemptAction: vi.fn(), recheckCardRefundAction: vi.fn(), resolveRefundReviewAction: vi.fn(),
 }));
 import { SplitVisitPayments } from "@/components/split-visit-payments";
-import { TEST_CARD_HOLDS_NOTE, visitBalance, type VisitLedger } from "@/lib/billing/visit-payments-core";
+import { visitBalance, type VisitLedger } from "@/lib/billing/visit-payments-core";
 import type { SplitState } from "@/app/(app)/visit-payment-actions";
 
 const ledger = (over: Partial<VisitLedger>): VisitLedger => ({
@@ -30,25 +30,36 @@ const pick = (name: RegExp) => act(() => { [...host!.querySelectorAll("label")].
 const help = () => host!.querySelector("#split-amount-help")?.textContent ?? "";
 afterEach(() => { act(() => root?.unmount()); host?.remove(); root = null; host = null; });
 
-describe("a test card still holds the bill until the studio's first real card", () => {
-  it("Balance due is the database position ($0) and a real card is offered the full $100", () => {
+describe("an old test card never blocks genuine cash or a transfer (Sam, 28 Nov 2026)", () => {
+  it("Still to collect is the full $100 (a test card never counts, in any studio) and REAL money is offered the full $100 (was Balance due $0 before Sam's 28 Nov rule)", () => {
     mount(ledger({}));
-    expect(host!.querySelector('[data-testid="split-collectable"]')?.textContent).toMatch(/\$0\.00/);
+    expect(host!.querySelector('[data-testid="split-collectable"]')?.textContent).toMatch(/\$100\.00/);
     expect(help()).toMatch(/Up to \$100\.00/);
-    expect(host!.querySelector('[data-testid="split-test-card-holds"]')).toBeNull();
   });
-  it("cash and transfer are offered $0, say why, and cannot be submitted", () => {
+  it("cash and transfer are offered the full $100 and can be submitted; there is no 'test card holds' note any more", () => {
     mount(ledger({}));
     pick(/Cash/);
-    expect(help()).toMatch(/Up to \$0\.00/);
-    expect(host!.querySelector('[data-testid="split-test-card-holds"]')?.textContent).toContain(TEST_CARD_HOLDS_NOTE);
-    expect([...host!.querySelectorAll("button")].find((b) => /Record cash/.test(b.textContent ?? ""))!.disabled).toBe(true);
-    pick(/E-transfer/);
-    expect(host!.querySelector('[data-testid="split-test-card-holds"]')).not.toBeNull();
-  });
-  it("a test deployment has no such note: nothing is offered anywhere", () => {
-    mount(ledger({ cardAssumesLive: false }));
+    expect(help()).toMatch(/Up to \$100\.00/);
     expect(host!.querySelector('[data-testid="split-test-card-holds"]')).toBeNull();
+    pick(/E-transfer/);
+    expect(help()).toMatch(/Up to \$100\.00/);
+  });
+  it("real money already received reduces what cash may take: $60 cash received leaves $40, and a live card counts like cash", () => {
+    const cash = { id: "e", method: "paid_cash", amountCents: 6000, state: "confirmed", at: "2026-11-27T00:00:00Z" } as never;
+    mount(ledger({ externals: [cash] }));
+    pick(/Cash/);
+    expect(help()).toMatch(/Up to \$40\.00/);
+    act(() => root?.unmount()); host?.remove();
+    const live = { kind: "card" as const, id: "l", amountCents: 7000, status: "succeeded", at: "2026-11-27T00:00:00Z", platformFeeCents: null };
+    mount(ledger({ cards: [{ ...live, id: "t", amountCents: 10000, test: true }, live] }));
+    pick(/Cash/);
+    expect(help()).toMatch(/Up to \$30\.00/);
+  });
+  it("a test deployment's card is a TEST row: no room for a second test card in a trial studio, while cash still is offered the full $100", () => {
+    mount(ledger({ cardAssumesLive: false }));
+    expect(visitBalance(ledger({ cardAssumesLive: false }))?.cardCollectableCents).toBe(0);
+    pick(/Cash/);
+    expect(help()).toMatch(/Up to \$100\.00/);
   });
 });
 

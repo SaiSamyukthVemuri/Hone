@@ -73,7 +73,7 @@ export type VisitBalance = {
   totalCents: number; confirmedCents: number; pendingCents: number; cardCents: number; refundedCents: number;
   /** Still collectable: what a new tender may take. Pending transfers are NOT in it (they are reserved). */
   collectableCents: number;
-  /** What a NEW CARD may take: the card wall (0394) judges a live card as if the studio had gone live, so on a live deployment this can exceed collectableCents (cash and transfers use the database's own position). */
+  /** What a NEW CARD may take: a live deployment's card is a live row judged on real money (collectableCents); a test deployment's card is a TEST row, judged by the older rule (a test card counts against another test card until the studio is live). */
   cardCollectableCents: number;
   /** Still owed in the sense of "not yet received": collectable plus the pending transfers. */
   owedCents: number;
@@ -83,12 +83,11 @@ export type VisitBalance = {
 export function visitBalance(l: VisitLedger): VisitBalance | null {
   const own = positionOf(l, l.studioLive === true);
   if (!own) return null;
-  // The card path mirrors the trigger: a live deployment's card is a live row, so the position is computed as if the studio had gone live. Cash and transfers do NOT assume it.
-  const card = l.cardAssumesLive === true ? positionOf(l, true) : own;
-  return { ...own, cardCollectableCents: card ? card.collectableCents : own.collectableCents };
+  // The card wall (0394) judges a tender by its mode: a live row (a live deployment's card) and cash / transfers on REAL money only; a TEST row (a test deployment's card) on the balance due.
+  return { ...own, cardCollectableCents: l.cardAssumesLive === true ? own.collectableCents : own.testCardRoomCents };
 }
 
-function positionOf(l: VisitLedger, studioLive: boolean): Omit<VisitBalance, "cardCollectableCents"> | null {
+function positionOf(l: VisitLedger, studioLive: boolean): (Omit<VisitBalance, "cardCollectableCents"> & { testCardRoomCents: number }) | null {
   if (!l.bill) return null;
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
   const confirmedCents = sum(l.externals.filter((e) => e.state === "confirmed").map((e) => e.amountCents));
@@ -101,8 +100,13 @@ function positionOf(l: VisitLedger, studioLive: boolean): Omit<VisitBalance, "ca
   // PRODUCT RULE (Sam, 27 Nov 2026), the same as visit_payment_position (0394): refunding a paid visit does not by itself reopen a balance. Only a succeeded
   // price_reduction (the bill already dropped by that amount) adds back; a payment_reversal does not. `refundedCents` stays ALL money returned.
   const reducedCents = sum(l.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction" && countsCard(r)).map((r) => r.amountCents));
-  const collectableCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - cardCents + reducedCents);
-  return { totalCents: l.bill.totalCents, confirmedCents, pendingCents, cardCents, refundedCents, collectableCents, owedCents: collectableCents + pendingCents };
+  // STILL TO COLLECT counts REAL money only (the database's outstanding_cents): cash, transfers and LIVE card payments. A Stripe TEST payment never counts, in any studio (Sam, 28 Nov 2026).
+  const liveCardCents = sum(l.cards.filter((c) => ["ready", "pending_stripe", "succeeded"].includes(c.status) && c.test !== true).map((c) => c.amountCents));
+  const reducedRealCents = sum(l.refunds.filter((r) => r.status === "succeeded" && r.kind === "price_reduction" && r.test !== true).map((r) => r.amountCents));
+  const collectableCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - liveCardCents + reducedRealCents);
+  // The ONE use of the live distinction: the room for a new TEST card (test_card_room_cents), so test lanes and trial studios cannot stack test charges past the bill.
+  const testCardRoomCents = Math.max(0, l.bill.totalCents - confirmedCents - pendingCents - cardCents + reducedCents);
+  return { totalCents: l.bill.totalCents, confirmedCents, pendingCents, cardCents: liveCardCents, refundedCents, collectableCents, testCardRoomCents, owedCents: collectableCents + pendingCents };
 }
 
 export type HistoryLine = {
@@ -118,7 +122,6 @@ export type HistoryLine = {
 };
 export const TEST_PAYMENT_LABEL = "Test payment";
 export const TEST_REFUND_LABEL = "Test refund";
-export const TEST_CARD_HOLDS_NOTE = "A test card payment still counts until the studio's first real card payment.";
 export const TEST_EXCLUDED_NOTE = "Excluded from statements and analytics.";
 
 const METHOD_LABEL: Record<ExternalMethod, string> = { paid_cash: "Cash", paid_e_transfer: "E-transfer", paid_other_external: "Transfer or other" };

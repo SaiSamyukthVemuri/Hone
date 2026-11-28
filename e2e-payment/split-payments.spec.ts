@@ -49,6 +49,14 @@ test.afterEach(async () => {
 });
 test.afterAll(async () => { await closePool(); });
 
+// Sam, 28 Nov 2026: Still to collect counts REAL money only, so a Stripe TEST card no longer "pays" a visit. The fake-Stripe lane can only make TEST cards; where a spec needs a card to stand for real
+// money it marks the succeeded attempts live in the database (never before a refund: a test payment is refunded in its own mode) and reopens the panel.
+const markCardsLive = () => adminQuery(`update public.payment_charge_attempts set stripe_livemode = true where appointment_id = $1 and status = 'succeeded'`, [seed.appointmentId]);
+async function reopenPanel(page: Page): Promise<Locator> {
+  await page.goto("/dashboard");
+  const modal = await openCheckout(page);
+  return modal.getByTestId("split-visit-payments");
+}
 async function openSplit(page: Page): Promise<Locator> {
   await loginAsOwner(page, seed);
   await page.goto("/dashboard");
@@ -81,7 +89,7 @@ async function loseResponses(page: Page, passFirst: number) {
 }
 
 test("the $225 example: lost response after Stripe accepts, then cash once, transfer reserved, both click orders, void, one $75 charge", async ({ page, browser }, testInfo) => {
-  const panel = await openSplit(page);
+  let panel = await openSplit(page);
 
   // ---- $100 by card; Stripe accepts but the browser never hears.
   await amount(panel, "100.00");
@@ -101,8 +109,12 @@ test("the $225 example: lost response after Stripe accepts, then cash once, tran
   // ---- Reconnect: the same attempt is re-asked, never recharged.
   await restore();
   await expect(checking).toHaveCount(0, { timeout: 40_000 });
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500));
   expect((await attempts()).map((a) => [a.status, a.amount_cents])).toEqual([["succeeded", 10000]]);
+  // CHANGED (Sam, 28 Nov 2026): the card is a TEST payment, so Still to collect stays $225 (was $125); from here the card stands for a real one, so the rest of the example reads as before.
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(22500));
+  await markCardsLive();
+  panel = await reopenPanel(page);
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500));
   expect(pis()).toHaveLength(1);
 
   // ONE receipt for the $100 payment (automatic), and asking again cannot send a second.
@@ -155,6 +167,7 @@ test("the $225 example: lost response after Stripe accepts, then cash once, tran
   await amount(panel, "75.00");
   await panel.getByRole("button", { name: `Charge card ${money(7500)}`, exact: true }).click();
   await expect.poll(async () => (await attempts()).map((a) => a.status), { timeout: 30_000 }).toEqual(["succeeded", "succeeded"]);
+  await markCardsLive(); // CHANGED (Sam, 28 Nov 2026): the second card is a test payment too; it must stand for real money for the visit to read Paid
   await page.goto("/dashboard");
   await expect(page.getByTestId("appointment-payment-paid")).toBeVisible(); // $100 + $50 cash + $75 card = $225: now Paid
   expect(pis()).toHaveLength(2); // $100 and $75: no duplicate anywhere
@@ -186,7 +199,9 @@ test("a $40 partial refund with a lost response: ONE refund at Stripe, $60 still
   const panel = await openSplit(page);
   await amount(panel, "100.00");
   await panel.getByRole("button", { name: `Charge card ${money(10000)}`, exact: true }).click();
-  await expect(panel.getByTestId("split-collectable")).toHaveText(money(12500), { timeout: 30_000 });
+  // CHANGED (Sam, 28 Nov 2026): a TEST card payment does not reduce Still to collect: it stays $225 (was $125). The refund is made in the payment's own (test) mode, so the card is not marked live here.
+  await expect.poll(async () => (await attempts()).map((a) => a.status), { timeout: 30_000 }).toEqual(["succeeded"]);
+  await expect(panel.getByTestId("split-collectable")).toHaveText(money(22500), { timeout: 30_000 });
   expect(pis()).toHaveLength(1);
 
   await panel.getByRole("button", { name: "Refund or reduce a payment" }).click();
@@ -210,8 +225,8 @@ test("a $40 partial refund with a lost response: ONE refund at Stripe, $60 still
   await page.reload();
   const modal = await openCheckout(page);
   const panel2 = modal.getByTestId("split-visit-payments");
-  // PRODUCT RULE (Sam, 27 Nov 2026): returning money does not reopen a balance, so the $40 refund leaves $225 − $100 card = $125 still to collect (not $165).
-  await expect(panel2.getByTestId("split-collectable")).toHaveText(money(12500));
+  // PRODUCT RULE (Sam, 27 Nov 2026): returning money does not reopen a balance. CHANGED (Sam, 28 Nov 2026): the card is a TEST payment, so Still to collect is the full $225 (was $125).
+  await expect(panel2.getByTestId("split-collectable")).toHaveText(money(22500));
   await panel2.getByRole("button", { name: "Refund or reduce a payment" }).click();
   await expect(panel2.getByRole("combobox")).toContainText(`up to ${money(6000)} refundable`);
   expect(refundsAtStripe()).toHaveLength(1);
@@ -224,6 +239,7 @@ test("click order 2: a transfer and a card for the same $75 submitted at the sam
   await amount(panel, "150.00");
   await panel.getByRole("button", { name: `Charge card ${money(15000)}`, exact: true }).click();
   await expect.poll(async () => (await attempts()).map((a) => a.status), { timeout: 30_000 }).toEqual(["succeeded"]);
+  await markCardsLive(); // CHANGED (Sam, 28 Nov 2026): the $150 card stands for real money (a test card would leave $225 to collect)
   await page.goto("/dashboard");
   const modalA = await openCheckout(page);
   const panelA = modalA.getByTestId("split-visit-payments");

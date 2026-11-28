@@ -6,7 +6,7 @@ import { visitMoneySummary } from "@/lib/billing/visit-money";
 import { historyLines, TEST_EXCLUDED_NOTE, type VisitLedger } from "@/lib/billing/visit-payments-core";
 
 // Sam, 27 Nov 2026: a Stripe TEST-mode entry is labelled ON THE ENTRY ("Test payment" for a card charge, "Test refund" for a refund) with "Excluded from statements and
-// analytics."; real cash and transfers on the same visit stay unlabelled. Labelling only: the visit's Collected / Refunded / Net totals are unchanged.
+// analytics."; real cash and transfers on the same visit stay unlabelled. The totals count REAL money only (Sam, 28 Nov 2026).
 const bill = { id: "b", totalCents: 22500, currency: "cad" as const, referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "t" };
 const mixed: VisitLedger = {
   bill,
@@ -35,9 +35,9 @@ describe("per-entry Stripe TEST-mode labels on the visit", () => {
     }
     expect(html(mixed).match(/Excluded from statements and analytics\./g)).toHaveLength(2);
   });
-  it("labels the entries only: the visit's Collected / Refunded / Net are unchanged", () => {
+  it("the test entries stay listed and labelled but are in none of Collected / Refunded / Net (REAL money only, in every studio; was $225 / $40 / $185 before Sam's 28 Nov rule)", () => {
     const m = visitMoneySummary(mixed);
-    expect([m.collectedCents, m.refundedCents, m.netCents]).toEqual([22500, 4000, 18500]);
+    expect([m.collectedCents, m.refundedCents, m.netCents]).toEqual([12500, 0, 12500]);
   });
   it("a live visit shows no label at all, and an entry with no mode flag is not labelled by the component", () => {
     const live: VisitLedger = { ...mixed, cards: [{ ...mixed.cards[0], test: undefined }], refunds: [{ ...mixed.refunds[0], test: undefined }] };

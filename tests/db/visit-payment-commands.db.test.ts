@@ -51,9 +51,9 @@ const token = () => `${Date.now().toString(36)}${(tokenSeq++).toString(36)}${ran
 const card = (s: PaymentScenario, cents: number, status: "ready" | "succeeded" = "succeeded", submission: string | null = null) =>
   adminQuery(
     `insert into public.payment_charge_attempts
-       (studio_id, charge_reason, client_id, session_id, appointment_id, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode,
+       (studio_id, charge_reason, client_id, session_id, appointment_id, created_by_practitioner_id, amount_cents, currency, status, stripe_livemode, stripe_account_id,
         client_payment_method_id, card_authorization_signature_id, stripe_payment_intent_id, stripe_charge_id, charged_at, submission_id)
-     select $1,'session_payment',$2,$3,$4,$5,$6,'cad',$7,false,
+     select $1,'session_payment',$2,$3,$4,$5,$6,'cad',$7,true,'acct_synthetic_live',
         (select id from public.client_payment_methods where client_id=$2 and studio_id=$1 limit 1),
         (select id from public.client_consent_signatures where client_id=$2 and studio_id=$1 order by template_version desc limit 1),
         $8,$9,$10,$11
@@ -369,7 +369,7 @@ describe("0394 who can run what", () => {
           'public.request_payment_refund(uuid,uuid,uuid,uuid,integer,text,text,uuid)',
           'public.get_visit_payment_position(uuid,uuid)',
           'public.finish_payment_refund(uuid,text,text,text,text,text,integer)',
-          'public.visit_payment_position(uuid,uuid,boolean)',
+          'public.visit_payment_position(uuid,uuid)',
           'public.visit_payment_refusal(uuid,uuid,integer,boolean)',
           'public.visit_bill_supersede(uuid,uuid,integer,text,uuid)',
           'public.payment_charge_attempts_visit_bill_guard()']) f`);

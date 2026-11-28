@@ -38,9 +38,9 @@ export type VisitMoneySummary = {
 /** The summary of one visit's split-payments ledger (checkout and the visit page). */
 export function visitMoneySummary(ledger: VisitLedger): VisitMoneySummary {
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-  // Sam, 28 Nov 2026: in a LIVE studio the totals are REAL money only. A Stripe TEST payment or refund stays visible (labelled) but is in none of Collected, Refunded or Net.
-  // In a studio that is not live yet (a trial), everything counts, as before.
-  const real = (x: { test?: boolean }) => !(ledger.studioLive === true && x.test === true);
+  // Sam, 28 Nov 2026: the totals are REAL money only, in EVERY studio (live, connected with no card, never connected). A Stripe TEST payment or refund stays visible as a labelled entry but is in none of
+  // Collected, Refunded, Net or Still to collect. (The statement and analytics are live-only too, so the three cannot disagree.)
+  const real = (x: { test?: boolean }) => x.test !== true;
   const collectedCents = sum(ledger.externals.filter((e) => e.state === "confirmed").map((e) => e.amountCents))
     + sum(ledger.cards.filter((c) => c.status === "succeeded" && real(c)).map((c) => c.amountCents));
   const refundedCents = sum(ledger.refunds.filter((r) => r.status === "succeeded" && real(r)).map((r) => r.amountCents));

@@ -80,8 +80,8 @@ describe("the statement and checkout agree on the $225 case", () => {
   });
 });
 
-// Sam, 28 Nov 2026: in a LIVE studio the visit's Collected / Refunded / Net are REAL money only; test entries stay listed (labelled) but are in no total.
-describe("visitMoneySummary in a live studio: the mixed example ($100 test charge, $40 test refund, $50 cash, $75 transfer)", () => {
+// Sam, 28 Nov 2026: the visit's Collected / Refunded / Net are REAL money only, in EVERY studio; test entries stay listed (labelled) but are in no total.
+describe("visitMoneySummary: the mixed example ($100 test charge, $40 test refund, $50 cash, $75 transfer)", () => {
   const bill = { id: "b", totalCents: 12500, currency: "cad" as const, referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "t" };
   const mixed = (studioLive?: boolean): VisitLedger => ({
     studioLive, bill,
@@ -92,13 +92,15 @@ describe("visitMoneySummary in a live studio: the mixed example ($100 test charg
     ] as never,
     refunds: [{ id: "r", amountCents: 4000, kind: "payment_reversal", status: "succeeded", attemptId: "c", externalPaymentId: null, reason: "x", at: "t", platformFeeReturnedCents: null, test: true }],
   });
-  it("live studio: Collected $125, Refunded $0, Net $125", () => {
-    expect(visitMoneySummary(mixed(true))).toMatchObject({ collectedCents: 12500, refundedCents: 0, netCents: 12500 });
+  it("reads $125 / $0 / $125 in every studio: live, a trial (not live), and one with no live signal at all (was $225 / $40 / $185 for the last two)", () => {
+    for (const live of [true, false, undefined]) expect(visitMoneySummary(mixed(live))).toMatchObject({ collectedCents: 12500, refundedCents: 0, netCents: 12500 });
   });
-  it("a studio that is not live yet (a trial): everything counts, as before ($225 / $40 / $185)", () => {
-    for (const live of [false, undefined]) expect(visitMoneySummary(mixed(live))).toMatchObject({ collectedCents: 22500, refundedCents: 4000, netCents: 18500 });
+  it("the $225 acceptance case: a $225 test charge then $225 confirmed cash reads $225 / $0 / $225, with the test charge listed and labelled", () => {
+    const l: VisitLedger = { bill: { ...bill, totalCents: 22500 }, cards: [{ kind: "card", id: "c", amountCents: 22500, status: "succeeded", at: "t", platformFeeCents: null, test: true }],
+      externals: [{ id: "e", method: "paid_cash", amountCents: 22500, state: "confirmed", at: "t" }] as never, refunds: [] };
+    for (const live of [true, false, undefined]) expect(visitMoneySummary({ ...l, studioLive: live })).toMatchObject({ collectedCents: 22500, refundedCents: 0, netCents: 22500 });
   });
-  it("a LIVE card and its refund in a live studio count in full", () => {
+  it("a LIVE card and its refund count in full", () => {
     const l = mixed(true);
     l.cards = [{ ...l.cards[0], test: undefined }]; l.refunds = [{ ...l.refunds[0], test: undefined }];
     expect(visitMoneySummary(l)).toMatchObject({ collectedCents: 22500, refundedCents: 4000, netCents: 18500 });

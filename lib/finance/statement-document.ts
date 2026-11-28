@@ -580,7 +580,7 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
         refundedCents: refunded,
         waivedCents: waived,
         // A split-payments part refund leaves its payment in `paid` in FULL, so it is not added to it a second time: $100 paid then $40 returned is $100 originally paid, not $140.
-        originalPaidCents: paid + refunded - visits.reduce((n, v) => n + sumKinds(v.lines, ["refunded_partial"]), 0),
+        originalPaidCents: paid + refunded - visits.reduce((n, v) => n + sumKinds(v.lines, ["refunded_partial"]), 0) - feeItems.reduce((n, f) => n + sumKinds(f.lines, ["refunded_partial"]), 0), // payment-only items (an uncompleted booking) carry split refunds too
         recordedFeeCents: recordedFee,
         feeTotalComplete: feeComplete,
         byState,
@@ -719,15 +719,18 @@ export function toCsvRows(doc: StatementDocument): Cell[][] {
 }
 
 /** Cents refunded against ONE payment in the split-payments ledger (kind refunded_partial). Those payments stay listed in full in `paidCents`; a legacy full card refund is taken OUT of it. */
-export function partialRefundedCents(doc: Pick<StatementDocument, "visits">): number {
+export function partialRefundedCents(doc: Pick<StatementDocument, "visits"> & Partial<Pick<StatementDocument, "feeItems">>): number {
   let n = 0;
+  // Payment-only items (a payment on an uncompleted booking, or a fee) carry split refunds too: their payment stays in `paidCents` in full, exactly like a treatment visit's.
   for (const v of doc.visits) n += sumKinds(v.lines, ["refunded_partial"]);
+  for (const f of doc.feeItems ?? []) n += sumKinds(f.lines, ["refunded_partial"]);
   return n;
 }
 
 /** Cents of refunds still awaiting confirmation (a refund with Stripe, a gap the card's own columns report, an open review): never in Refunded or Net, shown as "Refund pending". */
-export function refundPendingCents(doc: Pick<StatementDocument, "visits">): number {
+export function refundPendingCents(doc: Pick<StatementDocument, "visits"> & Partial<Pick<StatementDocument, "feeItems">>): number {
   let n = 0;
   for (const v of doc.visits) for (const l of v.lines) if (l.kind === "unresolved" && typeof l.pendingCents === "number") n += l.pendingCents;
+  for (const f of doc.feeItems ?? []) for (const l of f.lines) if (l.kind === "unresolved" && typeof l.pendingCents === "number") n += l.pendingCents;
   return n;
 }
