@@ -1,6 +1,7 @@
 import "server-only";
 import { safeLog } from "@/lib/logging/safe-log";
 import { createAdminClient } from "@/lib/supabase/admin-server";
+import { routeOperatorOnly } from "@/lib/ops/operator-only";
 import { notifyCriticalOpsAlert } from "@/lib/ops/alert-email";
 import {
   redactOpsAlertMessage,
@@ -109,8 +110,15 @@ function structuredConsoleLog(payload: Record<string, unknown>): void {
 // invokes it after the durable write attempt.
 
 // Main entry point.
-export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
-  await recordOpsAlertDurably(input);
+//
+// `signal` (optional, LEAD-ALERT-01 Codex P2 4259034271): a caller working
+// under a deadline cancels the durable insert at that deadline. The structured
+// log is always written first.
+export async function recordOpsAlert(
+  input: OpsAlertInput,
+  opts: { signal?: AbortSignal | null } = {},
+): Promise<void> {
+  await recordOpsAlertDurably(input, opts);
 }
 
 /**
@@ -121,7 +129,11 @@ export async function recordOpsAlert(input: OpsAlertInput): Promise<void> {
  * refusal is otherwise silent (a webhook that returns 2xx) uses this to stay
  * retryable when the record could not be kept.
  */
-export async function recordOpsAlertDurably(input: OpsAlertInput): Promise<boolean> {
+export async function recordOpsAlertDurably(
+  input: OpsAlertInput,
+  opts: { signal?: AbortSignal | null } = {},
+): Promise<boolean> {
+  const signal = opts.signal ?? null;
   let persisted = false;
   // Sanitize first so the structured log uses the redacted detail
   // shape too. The redactor never throws.
@@ -157,19 +169,24 @@ export async function recordOpsAlertDurably(input: OpsAlertInput): Promise<boole
   // Durable row insert. Service-role admin client only.
   try {
     const admin = createAdminClient();
-    const { error } = await admin.from("ops_alerts").insert({
+    // HON-125: the ROW is member-readable when studio_id is set (ops_alerts_member_read, 0067), so an alert carrying money,
+    // a Stripe/attempt id or a client id is written operator-only (studio_id and client_id NULL, both ids kept in safe_details).
+    // The structured log above and the critical email keep the original ids: neither is a member surface.
+    const routed = routeOperatorOnly({ ...input, safeDetails: redacted });
+    const insert = admin.from("ops_alerts").insert({
       severity: input.severity,
       event: input.event,
       message,
-      studio_id: input.studioId ?? null,
+      studio_id: routed.studioId,
       appointment_id: input.appointmentId ?? null,
-      client_id: input.clientId ?? null,
+      client_id: routed.clientId,
       stripe_event_id: input.stripeEventId ?? null,
       stripe_payment_intent_id: input.stripePaymentIntentId ?? null,
       manual_fee_attempt_id: input.manualFeeAttemptId ?? null,
       route: input.route ?? null,
-      safe_details: redacted,
+      safe_details: routed.safeDetails,
     });
+    const { error } = await (signal ? insert.abortSignal(signal) : insert);
     persisted = !error;
     if (error) {
       structuredConsoleLog({

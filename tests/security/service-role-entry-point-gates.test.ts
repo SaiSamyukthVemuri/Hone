@@ -47,6 +47,8 @@ export const GATE_EXCEPTIONS: Record<string, string> = {
   "app/portal/verify/[token]/actions.ts": "anonymous portal sign-in link verification: the token is hashed and looked up, and a miss refuses; it creates the portal session, so there is no session to gate yet",
   "app/portal/verify/[token]/page.tsx": "anonymous landing page for the portal sign-in link: it hashes the presented token and looks it up, and a miss shows the generic expired-link state; no portal session exists yet",
   "app/api/cron/calendar-sync/route.ts": "the cron secret check (isAuthorizedCronRequest) is inside the helper this route calls first, not in the route file (named by Insurance in final451)",
+  "app/actions/demo.ts": "anonymous public demo-request form on Hone's own marketing site by design: no signed-in actor exists; it saves one lead through a service-role-only command and returns only ok or a fixed failure text; rate limited; the operator alert it schedules is never shown to the submitter",
+  "app/actions/waitlist.ts": "anonymous public early-access signup on Hone's own marketing site by design: no signed-in actor exists; it saves one address through a service-role-only command and answers ok for a duplicate too, so it never reveals whether an address is already listed; rate limited",
   "app/portal/logout/actions.ts": "destroys the caller's own portal session only; reads and returns no client data",
 };
 

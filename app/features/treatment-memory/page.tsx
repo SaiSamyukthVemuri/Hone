@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PageRevision } from "@/app/_components/marketing/PageRevision";
 import { SafeAnalytics } from "../../_components/SafeAnalytics";
 import { SiteHeader } from "../../_components/marketing/SiteHeader";
 import { SkipLink } from "@/app/_components/marketing/SkipLink";
@@ -135,6 +136,7 @@ export default function TreatmentMemoryPage() {
           title="See treatment memory on a returning client"
           body="We reply within one business day to set a time, then open a returning client and walk you through the Before Today briefing."
         />
+        <PageRevision path="/features/treatment-memory" />
       </main>
       <SiteFooter />
       <SafeAnalytics />

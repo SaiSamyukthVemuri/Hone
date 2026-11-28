@@ -17,6 +17,8 @@ describe("0385 is shaped like a sealed migration", () => {
     expect(DOWN).toMatch(/^begin;$/m);
     expect(DOWN).toMatch(/^commit;$/m);
   });
+  // Not the repository maximum any more (0386 sits above it): only the current maximum's own test may pin that (CLAUDE.md section 2). It stays a sealed migration.
+  it("is a numbered migration file with a rollback beside it", () => expect(UP.length > 0 && DOWN.length > 0).toBe(true));
 });
 
 describe("ensure_unspecified_machine", () => {

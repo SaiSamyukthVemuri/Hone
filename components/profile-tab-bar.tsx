@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { PRESS_TRANSITION, cx } from "./ui/control-base";
+import { useAppHeaderHeight } from "./use-app-header-height";
 import type { ProfileTab } from "./profile-tab";
 
 /**
@@ -49,17 +50,7 @@ export function ProfileTabBar({ active, tabs }: Props) {
   const firstRender = useRef(true);
   // The app header is itself sticky (top-0 z-30) and its height varies (wrapping, text size), so this
   // bar sticks BELOW it: the measured height, with 3.5rem (the header's usual height) before measuring.
-  const [headerHeight, setHeaderHeight] = useState(0);
-  useEffect(() => {
-    const header = document.querySelector("header");
-    if (!header) return;
-    const measure = () => setHeaderHeight(Math.round(header.getBoundingClientRect().height));
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(header);
-    return () => observer.disconnect();
-  }, []);
+  const headerHeight = useAppHeaderHeight();
   useEffect(() => {
     if (firstRender.current) {
       firstRender.current = false;

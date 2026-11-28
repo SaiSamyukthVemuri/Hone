@@ -254,8 +254,13 @@ export const BROWSER_GROUPS = {
       // the query's own text. Here because settings/booking/actions.ts selects
       // this group.
       "settings-booking-error-param.spec.ts",
+      // HON-124 item 11: the booking-link copy control on an iPhone-sized viewport: Copied only after the write, a calm failure message with the
+      // link text selected, and keyboard-only operation. Here because settings/booking/** selects this group.
+      "settings-booking-copy-mobile.spec.ts",
       // Team settings: invite a receptionist, see it pending, cancel it; the front desk list and Deactivate.
       "team-invite-receptionist.spec.ts",
+      // HON-124 item 14: destructive staff actions (revoke an invitation, remove a team member, cancel an appointment) ask first through the confirm dialog.
+      "confirm-dialogs-mobile.spec.ts",
       // Receptionist onboarding across Team settings, acceptance and the desk (desktop and iPhone, about 6 minutes with the build). Kept out of the always-run
       // calendar lane on purpose: the targeted lane is already near its measured budget.
       "receptionist-onboarding-flow.spec.ts",
@@ -332,6 +337,12 @@ export const BROWSER_GROUPS = {
       // Same placement and same self-skip as the spec above; both run for real
       // in the non-required `storage photos` job, which has storage-api.
       "treatment-image-upload-formats.spec.ts",
+      // FETT photos (HON-43), 0232: the Before/After label end to end at phone
+      // width (upload, keyboard relabel/clear, the visit sections) and the
+      // receptionist refusal. Same group and the same reasons as the recovery
+      // spec above; it uploads, so it SELF-SKIPS in CI (no storage-api).
+      "fett-photo-labels.spec.ts",
+      "fett-photo-privacy.spec.ts",
       // ID photo set/replace/remove on the client profile/Photos surface:
       // same group as thumbnail recovery, with the same real-storage
       // requirement (self-skips in CI without storage-api). Does not add to
@@ -349,6 +360,8 @@ export const BROWSER_GROUPS = {
       "owner-only-catalog-edit.spec.ts",
       // HON-100: the owner's Statements month controls (arrow, picker, Back/Forward, reload) all name the same month. Owner-only read surface.
       "statements-month-navigation.spec.ts",
+      // HON-124 (print): the statement, the record-keeping sections and the clinical-notes export print as the document alone, unclipped and readable, on Letter and A4.
+      "print-layout.spec.ts",
       // REL-001: the authenticated app-shell error boundary, including the
       // auth-gate invariants (anonymous still bounces to /login, redirect() and
       // notFound() are not converted into a generic retry screen). It sits with
@@ -458,6 +471,8 @@ export const BROWSER_GROUPS = {
       // HON-62: the weekly-hours editor's native time inputs (keyboard
       // entry, touch tap, save/reload, untouched existing hours).
       "availability-hours-editor.spec.ts",
+      // HON-124 item 4: availability Remove shows activity and ignores a second press.
+      "pending-states-mobile.spec.ts",
       // HON-62 WebKit discriminator: bare time inputs, no app. It skips outside the
       // non-required WebKit project, so it is a no-op wherever this group runs.
       "webkit-time-input-key-probe.spec.ts",
@@ -477,12 +492,17 @@ export const BROWSER_GROUPS = {
     specs: [
       "marketing-homepage.spec.ts",
       "marketing-pages.spec.ts",
+      "public-pages-contact-faq-mobile.spec.ts",
       // MKT-02B. The homepage film: lazy-until-asked, no autoplay under either
       // motion preference, and the poster being preloaded eagerly. Filed here
       // rather than in `smoke` on purpose — it is heavier than a smoke case
       // (it decodes video) and nothing outside the marketing surface can break
       // it.
       "marketing-homepage-film.spec.ts",
+      // HON-84. The public /demo form still succeeds for a visitor and saves one lead with one alert row.
+      "public-lead-forms.spec.ts",
+      // HON-124 item 13. Back to top on the long public pages: keyboard-operable, focus restored, reduced motion honoured.
+      "back-to-top.spec.ts",
     ],
   },
   responsive: {
@@ -524,6 +544,14 @@ export const BROWSER_GROUPS = {
       // anybody out, which is exactly the pair of facts SIGNOUT-01 learned had
       // to be checked together.
       "signout-acknowledgement.spec.ts",
+      // HON-124 PR 1. Both phone menus (keyboard + touch, aria-current, Escape
+      // focus return), the skip link on the marketing and app shells, the app's
+      // sticky header against anchors and upward focus, and the public booking
+      // progress / double-press / taken-time feedback at 390x844. Books
+      // publicly, so it is also in PUBLIC_BOOKING_SPECS below.
+      "hon124-nav-booking-mobile.spec.ts",
+      // HON-124 item 7. Hover, pressed and keyboard-focus feedback on the shared nav rows and footer links.
+      "hon124-hover-states.spec.ts",
     ],
   },
   google: {
@@ -583,6 +611,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "book-next-available-fast.spec.ts",
   "core-memory-loop.spec.ts",
   "dashboard-treatment-memory-inline.spec.ts",
+  "hon124-nav-booking-mobile.spec.ts",
   "mobile-ux.spec.ts",
   "move-appointment-custom-time.spec.ts",
   "move-appointment-mobile-submit.spec.ts",
@@ -595,6 +624,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",
   "public-cancel-policy-change.spec.ts",
+  "public-pages-contact-faq-mobile.spec.ts",
   "public-reschedule-v2.spec.ts",
   "safe-willow-appointment-lifecycle.spec.ts",
   "safe-willow-contract.spec.ts",

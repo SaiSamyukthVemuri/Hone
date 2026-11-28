@@ -17,6 +17,7 @@ import {
   revokeInvitationAction,
 } from "./actions";
 import { PendingButton } from "@/components/pending-button";
+import { ConfirmActionForm } from "@/components/confirm-action-form";
 import { setReceptionistActiveAction } from "./receptionist-actions";
 
 type ReceptionistRow = { id: string; display_name: string; email: string | null; active: boolean };
@@ -88,6 +89,8 @@ export default async function TeamSettingsPage() {
 
   return (
     <div className="flex flex-col gap-12">
+      {/* HON-124 item 14: outside every row, so a result announced after a row unmounts is still heard. */}
+      <p id="team-live" role="status" aria-live="polite" className="sr-only" />
       <CurrentPractitioners
         practitioners={practitioners}
         currentPractitionerId={practitioner.id}
@@ -127,7 +130,7 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 id="front-desk" className="scroll-mt-24 text-xl font-medium">
+        <h2 id="front-desk" tabIndex={-1} className="scroll-mt-24 text-xl font-medium outline-none">
           Front desk
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -151,14 +154,28 @@ function FrontDesk({ receptionists }: { receptionists: ReceptionistRow[] }) {
                 </div>
                 {r.email && <div className="truncate text-xs text-neutral-500">{r.email}</div>}
               </div>
-              <form action={setReceptionistActiveAction}>
-                <input type="hidden" name="id" value={r.id} />
-                <input type="hidden" name="active" value={r.active ? "false" : "true"} />
-                {/* PendingButton: the press is acknowledged and the control is disabled while the action runs, so a slow connection cannot show nothing or submit twice. */}
-                <PendingButton variant="secondary" size="sm">
-                  {r.active ? "Deactivate" : "Reactivate"}
-                </PendingButton>
-              </form>
+              {r.active ? (
+                <ConfirmActionForm
+                  action={setReceptionistActiveAction}
+                  fields={{ id: r.id, active: "false" }}
+                  triggerLabel="Deactivate"
+                  triggerAriaLabel={`Deactivate ${r.display_name}`}
+                  title={`Deactivate ${r.display_name}?`}
+                  description={`${r.display_name} will lose access to the front desk and the schedule until you reactivate them. Nothing is deleted.`}
+                  confirmLabel="Deactivate"
+                  busyLabel="Deactivating…"
+                  afterSuccess={{ focusId: "front-desk", announceId: "team-live", message: `${r.display_name} was deactivated.` }}
+                />
+              ) : (
+                <form action={setReceptionistActiveAction}>
+                  <input type="hidden" name="id" value={r.id} />
+                  <input type="hidden" name="active" value={r.active ? "false" : "true"} />
+                  {/* PendingButton: the press is acknowledged and the control is disabled while the action runs, so a slow connection cannot show nothing or submit twice. */}
+                  <PendingButton variant="secondary" size="sm">
+                    {r.active ? "Deactivate" : "Reactivate"}
+                  </PendingButton>
+                </form>
+              )}
             </li>
           ))}
         </ul>
@@ -240,15 +257,17 @@ function CurrentPractitioners({
                 </div>
               </div>
               {p.role !== "owner" && !isSelf && (
-                <form action={removePractitionerAction}>
-                  <input type="hidden" name="id" value={p.id} />
-                  <button
-                    type="submit"
-                    className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                  >
-                    Remove
-                  </button>
-                </form>
+                <ConfirmActionForm
+                  action={removePractitionerAction}
+                  fields={{ id: p.id }}
+                  triggerLabel="Remove"
+                  triggerAriaLabel={`Remove ${p.display_name}`}
+                  title={`Remove ${p.display_name} from the team?`}
+                  description={`${p.display_name} will be deactivated and lose access to this studio. Their existing appointments and records are kept.`}
+                  confirmLabel="Remove"
+                  busyLabel="Removing…"
+                  afterSuccess={{ focusId: "practitioners", announceId: "team-live", message: `${p.display_name} was removed from the team.` }}
+                />
               )}
             </li>
           );
@@ -266,7 +285,7 @@ function PendingInvitations({
   return (
     <section className="flex flex-col gap-4">
       <div>
-        <h2 id="pending-invitations" className="scroll-mt-24 text-xl font-medium">
+        <h2 id="pending-invitations" tabIndex={-1} className="scroll-mt-24 text-xl font-medium outline-none">
           Pending invitations
         </h2>
         <p className="mt-1 text-sm text-neutral-500">
@@ -297,15 +316,17 @@ function PendingInvitations({
                   {relativeTime(inv.created_at)}
                 </div>
               </div>
-              <form action={revokeInvitationAction}>
-                <input type="hidden" name="id" value={inv.id} />
-                <button
-                  type="submit"
-                  className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                >
-                  Revoke
-                </button>
-              </form>
+              <ConfirmActionForm
+                action={revokeInvitationAction}
+                fields={{ id: inv.id }}
+                triggerLabel="Revoke"
+                triggerAriaLabel={`Revoke the invitation for ${inv.email}`}
+                title="Revoke this invitation?"
+                description={`The invitation sent to ${inv.email} will stop working, so they can no longer join the studio with it. You can invite them again later.`}
+                confirmLabel="Revoke invitation"
+                busyLabel="Revoking…"
+                afterSuccess={{ focusId: "pending-invitations", announceId: "team-live", message: `The invitation for ${inv.email} was revoked.` }}
+              />
             </li>
           ))}
         </ul>

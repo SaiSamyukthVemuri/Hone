@@ -1,5 +1,6 @@
 "use client";
 
+import { copyText } from "@/lib/clipboard/copy-text";
 import { useState, useTransition } from "react";
 import { sendPortalLinkAction } from "./portal-link-actions";
 import { PORTAL_OFF_STAFF_MESSAGE } from "@/lib/booking/client-self-service-policy";
@@ -68,11 +69,10 @@ export function PortalAccessCard({
   }
 
   async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(portalLoginUrl);
+    if (await copyText(portalLoginUrl)) {
       setHint({ kind: "copied" });
       window.setTimeout(() => setHint({ kind: "idle" }), 2000);
-    } catch {
+    } else {
       setHint({ kind: "error", message: `Copy this manually: ${portalLoginUrl}` });
     }
   }

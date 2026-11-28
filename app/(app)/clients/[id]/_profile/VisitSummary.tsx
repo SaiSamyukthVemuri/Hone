@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import { SectionLabel } from "@/components/ui/section-label";
 import { formatTimeForStudio, localLongDate, type TimeFormat } from "@/lib/booking/tz";
 import type { LastVisit, NextAppointment } from "@/lib/clients/profile-visits";
@@ -58,9 +58,9 @@ export function VisitSummary({
           Last visit
         </SectionLabel>
         {lastVisit && lastVisitHref ? (
-          <Link href={lastVisitHref} className={`${VALUE} block underline-offset-2 hover:underline`}>
+          <PendingLink href={lastVisitHref} className={`${VALUE} block underline-offset-2 hover:underline`}>
             {when(lastVisit.at, timezone, timeFormat)}
-          </Link>
+          </PendingLink>
         ) : (
           <p className={EMPTY}>No visit recorded in Hone</p>
         )}
@@ -70,12 +70,12 @@ export function VisitSummary({
           Last charted treatment
         </SectionLabel>
         {lastChartedAt && lastChartedSessionId ? (
-          <Link
+          <PendingLink
             href={`/clients/${clientId}/sessions/${lastChartedSessionId}`}
             className={`${VALUE} block underline-offset-2 hover:underline`}
           >
             {when(lastChartedAt, timezone, timeFormat)}
-          </Link>
+          </PendingLink>
         ) : lastChartedUnavailable ? (
           <p className={EMPTY} data-testid="profile-last-charted-unavailable">
             Unavailable
@@ -89,9 +89,9 @@ export function VisitSummary({
           Next appointment
         </SectionLabel>
         {next ? (
-          <Link href={`/calendar/${next.id}`} className={`${VALUE} block underline-offset-2 hover:underline`}>
+          <PendingLink href={`/calendar/${next.id}`} className={`${VALUE} block underline-offset-2 hover:underline`}>
             {when(next.at, timezone, timeFormat)}
-          </Link>
+          </PendingLink>
         ) : (
           <p className={EMPTY}>None booked</p>
         )}

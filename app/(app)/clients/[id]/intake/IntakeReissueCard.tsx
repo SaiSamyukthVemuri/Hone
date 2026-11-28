@@ -1,5 +1,6 @@
 "use client";
 
+import { copyText } from "@/lib/clipboard/copy-text";
 import { useState, useTransition } from "react";
 import { requestIntakeUpdateAction } from "./actions";
 
@@ -52,15 +53,12 @@ export function IntakeReissueCard({ clientId, clientHasEmail }: Props) {
 
   function copyLink() {
     if (!result) return;
-    void navigator.clipboard.writeText(result.intakeUrl).then(
-      () => {
+    void copyText(result.intakeUrl).then((ok) => {
+      if (ok) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
-      },
-      () => {
-        setError("Copy failed. Select and copy the link manually.");
-      },
-    );
+      } else setError("Copy failed. Select and copy the link manually.");
+    });
   }
 
   return (

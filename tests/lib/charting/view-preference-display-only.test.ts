@@ -90,6 +90,9 @@ describe("the charting view preference is display only", () => {
       "tests/lib/charting/page-view.test.ts",
       "tests/lib/charting/view-preference-display-only.test.ts",
       "tests/app/sessions/charting-view-page-wiring.test.ts",
+      // HON-109 (Records): a SOURCE-TEXT test that names the call as a string literal to prove the page still makes it exactly once (the trailing reads
+      // joined the wave; this read deliberately stayed where it was). It imports nothing and calls nothing, so it grants the decision no new caller.
+      "tests/app/clients/sessions/records-wave-consumers.test.ts",
     ]);
     expect(out.split("\n").filter(Boolean).filter((f) => !allowed.has(f))).toEqual([]);
   });

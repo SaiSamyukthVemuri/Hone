@@ -9,6 +9,7 @@ import {
   type SeededStudio,
   type UserQuery,
 } from "./helpers/harness";
+import { leavesLeaking } from "./helpers/json-leaves";
 import {
   BLOCK_COLUMNS,
   PREP_SESSION_COLUMNS,
@@ -607,7 +608,7 @@ describe("2. selection — the newest CHARTED treatment before this appointment"
     expect(
       JSON.stringify(fetched?.electrolysis_entries ?? []),
     ).toMatch(/FORBIDDEN-DELETED-PASS/);
-    expect(JSON.stringify(r.memory)).not.toMatch(/FORBIDDEN-DELETED-PASS/);
+    expect(leavesLeaking(r.memory, { texts: ["FORBIDDEN-DELETED-PASS"] })).toEqual([]);
     expect(r.memory?.areas[0].outcome.notes).toEqual([
       "First pass was slow going near the jawline.",
       "Second pass:\nmuch faster once the area warmed up.",
@@ -836,7 +837,8 @@ describe("3. complete areas and settings, read back from the real columns", () =
     expect(m.totalMinutes).toBe(42);
     expect(m.totalHairs).toBe(65);
     // The soft-deleted pass contributed nothing.
-    expect(JSON.stringify(m)).not.toMatch(/9999|FORBIDDEN-DELETED-PASS/);
+    // By VALUE, not by substring over the whole JSON: a random id or timestamp can contain "9999" (see tests/lib/json-leaves.test.ts).
+    expect(leavesLeaking(m, { numbers: [9999], texts: ["FORBIDDEN-DELETED-PASS"] })).toEqual([]);
   });
 
   it("minutes are never fabricated for a block that recorded none", async () => {

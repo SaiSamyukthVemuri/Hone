@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 293,
+    "count": 294,
     "last": "0389_subscription_self_service.sql",
-    "sha256": "88e740f165486cc66a23dfaec6b94e1a2dd1b2985cde5c655635855d24db1f48"
+    "sha256": "146e43304c17f37dfca8cbbd7ffb4d45f43a8e88ad436d3191ff5ff4e4f40569"
   },
   "public": {
     "tables": [

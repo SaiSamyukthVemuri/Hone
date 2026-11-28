@@ -31,7 +31,10 @@ const DEFAULT_ADMIN_EMAILS: ReadonlyArray<string> = ["samyukth.ssv@gmail.com"];
 
 let missingEnvWarned = false;
 
-function parseAdminEmails(raw: string | undefined): ReadonlyArray<string> {
+// Exported for LEAD-ALERT-01: the operator lead alert may only go to an
+// address on this same allowlist, read from the env alone (never the
+// non-production fallback below).
+export function parseAdminEmails(raw: string | undefined): ReadonlyArray<string> {
   if (!raw) return [];
   return raw
     .split(",")

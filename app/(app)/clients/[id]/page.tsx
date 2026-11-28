@@ -158,6 +158,7 @@ import { getOverviewVisitAppointments } from "@/lib/clients/profile-appointments
 import { pickLastVisit, pickNextAppointment } from "@/lib/clients/profile-visits";
 import { VisitSummary } from "./_profile/VisitSummary";
 import { ContactSidebar } from "./_profile/ContactSidebar";
+import { PendingButton } from "@/components/pending-button";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -1017,12 +1018,13 @@ export default async function ClientCheatSheetPage({
                 View statement
               </Link>
             )}
-            <Link
+            <PendingLink
               href={`/clients/${client.id}/edit`}
+              pendingLabel="Opening the client editor…"
               className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
             >
               Edit
-            </Link>
+            </PendingLink>
           </div>
         </div>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -1261,12 +1263,13 @@ export default async function ClientCheatSheetPage({
               <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-500">
                 Client info
               </h2>
-              <Link
+              <PendingLink
                 href={`/clients/${client.id}/edit`}
+              pendingLabel="Opening the client editor…"
                 className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
               >
                 Edit
-              </Link>
+              </PendingLink>
             </div>
           {/* Birthday row (PR #199: plain row, no nested box, no
               helper text; edited via the card's single Edit link).
@@ -1517,13 +1520,13 @@ export default async function ClientCheatSheetPage({
                       <form action={deleteClientPricingAction}>
                         <input type="hidden" name="id" value={p.id} />
                         <input type="hidden" name="client_id" value={client.id} />
-                        <button
-                          type="submit"
+                        <PendingButton
+                          variant="secondary"
+                          size="sm"
                           aria-label={`Delete ${p.service_name} pricing`}
-                          className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
                         >
                           ✕
-                        </button>
+                        </PendingButton>
                       </form>
                     )}
                   </li>

@@ -139,6 +139,69 @@ export default async function AppointmentDetailPage({
     data.client = { ...rest, name: clientDisplayName({ name: rest.name, preferred_name: preferredName }) };
   }
 
+  // HON-109 (Open appointment): the client-scoped reads start HERE, as soon as the appointment join has returned and passed notFound() and its studio
+  // scope above, and before the owner-only payment and repair reads below are awaited. They used to wait behind those reads although they need only
+  // this row's client id and start time. Nothing about WHAT is read, WHO may read it or how a failure surfaces changed: the promise is awaited, and
+  // rethrows, exactly where the wave used to run. The no-op catch only stops a rejection from being reported as unhandled if a payment read throws first.
+  const clientWave = data.client
+    ? (() => {
+        const clientId = data.client.id;
+        const wave = Promise.all([
+          getPinnedNotesForClient(studio.id, clientId),
+          getClientTags(studio.id, clientId),
+          getLatestIntakeForClient(studio.id, clientId),
+          getTreatmentPlansForClient(studio.id, clientId),
+          // THE newest charted treatment before this appointment. Same selector,
+          // same batched block read and same fail-soft contract as the charting
+          // screen and /sessions/new, this page just has to fetch its own bounded
+          // candidate window, because it is appointment-scoped and (deliberately)
+          // never loads the client profile.
+          //
+          // Two round-trips, independent of how long the client's history is, how
+          // many areas each block treats and how many passes each area carries. It
+          // replaces three: newest row → that row's blocks → structured areas.
+          loadLastChartedTreatmentForClient({
+            studioId: studio.id,
+            clientId,
+            // Strictly before this appointment. Not now(), which would let a
+            // session charted after the appointment began win; not omitted, which
+            // would let a future booking's session win.
+            before: data.starts_at,
+            // This appointment's own visit record is never its own history.
+            excludeAppointmentId: id,
+          }),
+          // PR #156 (migration 0068). Explicitly linked session, if one
+          // was logged against this appointment id. ON DELETE SET NULL
+          // means the row is queryable even if the parent appointment
+          // is later removed; we still filter to the current appointment
+          // id so a freshly-nulled row does not surface here. The query
+          // returns the most recent linked session in case future flows
+          // ever produce more than one (today the action treats the FK
+          // as effectively one-to-one per coalesce window).
+          supabase
+            .from("sessions")
+            .select("id, started_at, modality")
+            .eq("studio_id", studio.id)
+            .eq("client_id", clientId)
+            .eq("appointment_id", id)
+            .is("deleted_at", null)
+            .order("started_at", { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          // Latest consultation + skin/hair note. It depends on NOTHING else in
+          // this block (only `clientId`, which is already in hand) so it belongs
+          // INSIDE this parallel wave. Awaiting it after the wave added a whole
+          // extra round-trip to every appointment render, including the
+          // electrolysis and laser visits where the card goes on to render
+          // nothing. Same helper the client profile calls: no new query shape, no
+          // second note model, no write path.
+          getClinicalNotesSummary(clientId),
+        ]);
+        wave.catch(() => undefined);
+        return wave;
+      })()
+    : null;
+
   const isCancelled = data.status === "cancelled";
 
   // PR #144. When the appointment is cancelled, load the latest
@@ -322,8 +385,7 @@ export default async function AppointmentDetailPage({
     ReturnType<typeof getClinicalNotesSummary>
   > | null = null;
 
-  if (data.client) {
-    const clientId = data.client.id;
+  if (data.client && clientWave) {
     const [
       pinnedRes,
       tagsRes,
@@ -332,57 +394,7 @@ export default async function AppointmentDetailPage({
       lastTreatment,
       linkedSessionRes,
       clinicalNotesRes,
-    ] = await Promise.all([
-      getPinnedNotesForClient(studio.id, clientId),
-      getClientTags(studio.id, clientId),
-      getLatestIntakeForClient(studio.id, clientId),
-      getTreatmentPlansForClient(studio.id, clientId),
-      // THE newest charted treatment before this appointment. Same selector,
-      // same batched block read and same fail-soft contract as the charting
-      // screen and /sessions/new, this page just has to fetch its own bounded
-      // candidate window, because it is appointment-scoped and (deliberately)
-      // never loads the client profile.
-      //
-      // Two round-trips, independent of how long the client's history is, how
-      // many areas each block treats and how many passes each area carries. It
-      // replaces three: newest row → that row's blocks → structured areas.
-      loadLastChartedTreatmentForClient({
-        studioId: studio.id,
-        clientId,
-        // Strictly before this appointment. Not now(), which would let a
-        // session charted after the appointment began win; not omitted, which
-        // would let a future booking's session win.
-        before: data.starts_at,
-        // This appointment's own visit record is never its own history.
-        excludeAppointmentId: id,
-      }),
-      // PR #156 (migration 0068). Explicitly linked session, if one
-      // was logged against this appointment id. ON DELETE SET NULL
-      // means the row is queryable even if the parent appointment
-      // is later removed; we still filter to the current appointment
-      // id so a freshly-nulled row does not surface here. The query
-      // returns the most recent linked session in case future flows
-      // ever produce more than one (today the action treats the FK
-      // as effectively one-to-one per coalesce window).
-      supabase
-        .from("sessions")
-        .select("id, started_at, modality")
-        .eq("studio_id", studio.id)
-        .eq("client_id", clientId)
-        .eq("appointment_id", id)
-        .is("deleted_at", null)
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      // Latest consultation + skin/hair note. It depends on NOTHING else in
-      // this block (only `clientId`, which is already in hand) so it belongs
-      // INSIDE this parallel wave. Awaiting it after the wave added a whole
-      // extra round-trip to every appointment render, including the
-      // electrolysis and laser visits where the card goes on to render
-      // nothing. Same helper the client profile calls: no new query shape, no
-      // second note model, no write path.
-      getClinicalNotesSummary(clientId),
-    ]);
+    ] = await clientWave;
 
     pinnedNotes = pinnedRes;
     tags = tagsRes;

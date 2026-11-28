@@ -131,7 +131,9 @@ export type FakeResendLedgerRecord = {
   t: string;
   pid: number;
   mode: FakeResendMode;
-  to: string;
+  // A string for every ordinary send; an ARRAY only for the operator critical-alert email (lib/ops/alert-email.ts), which sends one message to
+  // the whole OPS_ALERT_EMAILS list. One send is one ledger line.
+  to: string | string[];
   subject: string;
   text?: string;
   html?: string;
@@ -212,7 +214,8 @@ export type MinimalEmailTransport = {
   emails: {
     send: (args: {
       from: string;
-      to: string;
+      // An array only for the operator critical-alert email (HON-127); every other sender passes one address.
+      to: string | string[];
       subject: string;
       html: string;
       text: string;
@@ -243,6 +246,17 @@ const failedOnceRecipients = new Set<string>();
  *  this, so a fake success is never mistaken for a real provider receipt. */
 export const FAKE_MESSAGE_ID = "fake-resend-message-id";
 
+/**
+ * What the ledger stores as `to`. A single address is stored as before. A LIST (only the operator critical-alert email sends one) is stored in
+ * plaintext ONLY when EVERY element is a harness address; if any element is not, each element is replaced by a short sha256 prefix, so a lane that
+ * arms the ledger with real operator addresses in OPS_ALERT_EMAILS can never write them to disk (HON-127, Privacy).
+ */
+export function ledgerRecipients(to: string | string[]): string | string[] {
+  if (!Array.isArray(to)) return to;
+  if (to.every((a) => isHarnessRecipient(a))) return to;
+  return to.map((a) => `sha256:${sha256(String(a).trim().toLowerCase()).slice(0, 12)}`);
+}
+
 export function createFakeResendTransport(): MinimalEmailTransport {
   return {
     emails: {
@@ -250,7 +264,8 @@ export function createFakeResendTransport(): MinimalEmailTransport {
       // lane arms the SCH-001 ledger it appends recipient and subject only. The
       // onboarding outcome is asserted via studio_onboarding.welcome_email_status.
       send: async ({ to, subject, html, text }) => {
-        const mode = fakeResendModeForRecipient(to);
+        // The mode follows the FIRST recipient of a list (the operator alert's list is one class of address).
+        const mode = fakeResendModeForRecipient(Array.isArray(to) ? (to[0] ?? "") : to);
         const bodies = fakeResendLedgerBodiesEnabled()
           ? {
               // Bodies AND link targets only for a harness recipient: a real link can carry a bearer token.
@@ -265,7 +280,7 @@ export function createFakeResendTransport(): MinimalEmailTransport {
               html_sha256: sha256(String(html ?? "")),
             }
           : {};
-        recordFakeResendSend({ t: new Date().toISOString(), pid: process.pid, mode, to, subject, ...bodies });
+        recordFakeResendSend({ t: new Date().toISOString(), pid: process.pid, mode, to: ledgerRecipients(to), subject, ...bodies });
         if (mode === "hold") {
           // GENUINELY IN FLIGHT for HOLD_MS. Bounded and self-releasing: no test
           // can leave a request hanging, and nothing outside the fake changes.
@@ -290,8 +305,9 @@ export function createFakeResendTransport(): MinimalEmailTransport {
           };
         }
         if (mode === "failonce") {
-          if (!failedOnceRecipients.has(to)) {
-            failedOnceRecipients.add(to);
+          const onceKey = Array.isArray(to) ? to.join(",") : to;
+          if (!failedOnceRecipients.has(onceKey)) {
+            failedOnceRecipients.add(onceKey);
             throw new Error("fake resend network exception (first attempt)");
           }
           return { data: { id: FAKE_MESSAGE_ID }, error: null };

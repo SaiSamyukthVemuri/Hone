@@ -19,6 +19,7 @@ import { isAdmin } from "@/lib/admin";
 import { todayInTz } from "@/lib/booking/tz";
 import { loadOverdueDisinfectantAlerts } from "@/lib/notifications/disinfectant-alerts";
 import { AppFooter } from "@/app/_components/AppFooter";
+import { SkipLink } from "@/app/_components/marketing/SkipLink";
 import { SafeAnalytics } from "@/app/_components/SafeAnalytics";
 import { identifyServerUser } from "@/lib/analytics/server";
 import { timed } from "@/lib/observability/perf-timing";
@@ -97,6 +98,9 @@ export default async function AppLayout({
 
   return (
     <div className="min-h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+      {/* HON-124 item 17. The first tab stop: bypasses the sticky header (wordmark, primary nav, search, bell,
+          account) to AppMain's <main id="main-content">. The one shared SkipLink, not a second copy. */}
+      <SkipLink />
       {/* z-20 + fully opaque background. The previous bg-white/90 +
           backdrop-blur let dark content (the weekly-hours card on the
           availability page) bleed through the header as it scrolled
