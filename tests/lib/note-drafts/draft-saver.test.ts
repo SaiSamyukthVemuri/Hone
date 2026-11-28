@@ -200,6 +200,35 @@ describe("DraftSaver", () => {
     expect(saver.unsavedWork()?.fields).toEqual({ body: "new note after an earlier save" });
   });
 
+  it("r4 P2a: a late OK acknowledgement from before settle() is dropped: no revision, no 'saved', no old text restored as acknowledged", async () => {
+    let release!: (r: NoteDraftSaveResult) => void;
+    const send = vi.fn((_f: { body?: string }, _rev: number, _g: string) => new Promise<NoteDraftSaveResult>((r) => (release = r)));
+    const { saver, last } = setup(send, 0);
+    saver.change({ body: "saved text" });
+    await vi.advanceTimersByTimeAsync(1500); // in flight under GEN_A
+    saver.settle(); // the real Save committed meanwhile; the next lifecycle is GEN_NEW at revision 0
+    release(ok(7));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(saver.currentRevision()).toBe(0);
+    expect(saver.currentGeneration()).toBe(GEN_NEW);
+    expect(last().phase).toBe("idle");
+    expect(saver.latestFields()).toBeNull(); // the saved text is not reinstated as acknowledged
+  });
+
+  it("r4 P2a: text typed after settle() while the old request was out is sent under the NEW generation at revision 0", async () => {
+    const releases: Array<(r: NoteDraftSaveResult) => void> = [];
+    const send = vi.fn((_f: { body?: string }, _rev: number, _g: string) => new Promise<NoteDraftSaveResult>((r) => releases.push(r)));
+    const { saver } = setup(send, 0);
+    saver.change({ body: "old" });
+    await vi.advanceTimersByTimeAsync(1500);
+    saver.settle();
+    saver.change({ body: "next note" });
+    releases[0](ok(3)); // late ack of the old lifecycle
+    await vi.advanceTimersByTimeAsync(1600);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenLastCalledWith({ body: "next note" }, 0, GEN_NEW);
+  });
+
   it("P1: a late FIRST autosave of THIS tab after its own Save comes back cleared and writes nothing more", async () => {
     let release!: (r: NoteDraftSaveResult) => void;
     const send = vi.fn(() => new Promise<NoteDraftSaveResult>((r) => (release = r)));

@@ -175,13 +175,23 @@ export class DraftSaver {
     this.inFlight = true;
     this.set({ phase: "saving" });
     let result: NoteDraftSaveResult;
+    // The lifecycle this request was SENT under. A reply is only ever applied to that lifecycle (r4, Codex P2): settle(), Keep as new and the
+    // conflict resolutions all move this saver to another generation, and a late acknowledgement of the old one must not put its fields, revision
+    // or state back (it would reinstate saved text as "acknowledged" text and rewind the new lifecycle's revision).
+    const sentGeneration = this.generation;
     try {
-      result = await this.o.send(fields, this.revision, this.generation);
+      result = await this.o.send(fields, this.revision, sentGeneration);
     } catch {
       result = { status: "error" };
     }
     this.inFlight = false;
     this.inFlightFields = null;
+    if (this.generation !== sentGeneration) {
+      // Superseded: drop the reply whatever it says. Text typed since belongs to the CURRENT lifecycle and is still queued; send it.
+      if (this.pending != null && !this.paused && !this.disposed) void this.run();
+      this.releaseWaiters();
+      return;
+    }
     if (result.status === "ok") {
       this.revision = result.revision;
       this.lastAcked = fields;

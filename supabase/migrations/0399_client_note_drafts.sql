@@ -87,6 +87,9 @@ create table if not exists public.client_note_drafts (
   -- is never reused and a stale tab or a late first autosave can never touch a newer draft.
   generation uuid,
   ended_generation uuid,
+  -- r4: EVERY lifecycle this key has ended, newest last, at most 8, KEPT across revival (ended_generation above is only the latest). A revival
+  -- nulls ended_generation, so on its own the server would forget that an older lifecycle G ended and a stale Save or autosave of G could act again.
+  ended_generations uuid[] not null default '{}',
   -- Set when the real record was saved or the draft was discarded: the draft's text is emptied, revision bumped, and every stale write fails. Swept later.
   cleared_at timestamptz,
   created_at timestamptz not null default now(),
@@ -142,6 +145,11 @@ create table if not exists public.client_note_drafts (
   constraint client_note_drafts_state_check check (
     (cleared_at is null and generation is not null and ended_generation is null)
     or (cleared_at is not null and generation is null)
+  ),
+  constraint client_note_drafts_ended_set_check check (
+    cardinality(ended_generations) <= 8
+    and array_position(ended_generations, null) is null
+    and (generation is null or not (generation = any(ended_generations)))
   ),
   constraint client_note_drafts_owner_key unique (practitioner_id, client_id, kind, target)
 );
@@ -246,6 +254,27 @@ create policy "client_note_drafts_author_select"
     )
   );
 
+-- r4: append up to two ended generations to a key's remembered set (de-duplicated, nulls ignored, newest last, at most 8). Pure; no table access.
+create or replace function public.client_note_draft_remember_ended(p_known uuid[], p_a uuid, p_b uuid)
+returns uuid[]
+language sql
+immutable
+set search_path = pg_catalog
+as $$
+  select coalesce(array_agg(t.g order by t.o), '{}'::uuid[])
+  from (
+    select d.g, d.o
+    from (
+      select distinct on (u.g) u.g, u.o
+      from unnest(coalesce(p_known, '{}'::uuid[]) || array[p_a, p_b]) with ordinality as u(g, o)
+      where u.g is not null
+      order by u.g, u.o desc
+    ) d
+    order by d.o desc
+    limit 8
+  ) t
+$$;
+
 -- COMPARE-AND-SET WRITE (SECURITY DEFINER, pinned search_path). It re-proves everything RLS would:
 -- studio membership, the caller's own active practitioner row, and that the client is in the studio.
 --   status ok        written; revision is the new one
@@ -260,8 +289,8 @@ create policy "client_note_drafts_author_select"
 --   live (G), expected = revision           update, revision + 1                              ok
 --   live (G), same writer and same fields   a retry whose response was lost                   ok
 --   live (other generation), anything       never touched                                     conflict
---   tombstone ended_generation = G          that lifecycle is over                            cleared
---   tombstone, other/NULL ended, expected 0 a genuinely new lifecycle: revive (G), rev + 1    ok
+--   G is in the row's ended_generations    that lifecycle is over, tombstone OR a later live draft  cleared (never revives, never touches the live row)
+--   tombstone, G not ended, expected 0      a genuinely new lifecycle: revive (G), rev + 1    ok
 --   tombstone, expected > 0                 a stale writer                                    cleared
 create or replace function public.save_client_note_draft(
   p_studio_id uuid,
@@ -337,7 +366,7 @@ begin
       -- Save only ever turns a row into a tombstone, which is exempt, so a Save never fails on the cap.)
       if exists (select 1 from public.client_note_drafts d
                  where d.practitioner_id = v_practitioner and d.client_id = p_client_id and d.kind = p_kind and d.target = p_target
-                   and d.cleared_at is not null and d.ended_generation is distinct from p_generation)
+                   and d.cleared_at is not null and not (p_generation = any(d.ended_generations)))
          and (select count(*) from public.client_note_drafts d where d.practitioner_id = v_practitioner and d.cleared_at is null) >= 200 then
         raise exception 'too many drafts for this practitioner' using errcode = 'check_violation';
       end if;
@@ -345,7 +374,7 @@ begin
          set fields = p_fields, revision = d.revision + 1, writer = p_writer, generation = p_generation,
              ended_generation = null, cleared_at = null
        where d.practitioner_id = v_practitioner and d.client_id = p_client_id and d.kind = p_kind and d.target = p_target
-         and d.cleared_at is not null and d.ended_generation is distinct from p_generation
+         and d.cleared_at is not null and not (p_generation = any(d.ended_generations))
       returning d.* into v_row;
       if found then
         return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at, v_row.generation;
@@ -375,6 +404,10 @@ begin
       -- This lifecycle ended (ended_generation = p_generation), or a stale writer believed a draft was live. Terminal, no text.
       return query select 'cleared'::text, v_row.revision, '{}'::jsonb, null::timestamptz, null::uuid;
       return;
+    elsif p_generation = any(v_row.ended_generations) then
+      -- r4: this lifecycle ended earlier and the key has since been revived by another draft. G is over; the live draft is not G's to see or touch.
+      return query select 'cleared'::text, v_row.revision, '{}'::jsonb, null::timestamptz, null::uuid;
+      return;
     elsif v_row.generation = p_generation and v_row.writer is not null and v_row.writer = p_writer and v_row.fields = p_fields then
       -- A retry of a write that already applied (its response was lost): acknowledged success, not a conflict.
       return query select 'ok'::text, v_row.revision, v_row.fields, v_row.updated_at, v_row.generation;
@@ -389,6 +422,8 @@ $$;
 
 -- Discard: the caller's own LIVE draft of exactly this lifecycle, turned into a text-free tombstone IN THE SAME STATEMENT (the text is nulled
 -- there, never left behind). UPDATE only: it never inserts, it works with the switch off, and a generation that is not the live one changes nothing.
+-- r4: returns TRUE when the lifecycle is over or was never on the server (no row, a tombstone, or G remembered as ended while another draft is
+-- live), so a caller never stays stuck on a draft that is already gone; FALSE only when ANOTHER generation's draft is live and G is not known ended.
 create or replace function public.discard_client_note_draft(
   p_studio_id uuid,
   p_client_id uuid,
@@ -414,12 +449,22 @@ begin
   end if;
   update public.client_note_drafts d
      set fields = null, revision = d.revision + 1, writer = null,
-         ended_generation = d.generation, generation = null, cleared_at = pg_catalog.now()
+         ended_generation = d.generation, ended_generations = public.client_note_draft_remember_ended(d.ended_generations, d.generation, null),
+         generation = null, cleared_at = pg_catalog.now()
    where d.practitioner_id = v_practitioner and d.client_id = p_client_id
      and d.studio_id = p_studio_id and d.kind = p_kind and d.target = p_target
      and d.cleared_at is null and d.generation = p_generation;
   get diagnostics v_n = row_count;
-  return v_n > 0;
+  if v_n > 0 then
+    return true;
+  end if;
+  return not exists (
+    select 1 from public.client_note_drafts d
+    where d.practitioner_id = v_practitioner and d.client_id = p_client_id
+      and d.studio_id = p_studio_id and d.kind = p_kind and d.target = p_target
+      and d.cleared_at is null and d.generation is distinct from p_generation
+      and not (p_generation = any(d.ended_generations))
+  );
 end;
 $$;
 
@@ -494,17 +539,21 @@ begin
     where d.practitioner_id = new.practitioner_id and d.client_id = new.client_id and d.kind = new.kind and d.target = v_target
     for update;
     if found then
-      if v_row.cleared_at is not null and v_set is not null and v_row.ended_generation = v_set then
+      -- r4: refused when the named generation is ANY lifecycle this key has ended, whether the row is now a tombstone or has been revived by
+      -- another draft (the revival keeps the set). A Save of a generation that was never ended is not refused (Insurance P3, r3).
+      if v_set is not null and v_set = any(v_row.ended_generations) then
         raise exception 'note draft already ended' using errcode = 'HN131';
       end if;
       update public.client_note_drafts d
          set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null, generation = null,
-             ended_generation = case when v_row.cleared_at is null then coalesce(v_set, v_row.generation) else coalesce(v_row.ended_generation, v_set) end
+             ended_generation = case when v_row.cleared_at is null then coalesce(v_set, v_row.generation) else coalesce(v_row.ended_generation, v_set) end,
+             ended_generations = public.client_note_draft_remember_ended(v_row.ended_generations, v_set, v_row.generation)
        where d.id = v_row.id;
       exit;
     elsif v_create then
-      insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, target_note_id, fields, writer, cleared_at, ended_generation)
-      values (new.studio_id, new.client_id, new.practitioner_id, new.kind, v_target, new.supersedes_note_id, null, null, pg_catalog.now(), v_set)
+      insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, target_note_id, fields, writer, cleared_at, ended_generation, ended_generations)
+      values (new.studio_id, new.client_id, new.practitioner_id, new.kind, v_target, new.supersedes_note_id, null, null, pg_catalog.now(), v_set,
+              public.client_note_draft_remember_ended('{}'::uuid[], v_set, null))
       on conflict (practitioner_id, client_id, kind, target) do nothing
       returning d.id into v_id;
       exit when found;
@@ -558,12 +607,14 @@ begin
     if found then
       update public.client_note_drafts d
          set fields = null, revision = d.revision + 1, cleared_at = pg_catalog.now(), writer = null, generation = null,
-             ended_generation = case when v_row.cleared_at is null then coalesce(v_set, v_row.generation) else coalesce(v_row.ended_generation, v_set) end
+             ended_generation = case when v_row.cleared_at is null then coalesce(v_set, v_row.generation) else coalesce(v_row.ended_generation, v_set) end,
+             ended_generations = public.client_note_draft_remember_ended(v_row.ended_generations, v_set, v_row.generation)
        where d.id = v_row.id;
       exit;
     elsif v_create then
-      insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, fields, writer, cleared_at, ended_generation)
-      values (new.studio_id, new.client_id, new.updated_by_practitioner_id, 'budget', 'current', null, null, pg_catalog.now(), v_set)
+      insert into public.client_note_drafts as d (studio_id, client_id, practitioner_id, kind, target, fields, writer, cleared_at, ended_generation, ended_generations)
+      values (new.studio_id, new.client_id, new.updated_by_practitioner_id, 'budget', 'current', null, null, pg_catalog.now(), v_set,
+              public.client_note_draft_remember_ended('{}'::uuid[], v_set, null))
       on conflict (practitioner_id, client_id, kind, target) do nothing
       returning d.id into v_id;
       exit when found;
@@ -674,6 +725,7 @@ revoke all privileges on function public.client_note_drafts_guard() from public,
 revoke all privileges on function public.client_note_drafts_cap() from public, anon, authenticated, service_role;
 revoke all privileges on function public.client_note_drafts_clear_on_note() from public, anon, authenticated, service_role;
 revoke all privileges on function public.client_note_drafts_clear_on_budget() from public, anon, authenticated, service_role;
+revoke all privileges on function public.client_note_draft_remember_ended(uuid[], uuid, uuid) from public, anon, authenticated, service_role;
 revoke all privileges on function public.client_note_draft_retention() from public, anon, service_role;
 -- RLS and column defaults evaluate this as the CALLER, so authenticated needs EXECUTE (it returns a constant).
 grant execute on function public.client_note_draft_retention() to authenticated;

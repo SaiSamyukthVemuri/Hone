@@ -561,7 +561,7 @@ describe("draft identity (HON-130 design): a generation never repeats", () => {
 
   it("discard only UPDATES a live row of exactly that generation: a wrong generation, a missing row, an ended row change nothing and insert nothing", async () => {
     await wipe();
-    expect(await discard(a.userId, a, "consultation", "new", randomUUID())).toBe(false);
+    expect(await discard(a.userId, a, "consultation", "new", randomUUID())).toBe(true); // r4: no row means the lifecycle is not live; nothing to keep
     expect(await draftRow(a, a.practitionerId, "consultation", "new")).toBeUndefined(); // never inserts
     const g = randomUUID();
     await save(a.userId, a, "consultation", "new", { body: "live" }, 0, randomUUID(), g);
@@ -569,7 +569,7 @@ describe("draft identity (HON-130 design): a generation never repeats", () => {
     expect((await draftRow(a, a.practitionerId, "consultation", "new")).fields).toEqual({ body: "live" });
     expect(await discard(a.userId, a, "consultation", "new", g)).toBe(true);
     const rev = (await draftRow(a, a.practitionerId, "consultation", "new")).revision;
-    expect(await discard(a.userId, a, "consultation", "new", g)).toBe(false); // already ended
+    expect(await discard(a.userId, a, "consultation", "new", g)).toBe(true); // r4: already ended is a success, and changes nothing
     expect((await draftRow(a, a.practitionerId, "consultation", "new")).revision).toBe(rev);
   });
 
@@ -748,5 +748,115 @@ describe("D3 and HN130/HN131: the Save wrapper and the double-save refusal", () 
     expect(down).not.toMatch(/drop function[^;]*upsert_client_budget_context/i);
     expect(down).toMatch(/roll the APPLICATION back FIRST/);
     expect(down).toMatch(/DELIBERATELY LEFT IN PLACE/);
+  });
+});
+
+describe("r4 (Codex round 4): the server remembers every ended generation of a key", () => {
+  const rowOf = async () => draftRow(a, a.practitionerId, "consultation", "new");
+  const notes = async () => (await adminQuery(`select count(*)::int n from public.client_clinical_notes where client_id = $1`, [a.clientId])).rows[0].n as number;
+
+  it("P1: a stale Save of G after H revived the same key is refused (HN131), creates no note and leaves H's draft intact", async () => {
+    await wipe();
+    const g = randomUUID();
+    const h = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "G text" }, 0, randomUUID(), g);
+    await addNote(a.userId, a, "consultation", "G saved in window 1", null, g); // G ends
+    const r = await save(a.userId, a, "consultation", "new", { body: "H text" }, 0, randomUUID(), h); // H revives the tombstone
+    expect(r.status).toBe("ok");
+    const n0 = await notes();
+    await expect(addNote(a.userId, a, "consultation", "G saved again in window 2", null, g)).rejects.toMatchObject({ code: "HN131" });
+    expect(await notes()).toBe(n0); // no duplicate
+    const row = await rowOf();
+    expect(row.generation).toBe(h);
+    expect(row.fields).toEqual({ body: "H text" }); // H's draft was NOT erased
+    expect(row.cleared_at).toBeNull();
+  });
+
+  it("the memory outlives more than one revival: G stays refused after H and J each lived and ended", async () => {
+    await wipe();
+    const [g, h, j] = [randomUUID(), randomUUID(), randomUUID()];
+    await save(a.userId, a, "consultation", "new", { body: "g" }, 0, randomUUID(), g);
+    await addNote(a.userId, a, "consultation", "g saved", null, g);
+    await save(a.userId, a, "consultation", "new", { body: "h" }, 0, randomUUID(), h);
+    await addNote(a.userId, a, "consultation", "h saved", null, h);
+    await save(a.userId, a, "consultation", "new", { body: "j" }, 0, randomUUID(), j);
+    await expect(addNote(a.userId, a, "consultation", "g again", null, g)).rejects.toMatchObject({ code: "HN131" });
+    await expect(addNote(a.userId, a, "consultation", "h again", null, h)).rejects.toMatchObject({ code: "HN131" });
+    expect((await rowOf()).fields).toEqual({ body: "j" });
+  });
+
+  it("a stale first autosave of G cannot revive a tombstone that ended H after G ended (the revive guard uses the set, not the last ended)", async () => {
+    await wipe();
+    const [g, h] = [randomUUID(), randomUUID()];
+    await save(a.userId, a, "consultation", "new", { body: "g" }, 0, randomUUID(), g);
+    await addNote(a.userId, a, "consultation", "g saved", null, g);
+    await save(a.userId, a, "consultation", "new", { body: "h" }, 0, randomUUID(), h);
+    expect(await discard(a.userId, a, "consultation", "new", h)).toBe(true); // tombstone now says ended_generation = H only
+    const late = await save(a.userId, a, "consultation", "new", { body: "late g" }, 0, randomUUID(), g);
+    expect(late.status).toBe("cleared");
+    const row = await rowOf();
+    expect(row.cleared_at).not.toBeNull();
+    expect(row.fields).toBeNull();
+  });
+
+  it("a stale autosave of an ended G against a LIVE row of H is `cleared` (G is over), carries no text, and does not touch H", async () => {
+    await wipe();
+    const [g, h] = [randomUUID(), randomUUID()];
+    await save(a.userId, a, "consultation", "new", { body: "g" }, 0, randomUUID(), g);
+    await addNote(a.userId, a, "consultation", "g saved", null, g);
+    const first = await save(a.userId, a, "consultation", "new", { body: "h" }, 0, randomUUID(), h);
+    const late = await save(a.userId, a, "consultation", "new", { body: "late g" }, first.revision, randomUUID(), g);
+    expect(late.status).toBe("cleared");
+    expect(late.fields).toEqual({});
+    expect((await rowOf()).fields).toEqual({ body: "h" });
+  });
+
+  it("the set is bounded: at most 8 generations are kept, newest last, and a live generation is never in it (CHECKs)", async () => {
+    await wipe();
+    const gens8 = Array.from({ length: 10 }, () => randomUUID());
+    for (const g of gens8) {
+      await save(a.userId, a, "consultation", "new", { body: "x" }, 0, randomUUID(), g);
+      await addNote(a.userId, a, "consultation", "saved", null, g);
+    }
+    const row = await rowOf();
+    expect(row.ended_generations).toHaveLength(8);
+    expect(row.ended_generations).toEqual(gens8.slice(2)); // the two oldest fell out
+    await expect(adminQuery(`update public.client_note_drafts set ended_generations = array_fill($2::uuid, array[9]) where id = $1`, [row.id, randomUUID()])).rejects.toBeTruthy();
+    const live = randomUUID();
+    await save(a.userId, a, "consultation", "new", { body: "live" }, 0, randomUUID(), live);
+    await expect(adminQuery(`update public.client_note_drafts set ended_generations = array[generation] where id = $1`, [row.id])).rejects.toBeTruthy();
+  });
+
+  it("P2c: Discard of an ended or absent lifecycle is true and changes nothing; false only for another generation's LIVE row", async () => {
+    await wipe();
+    const [g, h] = [randomUUID(), randomUUID()];
+    expect(await discard(a.userId, a, "consultation", "new", g)).toBe(true); // no row at all
+    expect(await rowOf()).toBeUndefined();
+    await save(a.userId, a, "consultation", "new", { body: "g" }, 0, randomUUID(), g);
+    await addNote(a.userId, a, "consultation", "g saved", null, g);
+    const tomb = await rowOf();
+    expect(await discard(a.userId, a, "consultation", "new", g)).toBe(true); // tombstone of this generation
+    expect((await rowOf()).revision).toBe(tomb.revision);
+    await save(a.userId, a, "consultation", "new", { body: "h" }, 0, randomUUID(), h);
+    const live = await rowOf();
+    expect(await discard(a.userId, a, "consultation", "new", g)).toBe(true); // G ended earlier; H is live and must NOT be touched
+    expect((await rowOf()).fields).toEqual({ body: "h" });
+    expect((await rowOf()).revision).toBe(live.revision);
+    expect(await discard(a.userId, a, "consultation", "new", randomUUID())).toBe(false); // a generation this key never ended, over H's live row
+    expect((await rowOf()).fields).toEqual({ body: "h" });
+  });
+
+  it("budget keeps the same memory (no double-save refusal): a stale autosave of an ended budget generation cannot revive", async () => {
+    await wipe();
+    const [g, h] = [randomUUID(), randomUUID()];
+    await save(a.userId, a, "budget", "current", { budget_level: "low" }, 0, randomUUID(), g);
+    await asUser(a.userId, async (q) => q(`select public.upsert_client_budget_context($1, 'low', 'n', $2)`, [a.clientId, g]));
+    await save(a.userId, a, "budget", "current", { budget_level: "high" }, 0, randomUUID(), h);
+    await asUser(a.userId, async (q) => q(`select public.upsert_client_budget_context($1, 'high', 'n', $2)`, [a.clientId, h]));
+    const late = await save(a.userId, a, "budget", "current", { budget_level: "late" }, 0, randomUUID(), g);
+    expect(late.status).toBe("cleared");
+    const row = await draftRow(a, a.practitionerId, "budget", "current");
+    expect(row.fields).toBeNull();
+    expect(row.ended_generations).toEqual(expect.arrayContaining([g, h]));
   });
 });

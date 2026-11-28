@@ -98,6 +98,23 @@ describe("Keep as new note never overwrites an occupied destination", () => {
     await act(async () => root.unmount());
   });
 
+  it("r4 P2b: edits typed into the revised editor BEFORE Keep as new note are what moves, not the text the editor opened with", async () => {
+    vi.useFakeTimers();
+    const { host, root, save } = await mount({ notes, drafts: [mine], peek: async () => ({ ok: true, draft: null }) });
+    const ta = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      set.call(ta, "EDITED after reopening");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(button(host, "Keep as new draft"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    const call = save.mock.calls.map((c) => c[0] as { key: { target: string }; fields: { body?: string } }).find((c) => c.key.target === "new");
+    expect(call?.fields.body).toBe("EDITED after reopening");
+    vi.useRealTimers();
+    await act(async () => root.unmount());
+  });
+
   it("a free destination moves straight away as a NEW lifecycle (expected revision 0, a different generation)", async () => {
     vi.useFakeTimers();
     const { host, root, save } = await mount({ notes, drafts: [mine], peek: async () => ({ ok: true, draft: null }) });

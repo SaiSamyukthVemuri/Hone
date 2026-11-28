@@ -19,6 +19,7 @@ drop function if exists public.client_note_drafts_clear_on_budget();
 drop function if exists public.save_client_note_draft(uuid, uuid, text, text, jsonb, integer, uuid, uuid);
 drop function if exists public.discard_client_note_draft(uuid, uuid, text, text, uuid);
 drop function if exists public.sweep_client_note_drafts();
+drop function if exists public.client_note_draft_remember_ended(uuid[], uuid, uuid);
 
 drop table if exists public.client_note_drafts;
 drop table if exists public.client_note_draft_enabled_studios;

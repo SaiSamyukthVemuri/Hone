@@ -23,7 +23,7 @@
 // This component must NOT be imported by any client-portal, public-booking,
 // email, or SMS surface. It is authenticated practitioner UI only.
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
 import { heldText, latestDraft, seedEntry, type DraftActions } from "@/lib/note-drafts/draft-registry";
 import { NoteDraftStatus } from "@/components/note-draft-status";
@@ -527,14 +527,22 @@ function NoteForm({
     if (t.occurred_at) setOccurredAt(t.occurred_at);
   }
   const [yourVersion, setYourVersion] = useState<string | null>(null);
+  // A superseded target is never autosaved, but the person can still edit the reopened text before choosing Keep as new note. Those edits are HELD
+  // here (never sent) and are what the move carries; without this the move would seed the new draft with the text as it was when the editor opened.
+  const heldEdits = useRef<NoteDraftFields | null>(null);
   function touch(next: { body?: string; areasText?: string; occurredAt?: string }) {
-    if (!draftActions || revised) return;
-    setRestoredAt(null);
-    draft.change({
+    if (!draftActions) return;
+    const fields: NoteDraftFields = {
       body: next.body ?? body,
       areas: parseAreas(next.areasText ?? areasText),
       occurred_at: next.occurredAt ?? occurredAt,
-    });
+    };
+    if (revised) {
+      heldEdits.current = fields;
+      return;
+    }
+    setRestoredAt(null);
+    draft.change(fields);
   }
   const [state, formAction] = useActionState(
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
@@ -642,7 +650,13 @@ function NoteForm({
           onRetry={draft.retry}
           onKeepMine={draft.keepMine}
           revised={revised}
-          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => onKeepAsNewNote({ latest: draft.latest, moveOut: draft.moveOut }) : draft.keepAsNew}
+          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => onKeepAsNewNote({
+            latest: () => heldEdits.current ?? draft.latest(),
+            moveOut: async () => {
+              const moved = await draft.moveOut();
+              return heldEdits.current ?? moved;
+            },
+          }) : draft.keepAsNew}
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) applyTheirs(t);
