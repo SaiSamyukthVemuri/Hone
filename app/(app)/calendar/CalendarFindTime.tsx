@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FieldLabel, fieldControlClass } from "@/components/ui/field";
 import { SectionLabel } from "@/components/ui/section-label";
@@ -12,6 +12,7 @@ import { findCalendarOpeningsAction, type CalendarOpening } from "./find-time-ac
 
 /** The longest search the finder runs, in days. find-time-actions.ts refuses a longer range with the same number. */
 export const FIND_TIME_MAX_DAYS = 7;
+const NEXT_AVAILABLE_WEEKS = 6;
 
 export type FindTimeService = Pick<Service, "id" | "name" | "default_duration_minutes">;
 export type { CalendarOpening };
@@ -34,16 +35,22 @@ export function CalendarFindTime({
 }) {
   const preferred = practitioners.find((p) => p.id === rebook?.practitionerId);
   const [serviceId, setServiceId] = useState(rebook?.serviceId ?? services[0]?.id ?? "");
-  const [durationFilter, setDurationFilter] = useState<number | null>(
-    rebook ? services.find((s) => s.id === rebook.serviceId)?.default_duration_minutes ?? null : null,
-  );
+  const [durationFilter, setDurationFilter] = useState<number | null>(null);
   const [limited, setLimited] = useState(false);
   const [person, setPerson] = useState(isOwner ? preferred?.id ?? "" : viewerId);
-  const [fromDate, setFromDate] = useState(anchorDate > today ? anchorDate : today);
-  const [toDate, setToDate] = useState(() => addDays(fromDate, 2));
+  const calendarDate = anchorDate > today ? anchorDate : today;
+  const [baseDate, setBaseDate] = useState(calendarDate);
+  const lastCalendarDate = useRef(calendarDate);
+  const [weeks, setWeeks] = useState<number | null>(1);
+  const [customFrom, setFromDate] = useState(baseDate);
+  const [customThrough, setToDate] = useState(() => addDays(baseDate, 2));
+  const usePreset = Boolean(rebook) && weeks !== null;
+  const fromDate = usePreset ? addDays(baseDate, weeks * 7) : customFrom;
+  const toDate = usePreset ? addDays(fromDate, FIND_TIME_MAX_DAYS - 1) : customThrough;
   const [openings, setOpenings] = useState<CalendarOpening[] | null>(null);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<"range" | "next" | null>(null);
+  const [continueFrom, setContinueFrom] = useState<string | null>(null);
   const [limit, setLimit] = useState(4);
   // Said politely (a live region) when moving From had to move Through with it, so the change is never silent.
   const [notice, setNotice] = useState("");
@@ -64,38 +71,67 @@ export function CalendarFindTime({
     : toDate > lastAllowed ? `You can search up to ${FIND_TIME_MAX_DAYS} days at a time. The latest Through date for this From is ${monthDayLabel(lastAllowed)}. To search a later week, move From later.`
     : "";
 
-  function invalidate() {
+  const invalidate = useCallback(() => {
     request.current += 1;
     setOpenings(null);
     setLimited(false);
-    setLoading(false);
+    setLoading(null);
+    setContinueFrom(null);
     setError("");
     setLimit(4);
     setNotice("");
     onClear();
-  }
-  async function search(event: FormEvent) {
-    event.preventDefault();
+  }, [onClear]);
+
+  useEffect(() => {
+    if (calendarDate === lastCalendarDate.current) return;
+    lastCalendarDate.current = calendarDate;
+    // Preview navigates the calendar to the chosen opening. Keep the search
+    // anchored where it started; independent calendar navigation starts afresh.
+    if (!rebook || selected?.date === calendarDate) return;
+    setBaseDate(calendarDate);
+    invalidate();
+  }, [calendarDate, rebook, selected?.date, invalidate]);
+
+  async function search(mode: "range" | "next", start = fromDate) {
     // An invalid range sends nothing and keeps every selection; focus goes to the field the message sits beside.
     if (fromError || throughError) {
       (fromError ? fromRef : throughRef).current?.focus();
       return;
     }
     invalidate();
-    if (!service || !fromDate || !toDate) return;
+    if (!service || !start) return;
     const current = request.current;
-    setLoading(true);
+    setLoading(mode);
+    let first = start;
     try {
-      const result = await findCalendarOpeningsAction({ serviceId, fromDate, toDate, practitionerId: person || null });
-      if (request.current !== current) return;
-      if (result.ok) {
-        setOpenings(result.openings);
-        setLimited(result.limited === true);
-      } else setError(result.error);
+      const windows = mode === "next" ? NEXT_AVAILABLE_WEEKS : 1;
+      for (let i = 0; i < windows; i++) {
+        const last = mode === "next" ? addDays(first, FIND_TIME_MAX_DAYS - 1) : toDate;
+        const result = await findCalendarOpeningsAction({ serviceId, fromDate: first, toDate: last, practitionerId: person || null });
+        if (request.current !== current) return;
+        if (!result.ok) {
+          setError(result.error);
+          return;
+        }
+        if (mode === "range") {
+          setOpenings(result.openings);
+          setLimited(result.limited === true);
+          return;
+        }
+        // The action orders the allowed openings by start time, then by practitioner.
+        if (result.openings.length) {
+          setOpenings([result.openings[0]]);
+          return;
+        }
+        first = addDays(last, 1);
+      }
+      setOpenings([]);
+      setContinueFrom(first);
     } catch {
       if (request.current === current) setError("Couldn’t load available times. Try again.");
     } finally {
-      if (request.current === current) setLoading(false);
+      if (request.current === current) setLoading(null);
     }
   }
   const days = new Map<string, CalendarOpening[]>();
@@ -107,8 +143,8 @@ export function CalendarFindTime({
   return (
     <section aria-label="Find time" className="space-y-4">
       {services.length === 0 ? <p className="text-sm text-fg-muted">No active services to book.</p> :
-        <form onSubmit={search} noValidate className="grid gap-3">
-          {durations.length > 1 && <fieldset>
+        <form onSubmit={(event) => { event.preventDefault(); void search("range"); }} noValidate className="grid gap-3">
+          {!rebook && durations.length > 1 && <fieldset>
             <legend className="mb-1"><SectionLabel size="caption">Duration</SectionLabel></legend>
             <div className="flex flex-wrap gap-1">
               {[null, ...durations].map((minutes) => <Button key={minutes ?? "all"} size="sm"
@@ -139,6 +175,24 @@ export function CalendarFindTime({
           </FieldLabel>
           {rebook?.practitionerId && (!preferred || (!isOwner && rebook.practitionerId !== viewerId)) &&
             <p className="text-xs text-fg-muted">The previous practitioner is unavailable for this search.</p>}
+          {rebook && <FieldLabel label="Rebook in">
+            <select className={fieldControlClass()} value={weeks ?? "custom"} onChange={(event) => {
+              invalidate();
+              if (event.target.value === "custom") {
+                setFromDate(fromDate);
+                setToDate(toDate);
+                setWeeks(null);
+              } else {
+                setWeeks(Number(event.target.value));
+              }
+            }}>
+              {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n === 1 ? "Next week" : `${n} weeks`}</option>)}
+              <option value="custom">Custom dates</option>
+            </select>
+          </FieldLabel>}
+          {usePreset ? <p className="text-sm text-fg-muted">
+            {monthDayLabel(fromDate)} through {monthDayLabel(toDate)}
+          </p> : <>
           <FieldLabel label="From">
             <input ref={fromRef} type="date" required min={today} value={fromDate} className={fieldControlClass()}
               aria-invalid={fromError ? true : undefined} aria-describedby={fromError ? "find-time-from-error find-time-window-help" : "find-time-window-help"}
@@ -161,13 +215,23 @@ export function CalendarFindTime({
           </FieldLabel>
           {throughError && <p id="find-time-through-error" role="alert" className="-mt-1 text-xs text-danger-solid">{throughError}</p>}
           <p id="find-time-window-help" className="-mt-1 text-xs text-fg-muted">Search up to {FIND_TIME_MAX_DAYS} days at a time.</p>
+          </>}
           <p role="status" aria-live="polite" data-testid="find-time-notice" className={notice ? "-mt-1 text-xs text-fg-muted" : "sr-only"}>{notice}</p>
-          <Button type="submit" size="sm" pending={loading} busyLabel="Searching…" disabled={!service}>Search availability</Button>
+          <Button type="submit" size="sm" pending={loading === "range"} busyLabel="Searching…" disabled={!service || loading !== null}>Search availability</Button>
+          {rebook && <>
+            <Button size="sm" onClick={() => void search("next")} pending={loading === "next"} busyLabel="Searching…"
+              disabled={!service || loading !== null}>Next available</Button>
+            <p className="text-xs text-fg-muted">Next available looks up to six weeks ahead from your start date.</p>
+            {loading && <Button size="sm" variant="quiet" onClick={invalidate}>Cancel search</Button>}
+          </>}
         </form>}
       {error && <p role="alert" className="text-sm text-danger-solid">{error}</p>}
       {openings && <section aria-label="Available times" className="space-y-3">
         <h3 className="text-sm font-semibold">Available times</h3>
-        {days.size === 0 && <p role="status" className="text-sm text-fg-muted">No openings match. Try a different service, practitioner, or date.</p>}
+        {continueFrom ? <>
+          <p role="status" className="text-sm text-fg-muted">No openings through {monthDayLabel(addDays(continueFrom, -1))}. Continue from {monthDayLabel(continueFrom)}.</p>
+          <Button size="sm" onClick={() => void search("next", continueFrom)}>Continue search</Button>
+        </> : days.size === 0 && <p role="status" className="text-sm text-fg-muted">No openings match. Try a different service, practitioner, or date.</p>}
         {[...days].map(([date, items]) => <div key={date}>
           <h4 className="mb-1 text-xs font-medium text-fg-muted">{weekdayLabel(new Date(date + "T00:00:00Z").getUTCDay())}, {monthDayLabel(date)}</h4>
           <div className="grid gap-1">

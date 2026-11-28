@@ -49,10 +49,10 @@ const choosePractitioner = async (id: string) => {
 };
 const addDays = (iso: string, n: number) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86_400_000).toISOString().slice(0, 10);
 const alerts = () => [...host.querySelectorAll('[role="alert"]')].map((a) => a.textContent);
-async function mount(rebook = false) {
+async function mount(rebook = false, dates = { anchorDate: "2030-03-01", today: "2030-02-01" }) {
   await act(async () => root.render(createElement(CalendarFindTime, {
     services, practitioners: [{ id: "maya", name: "Maya" }, { id: "ava", name: "Ava" }],
-    viewerId: "ava", isOwner: true, anchorDate: "2030-03-01", today: "2030-02-01",
+    viewerId: "ava", isOwner: true, ...dates,
     timeFormat: "12h", selected: null, onSelect, onClear,
     rebook: rebook ? { serviceId: "long", durationMinutes: 50, practitionerId: "maya", clientId: "client" } : null,
   })));
@@ -104,6 +104,90 @@ describe("calendar Find time", () => {
     await click("Search availability");
     expect(find.mock.calls[0][0].practitionerId).toBe("maya");
     expect(host.textContent).toContain("No openings match");
+  });
+
+  it("lets staff change to a service of any duration without dropping the rebook practitioner", async () => {
+    find.mockResolvedValue({ ok: true, openings: [] });
+    await mount(true);
+    expect(button("45 min")).toBeUndefined();
+    expect([...select().options].map(o => o.value)).toContain("short");
+    await chooseService("short");
+    await click("Search availability");
+    expect(find).toHaveBeenCalledWith({
+      serviceId: "short", practitionerId: "maya", fromDate: "2030-03-08", toDate: "2030-03-14",
+    });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("finds the earliest opening beyond a full rebooking week and waits for explicit selection", async () => {
+    const first = { ...opening, date: "2030-03-16", start: "2030-03-16T17:30:00Z", end: "2030-03-16T18:15:00Z" };
+    const later = { ...first, localTime: "14:30", start: "2030-03-16T18:30:00Z", end: "2030-03-16T19:15:00Z" };
+    find.mockResolvedValueOnce({ ok: true, openings: [] }).mockResolvedValueOnce({ ok: true, openings: [first, later] });
+    await mount(true);
+    await click("Next available");
+    expect(find.mock.calls.map(([input]) => input)).toEqual([
+      { serviceId: "long", practitionerId: "maya", fromDate: "2030-03-08", toDate: "2030-03-14" },
+      { serviceId: "long", practitionerId: "maya", fromDate: "2030-03-15", toDate: "2030-03-21" },
+    ]);
+    expect(onSelect).not.toHaveBeenCalled();
+    await click("1:30 PM · Maya");
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(first);
+  });
+
+  it("stops the next-available scan at a read failure without skipping an unverified week", async () => {
+    find.mockResolvedValueOnce({ ok: false, error: "Could not load available times. Please try again." });
+    await mount(true);
+    await click("Next available");
+    expect(alerts()).toContain("Could not load available times. Please try again.");
+    expect(find).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("abandons a next-available scan when the service changes", async () => {
+    let finish!: (value: { ok: true; openings: CalendarOpening[] }) => void;
+    find.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    await mount(true);
+    await click("Next available");
+    await chooseService("short");
+    await act(async () => finish({ ok: true, openings: [] }));
+    expect(find).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Available times"]')).toBeNull();
+  });
+
+  it("searches each selected week from the studio date when the calendar is in the past", async () => {
+    await mount(true, { anchorDate: "2030-02-20", today: "2030-03-03" });
+    const week = [...host.querySelectorAll("label")].find(label => label.textContent?.includes("Rebook in"))!.querySelector("select")!;
+    find.mockResolvedValue({ ok: true, openings: [] });
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      await act(async () => {
+        week.value = String(n);
+        week.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      const fromDate = addDays("2030-03-03", 7 * n);
+      const toDate = addDays(fromDate, 6);
+      const localDateLabel = (iso: string) => new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", {
+        month: "short", day: "numeric", timeZone: "UTC",
+      });
+      expect(host.textContent).toContain(`${localDateLabel(fromDate)} through ${localDateLabel(toDate)}`);
+      await click("Search availability");
+      expect(find).toHaveBeenLastCalledWith({ serviceId: "long", practitionerId: "maya", fromDate, toDate });
+    }
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("continues after six empty weeks without repeating the last search", async () => {
+    find.mockResolvedValue({ ok: true, openings: [] });
+    await mount(true);
+    await click("Next available");
+    expect(find).toHaveBeenCalledTimes(6);
+    const nextStart = addDays(find.mock.calls[5][0].toDate, 1);
+    const nextOpening = { ...opening, date: nextStart };
+    find.mockResolvedValueOnce({ ok: true, openings: [nextOpening] });
+    await click("Continue search");
+    expect(find).toHaveBeenCalledTimes(7);
+    expect(find.mock.lastCall?.[0]).toMatchObject({ fromDate: nextStart, toDate: addDays(nextStart, 6) });
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
 
