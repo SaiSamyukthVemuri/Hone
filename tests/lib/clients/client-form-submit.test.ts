@@ -30,4 +30,13 @@ describe("runClientSave", () => {
   it("a resolved action with no error is saved", async () => {
     expect(await runClientSave(async () => undefined, new FormData())).toEqual({ kind: "saved" });
   });
+  // HON-109: an edit that asked for `saved_inline` gets the server's ok back instead of a redirect.
+  it("an ok result carries the server-built address and is saved, never refused", async () => {
+    const out = await runClientSave(async () => ({ ok: true as const, redirectTo: "/clients/c1" }), new FormData());
+    expect(out).toEqual({ kind: "saved", redirectTo: "/clients/c1" });
+  });
+  it("a refusal next to an ok-capable action is still refused, with its message", async () => {
+    const out = await runClientSave(async (): Promise<{ ok: false; error: string } | { ok: true; redirectTo: string }> => ({ ok: false, error: "Name is required." }), new FormData());
+    expect(out).toEqual({ kind: "refused", result: { ok: false, error: "Name is required." } });
+  });
 });

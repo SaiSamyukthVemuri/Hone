@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 293,
+    "count": 294,
     "last": "0394_visit_payment_commands.sql",
-    "sha256": "ab280dc55b8e3682dd5900be90642a7c63935e45390a84e4f1f887e91f99f946"
+    "sha256": "82e249f4087d0a562846a1358016d0ff4c763f5bc8c0a00e50bcb6c067c67556"
   },
   "public": {
     "tables": [

@@ -59,6 +59,11 @@ const callsByRun = new Map<string, FakeStripeCall[]>();
 // synthetic result and records NO second call (proves retry never double-charges).
 const idempotentResultByRun = new Map<string, Map<string, string>>();
 const seqByRun = new Map<string, number>();
+// Per-process nonce in every minted id. The counter restarts with the server, so
+// two runs on one stack (same HONE_E2E_RUN_ID) would otherwise mint the same
+// pi_..._1 again and collide with the previous run's rows (unique violation).
+// Lowercase hex only, so ids keep their trailing `_<digits>` sequence.
+const processNonce = Math.random().toString(16).slice(2, 10).padEnd(8, "0");
 // PAY-CCY-01. The money each synthetic PaymentIntent and Charge was created
 // with, so a later retrieve and a refund state it back exactly as real Stripe
 // does. Real Stripe always states `amount` and `currency` on these objects,
@@ -336,8 +341,8 @@ async function synthPaymentIntent(run: string, opts: RequestOpts, params?: Creat
   // creates NO new processor effect, but it IS still an app-level invocation.
   const replay = existing !== null;
   const seq = existing ? null : nextSeq(run);
-  const id = existing ?? `pi_test_e2e_${run}_${seq}`;
-  const chargeId = `ch_test_e2e_${run}_${(id.match(/_(\d+)$/)?.[1] ?? seq) ?? 1}`;
+  const id = existing ?? `pi_test_e2e_${run}_${processNonce}_${seq}`;
+  const chargeId = `ch_test_e2e_${run}_${processNonce}_${(id.match(/_(\d+)$/)?.[1] ?? seq) ?? 1}`;
   const outcome = outcomeFor(run, key);
   if (!existing) {
     // First-seen key → THIS call is the unique processor effect.
@@ -447,13 +452,13 @@ export function createFakeStripe(): Stripe {
           // fake's existing behaviour for the Refresh action); a declined one stays requires_payment_method.
           if (known.status === "processing") {
             known.status = "succeeded";
-            known.latestCharge = known.latestCharge ?? `ch_test_e2e_${run}_${(id.match(/_(\d+)$/)?.[1] ?? "r")}`;
+            known.latestCharge = known.latestCharge ?? `ch_test_e2e_${run}_${processNonce}_${(id.match(/_(\d+)$/)?.[1] ?? "r")}`;
             rememberMoney(run, known.latestCharge, { amount: known.amount, currency: known.currency });
             storePi(run, known);
           }
           return piObject(known);
         }
-        const chargeId = `ch_test_e2e_${run}_r`;
+        const chargeId = `ch_test_e2e_${run}_${processNonce}_r`;
         // An id the fake never created states no money, which the application treats as a mismatch, the same as real
         // Stripe disagreeing with the row. (Unchanged legacy behaviour for ids seeded outside the fake.)
         const money = recalledMoney(run, id);
@@ -508,7 +513,7 @@ export function createFakeStripe(): Stripe {
         const key = opts?.idempotencyKey ?? null;
         const existing = idempotentResult(run, key);
         const replay = existing !== null;
-        const id = existing ?? `re_test_e2e_${run}_${nextSeq(run)}`;
+        const id = existing ?? `re_test_e2e_${run}_${processNonce}_${nextSeq(run)}`;
         // Stripe takes a refund's currency from the CHARGE, never from the
         // request. A replay states the original refund's amount.
         const money: FakeMoney = existing

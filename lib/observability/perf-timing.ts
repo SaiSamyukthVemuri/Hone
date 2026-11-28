@@ -151,6 +151,9 @@ export const PERF_SPAN_IDS = [
   "session-chart.previous-note",
   "session-chart.last-treatment",
   "session-chart.copy-descriptor",
+  // HON-109 (Records): the electrolysis-only reads (block view, native readings, multiplex offer, probe lots, session number, prior laser count) as ONE
+  // concurrent group inside the wave. A span NAME only; it carries no identifier, count or value.
+  "session-chart.electrolysis-context",
   // FETT photos: this visit's photos, a read inside the chart's wave.
   "session-chart.photos",
   "session-chart.domain",
