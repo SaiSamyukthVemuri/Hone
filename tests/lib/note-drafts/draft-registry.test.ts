@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { acquireEntry, latestDraft, markNone, resetDraftRegistry, seedEntry, type DraftActions } from "@/lib/note-drafts/draft-registry";
 import type { NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "@/lib/note-drafts/types";
@@ -99,5 +100,14 @@ describe("draft registry", () => {
     entry.saver.change({ body: "x" });
     await vi.advanceTimersByTimeAsync(1500);
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ scope: SCOPE_A }));
+  });
+
+  it("with autosave off (register=false) the entry is private and never stored", () => {
+    const save = vi.fn(async () => ok(1));
+    const off = acquireEntry(key, null, actions(save), () => undefined, false);
+    off.saver.change({ body: "typed while off" });
+    expect(latestDraft(key, null, SCOPE_A)).toBeNull();
+    const on = acquireEntry(key, null, actions(save), () => undefined);
+    expect(on.saver).not.toBe(off.saver);
   });
 });

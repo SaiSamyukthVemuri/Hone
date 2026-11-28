@@ -31,6 +31,9 @@ export type DraftEntry = {
   floor: number;
 };
 
+// BROWSER ONLY. Module state on the server is shared by every request of an instance, so the registry is never read or written while rendering on
+// the server (a different practitioner's entry could otherwise be handed out): on the server every call below returns a fresh, unregistered result.
+const inBrowser = () => typeof window !== "undefined";
 const entries = new Map<string, DraftEntry>();
 let currentScope: string | null = null;
 const idOf = (k: NoteDraftKey) => `${currentScope}|${k.clientId}|${k.kind}|${k.target}`;
@@ -42,9 +45,11 @@ function enterScope(scope: string): void {
 }
 
 /** The saver for this key, created on first use (continuing from the server's stored draft, if any). */
-export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions, onState: (s: DraftState) => void): DraftEntry {
-  enterScope(actions.scope);
-  let entry = entries.get(idOf(key));
+export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions, onState: (s: DraftState) => void, register = true): DraftEntry {
+  // `register` false (autosave is off for this studio) or no browser (server render): a private saver that is never stored and so can never be shared.
+  const shared = register && inBrowser();
+  if (shared) enterScope(actions.scope);
+  let entry = shared ? entries.get(idOf(key)) : undefined;
   if (!entry) {
     const created: DraftEntry = {
       key,
@@ -61,7 +66,7 @@ export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null
       send: (fields, expectedRevision) => created.actions.save({ key, fields, expectedRevision, writer: created.writer, scope: created.scope }),
     });
     if (restored) created.saver.adopt(restored.fields);
-    entries.set(idOf(key), created);
+    if (shared) entries.set(idOf(key), created);
     entry = created;
   }
   entry.actions = actions;
@@ -77,9 +82,10 @@ export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null
  * Returns null for "no draft".
  */
 export function latestDraft(key: NoteDraftKey, fromServer: StoredNoteDraft | null, scope: string): { fields: NoteDraftFields; revision: number; savedAt: string | null; unsaved: boolean } | null {
+  const server = fromServer ? { fields: fromServer.fields, revision: fromServer.revision, savedAt: fromServer.savedAt as string | null, unsaved: false } : null;
+  if (!inBrowser()) return server;
   enterScope(scope);
   const entry = entries.get(idOf(key));
-  const server = fromServer ? { fields: fromServer.fields, revision: fromServer.revision, savedAt: fromServer.savedAt as string | null, unsaved: false } : null;
   if (!entry) return server;
   const unsaved = entry.saver.unsavedWork();
   if (unsaved) return { fields: unsaved.fields, revision: unsaved.revision, savedAt: null, unsaved: true };
@@ -93,7 +99,7 @@ export function latestDraft(key: NoteDraftKey, fromServer: StoredNoteDraft | nul
 
 /** Mark the draft gone for this key (record saved or discarded). */
 export function markNone(key: NoteDraftKey, scope: string): void {
-  if (scope !== currentScope) return;
+  if (!inBrowser() || scope !== currentScope) return;
   const entry = entries.get(idOf(key));
   if (entry) {
     entry.floor = Math.max(entry.floor, entry.saver.currentRevision());
@@ -103,6 +109,7 @@ export function markNone(key: NoteDraftKey, scope: string): void {
 
 /** Start a NEW key holding text that could not stay under its old key (a revision whose note was revised elsewhere). */
 export function seedEntry(key: NoteDraftKey, fields: NoteDraftFields, actions: DraftActions): void {
+  if (!inBrowser()) return;
   const entry = acquireEntry(key, null, actions, () => undefined);
   entry.none = false;
   entry.saver.change(fields);

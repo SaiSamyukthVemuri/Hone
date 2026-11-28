@@ -10,10 +10,11 @@ import type { NoteDraftFields, NoteDraftKey, StoredNoteDraft } from "./types";
 // treated as a save unless it says so.
 const FLUSH_TIMEOUT_MS = 5000;
 
-export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions) {
+/** `enabled` false (autosave off for this studio): a private, unregistered saver that nothing sends from. The registry is never touched. */
+export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions, enabled = true) {
   const [state, setState] = useState<DraftState>({ phase: "idle", savedAt: null, theirs: null });
   const [discardFailed, setDiscardFailed] = useState(false);
-  const [entry] = useState<DraftEntry>(() => acquireEntry(key, restored, actions, () => undefined));
+  const [entry] = useState<DraftEntry>(() => acquireEntry(key, restored, actions, () => undefined, enabled));
   const saver = entry.saver;
   entry.actions = actions;
 
@@ -49,7 +50,14 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
     };
   }, [saver, entry]);
 
-  const change = useCallback((fields: NoteDraftFields) => saver.change(fields), [saver]);
+  const change = useCallback(
+    (fields: NoteDraftFields) => {
+      // New text after a Save or Discard is a NEW draft: the registry must stop saying "this key has no draft", or a remount would drop it.
+      entry.none = false;
+      saver.change(fields);
+    },
+    [saver, entry],
+  );
   return {
     state,
     discardFailed,

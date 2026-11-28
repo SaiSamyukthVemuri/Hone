@@ -246,4 +246,33 @@ describe("DraftSaver", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(send).not.toHaveBeenCalled();
   });
+
+  it("Discard while typing during an in-flight save does not hang: quiesce resolves when the response lands with newer text queued", async () => {
+    let release!: (r: NoteDraftSaveResult) => void;
+    const send = vi.fn(() => new Promise<NoteDraftSaveResult>((r) => (release = r)));
+    const { saver } = setup(send);
+    saver.change({ body: "first" });
+    await vi.advanceTimersByTimeAsync(1500); // request 1 is out
+    saver.change({ body: "first, then more" }); // typing during the in-flight save queues text
+    let quiesced = false;
+    void saver.quiesce().then(() => (quiesced = true)); // the Discard pauses the saver
+    release(ok(1)); // the response lands: queued text is waiting, but paused, so nothing re-sends
+    await vi.advanceTimersByTimeAsync(0);
+    expect(quiesced).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1); // nothing new was sent while paused
+  });
+
+  it("quiesce also resolves when the in-flight request ends in a gone or cleared answer that would re-enter run()", async () => {
+    let release!: (r: NoteDraftSaveResult) => void;
+    const send = vi.fn(() => new Promise<NoteDraftSaveResult>((r) => (release = r)));
+    const { saver } = setup(send);
+    saver.change({ body: "x" });
+    await vi.advanceTimersByTimeAsync(1500);
+    let quiesced = false;
+    void saver.quiesce().then(() => (quiesced = true));
+    release({ status: "gone" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(quiesced).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
 });

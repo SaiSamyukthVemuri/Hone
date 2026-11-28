@@ -149,6 +149,12 @@ export class DraftSaver {
 
   private async run(): Promise<void> {
     this.clear();
+    if (this.paused && !this.inFlight) {
+      // Quiesced and nothing in flight: anyone waiting for idle (a Discard that paused us while a request was out) must be released HERE,
+      // because the paths that re-enter run() after a response (queued text, retry, gone, cleared) return before the end-of-run release.
+      this.releaseWaiters();
+      return;
+    }
     if (this.inFlight || this.pending == null || this.disposed || this.paused) return;
     if (this.state.phase === "conflict" || this.state.phase === "cleared") return;
     const fields = this.pending;
@@ -214,6 +220,10 @@ export class DraftSaver {
       this.set({ phase: "error" });
       if (result.status === "error" && !this.disposed) this.timer = this.o.setTimer(() => void this.run(), delay);
     }
+    this.releaseWaiters();
+  }
+
+  private releaseWaiters() {
     const waiters = this.idleWaiters;
     this.idleWaiters = [];
     for (const w of waiters) w();

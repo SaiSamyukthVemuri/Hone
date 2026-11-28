@@ -433,7 +433,7 @@ function NoteForm({
     setBodyKey((k) => k + 1);
   }
   const [occurredAt, setOccurredAt] = useState(start?.fields.occurred_at ?? todayISODate());
-  const draft = useNoteDraft(draftKey, restored, draftActions ?? NO_DRAFT_ACTIONS);
+  const draft = useNoteDraft(draftKey, restored, draftActions ?? NO_DRAFT_ACTIONS, Boolean(draftActions));
   const [restoredAt, setRestoredAt] = useState<string | null>(start && !start.unsaved ? start.savedAt : null);
   function applyTheirs(t: NoteDraftFields) {
     // Keep what the person typed visible until they dismiss it; adopt the other window's text.

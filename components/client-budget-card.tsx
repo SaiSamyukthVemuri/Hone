@@ -105,7 +105,7 @@ export function ClientBudgetCard({
     setBudgetInit(next);
     setNotesKey((k) => k + 1);
   }
-  const draft = useNoteDraft(draftKey, restored, draftActions ?? { scope: "none", save: async () => ({ status: "error" }), discard: async () => ({ ok: false }) });
+  const draft = useNoteDraft(draftKey, restored, draftActions ?? { scope: "none", save: async () => ({ status: "error" }), discard: async () => ({ ok: false }) }, Boolean(draftActions));
   const [restoredAt, setRestoredAt] = useState<string | null>(start && !start.unsaved ? start.savedAt : null);
   // A chip change is a draft change too (the chips keep their original one-line handlers; this effect reports the change).
   const levelSeen = useRef(level);
