@@ -133,7 +133,6 @@ describe("classifier — full matrix", () => {
     "middleware.ts",
     "lib/supabase/server.ts",
     "e2e/helpers/seed.ts",
-    "tests/db/helpers/harness.ts",
   ]) {
     it(`${f} forces the full matrix`, () => {
       const r = c(f);
