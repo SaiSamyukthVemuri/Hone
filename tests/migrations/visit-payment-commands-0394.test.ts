@@ -113,3 +113,16 @@ describe("0394 is shaped like a sealed migration", () => {
     expect(DOWN).toContain("from public.visit_bills");
   });
 });
+
+describe("0394 studio_has_gone_live: a live Connect account OR a succeeded live attempt, from rows only", () => {
+  const sql = UP;
+  const body = sql.slice(sql.indexOf("create function public.studio_has_gone_live"), sql.indexOf("create index payment_charge_attempts_live_succeeded_idx"));
+  it("reads a live-mode settings row with an account id (any status) and the succeeded-live-attempt rule", () => {
+    expect(body).toMatch(/from public\.studio_payment_settings s where s\.studio_id = p_studio and s\.stripe_livemode = true and s\.stripe_account_id is not null/);
+    expect(body).toMatch(/from public\.payment_charge_attempts a where a\.studio_id = p_studio and a\.stripe_livemode = true and a\.status = 'succeeded'/);
+    expect(body).not.toMatch(/charges_enabled|stripe_account_status/);
+  });
+  it("takes no mode from a caller: its only parameter is the studio", () => {
+    expect(body).toMatch(/studio_has_gone_live\(p_studio uuid\)/);
+  });
+});

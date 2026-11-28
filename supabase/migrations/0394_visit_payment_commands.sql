@@ -86,7 +86,8 @@ create unique index payment_charge_attempts_active_session_payment_uniq
 -- with the refund, so the balance is unchanged) adds back to what is outstanding; a payment_reversal does NOT. This supersedes the 0393 header sentence that says
 -- a reversal raises the balance due. refunded_cents still reports ALL money returned (the Refunded figure); outstanding_cents is what a new tender may take.
 -- ---------------------------------------------------------------------------
--- WHICH CARD MONEY COUNTS (Sam, 27 Nov 2026: Stripe TEST-mode money is not real money). A studio "has gone live" once it has at least one SUCCEEDED card attempt with
+-- WHICH CARD MONEY COUNTS (Sam, 27 Nov 2026: Stripe TEST-mode money is not real money). A studio is LIVE ("has gone live") once it has a Stripe Connect settings row in LIVE
+-- mode with an account id (it connected live Stripe: no payment is needed, so cash or a transfer can be its first real money) OR a SUCCEEDED card attempt with
 -- stripe_livemode = true. Before that, every card attempt counts toward capacity exactly as it always did, so test-mode environments (CI, dev, staging, the fake-Stripe
 -- lane) behave unchanged. After it, an attempt that is not live no longer counts: an old pilot test charge can never block collecting real money. The mode is derived here
 -- from the rows, never passed in by a caller (an owner could call the commands directly and claim any mode). ONE definition, used by the position and so by the refusal,
@@ -94,7 +95,8 @@ create unique index payment_charge_attempts_active_session_payment_uniq
 create function public.studio_has_gone_live(p_studio uuid) returns boolean
 language sql stable security definer set search_path = pg_catalog, pg_temp
 as $$
-  select exists (select 1 from public.payment_charge_attempts a where a.studio_id = p_studio and a.stripe_livemode = true and a.status = 'succeeded');
+  select exists (select 1 from public.studio_payment_settings s where s.studio_id = p_studio and s.stripe_livemode = true and s.stripe_account_id is not null)
+      or exists (select 1 from public.payment_charge_attempts a where a.studio_id = p_studio and a.stripe_livemode = true and a.status = 'succeeded');
 $$;
 create index payment_charge_attempts_live_succeeded_idx on public.payment_charge_attempts (studio_id) where stripe_livemode = true and status = 'succeeded';
 -- p_assume_live is set ONLY by the card wall, from the row being inserted (new.stripe_livemode is true): a live card about to be made is itself the proof the studio is going live, so

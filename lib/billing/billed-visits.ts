@@ -1,5 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/lib/supabase/admin-server";
+import { readStudioLive } from "@/lib/billing/studio-live";
 import { readInChunks } from "@/lib/dashboard/in-chunks";
 import { aggregateRefundGaps, billedOutstanding, keepsRefundForBilledVisit, type BilledOutstanding, type BilledVisitRows } from "@/lib/billing/visit-payments-core";
 
@@ -34,10 +36,10 @@ export async function readBilledVisits(
       supabase.from("payment_refund_reviews").select("appointment_id, amount_cents").eq("studio_id", studioId).is("resolved_at", null).in("appointment_id", chunk)),
   ]);
   if (!ext.ok || !refs.ok || !attempts.ok || !reviews.ok) return { ok: false };
-  // studio_has_gone_live (0394): once the studio has a succeeded LIVE card attempt, a price reduction on a non-live card adds back nothing (that card was never subtracted).
-  const live = await supabase.from("payment_charge_attempts").select("id").eq("studio_id", studioId).eq("stripe_livemode", true).eq("status", "succeeded").limit(1);
-  if (live.error) return { ok: false };
-  const studioLive = (live.data?.length ?? 0) > 0;
+  // studio_has_gone_live (0394): once the studio is live (a live Connect account, or a succeeded LIVE card attempt), a price reduction on a non-live card adds back nothing (that card was never subtracted).
+  const studioLiveRead = await readStudioLive(createAdminClient(), studioId);
+  if (studioLiveRead === null) return { ok: false };
+  const studioLive = studioLiveRead;
   const testAttempts = new Set(attempts.rows.filter((a) => a.stripe_livemode !== true).map((a) => a.id));
   const billedAttempts = new Set(attempts.rows.map((a) => a.id));
   for (const b of bills.rows) {

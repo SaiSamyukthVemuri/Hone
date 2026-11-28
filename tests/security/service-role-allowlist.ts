@@ -316,6 +316,12 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: '.eq("studio_id"',
   },
   {
+    path: "lib/billing/billed-visits.ts",
+    purpose: "Bulk billed-visit payment state for the roster, calendar and unpaid list (HON-123).",
+    why: "Service-role reads only whether the studio is LIVE (a live-mode Connect settings row, which has no owner policy, or a succeeded live attempt: the app's copy of 0394 studio_has_gone_live); the visit rows are read under the owner's RLS and every query is scoped to the caller's studio_id.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
     path: "lib/billing/payment-partial-refund.ts",
     purpose: "Partial card refund runner (HON-122).",
     why: "Service-role reads the refunded attempt and records Stripe's outcome through finish_payment_refund (service_role only); the refund row is read by the owner action under RLS first and every query is scoped to that row's studio_id.",

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+// The studio-live probe (studio_payment_settings has no owner policy) runs on the service role: serve it the same fixture tables.
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => (globalThis as { __fakeAdmin?: unknown }).__fakeAdmin }));
 import { billedPaymentState, readBilledVisits } from "@/lib/billing/billed-visits";
 
 // HON-123 (Codex P1): a billed visit whose card payment was refunded through the attempt itself (the older refund control, or Stripe's dashboard via the webhook) carries a
@@ -12,7 +14,7 @@ const ATT = "33333333-3333-4333-8333-333333333333";
 const OTHER_ATT = "44444444-4444-4444-8444-444444444444";
 
 function fake(tables: Record<string, unknown[]>) {
-  return {
+  const client = {
     from(table: string) {
       const q: Record<string, unknown> = {};
       const self = () => q;
@@ -23,6 +25,8 @@ function fake(tables: Record<string, unknown[]>) {
       return q;
     },
   } as never;
+  (globalThis as { __fakeAdmin?: unknown }).__fakeAdmin = client;
+  return client;
 }
 const base = {
   visit_bills: [{ appointment_id: A, total_cents: 10000, currency: "cad" }],

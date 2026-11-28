@@ -1,6 +1,7 @@
 import "server-only";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { createClient } from "@/lib/supabase/server";
+import { readStudioLive } from "@/lib/billing/studio-live";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { aggregateRefundGaps, keepsRefundForBilledVisit } from "@/lib/billing/visit-payments-core";
 import type {
@@ -60,7 +61,7 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
       supabase.from("payment_refund_reviews").select("id, amount_cents, stripe_refund_status")
         .eq("studio_id", studioId).eq("appointment_id", appointmentId).is("resolved_at", null).order("opened_at"),
       // studio_has_gone_live (0394): a succeeded LIVE card attempt exists for the studio. From then on, non-live card payments no longer count toward capacity.
-      createAdminClient().from("payment_charge_attempts").select("id").eq("studio_id", studioId).eq("stripe_livemode", true).eq("status", "succeeded").limit(1),
+      readStudioLive(createAdminClient(), studioId),
     ]);
     if (bills.error || externals.error || refunds.error || cards.error || position.error || openReviews.error) return { ok: false };
 
@@ -124,9 +125,9 @@ export async function loadVisitLedger(studioId: string, appointmentId: string): 
       if (typeof r.id !== "string" || num(r.amount_cents) === null) return { ok: false };
       cds.push({ kind: "card", id: r.id, amountCents: r.amount_cents as number, status: String(r.status), at: String(r.created_at), platformFeeCents: null, receiptSent: typeof r.receipt_sent_at === "string", ...(r.stripe_livemode !== true ? { test: true } : {}) });
     }
-    if (liveProbe.error) return { ok: false };
+    if (liveProbe === null) return { ok: false };
     return { ok: true, ledger: { // studioLive is the database's own position (the live probe only): cash and transfers use it. cardAssumesLive mirrors the card wall (0394), which judges a live row as if the studio had gone live; inferStripeLivemode is deployment config, never a caller input.
-      studioLive: (liveProbe.data?.length ?? 0) > 0, cardAssumesLive: inferStripeLivemode(), bill, cards: cds, externals: ext, refunds: refs, reviewOpen: pos?.review_open === true, reviews } };
+      studioLive: liveProbe, cardAssumesLive: inferStripeLivemode(), bill, cards: cds, externals: ext, refunds: refs, reviewOpen: pos?.review_open === true, reviews } };
   } catch {
     return { ok: false };
   }

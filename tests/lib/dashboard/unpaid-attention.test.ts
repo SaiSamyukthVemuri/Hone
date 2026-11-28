@@ -4,8 +4,10 @@ vi.mock("server-only", () => ({}));
 
 type Rows = Record<string, unknown[]>;
 const db = vi.hoisted(() => ({ rows: {} as Rows, errors: new Set<string>(), queried: [] as string[], ins: [] as Array<{ table: string; col: string; n: number; chars: number }> }));
+// The studio-live probe runs on the service role: serve it the same fixture client the user client uses.
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => (globalThis as { __uaClient?: unknown }).__uaClient }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: vi.fn(async () => ({
+  createClient: vi.fn(async () => (((globalThis as { __uaClient?: unknown }).__uaClient = {
     from(table: string) {
       db.queried.push(table);
       const b: Record<string, unknown> = {};
@@ -19,7 +21,7 @@ vi.mock("@/lib/supabase/server", () => ({
       b.then = (res: (v: unknown) => unknown) => Promise.resolve(done()).then(res);
       return b;
     },
-  })),
+  }))),
 }));
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false }));
 const juris = vi.hoisted(() => ({ value: { ok: true, jurisdiction: { country: "CA", currency: "cad" } } as unknown }));
