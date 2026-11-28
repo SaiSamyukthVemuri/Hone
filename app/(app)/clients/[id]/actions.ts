@@ -97,6 +97,11 @@ function dollarsToCents(value: FormDataEntryValue | null): number | null {
 // date of birth makes this client match others (same phone, or same name and
 // date of birth). Nothing was saved; ClientForm lists them and "Save as a new
 // client anyway" resubmits with one confirm_possible_duplicate per client.
+// HON-109: a form that navigates itself (the edit page) sends `saved_inline=1`. A SAVED edit then RETURNS this and the form shows "Saved" at
+// once and soft-navigates to the profile, instead of waiting for the redirected profile render inside the same response. The address is built
+// HERE from the validated client id, never taken from the request. A call without the flag (any other caller) still ends in redirect().
+export type ClientSavedResult = { ok: true; redirectTo: string };
+
 export type ClientSaveResult = {
   ok: false;
   error: string;
@@ -212,9 +217,10 @@ function isClientDuplicateEmailDbError(
 
 export async function updateClientAction(
   formData: FormData,
-): Promise<ClientSaveResult | void> {
+): Promise<ClientSaveResult | ClientSavedResult | void> {
   // Who is asking comes first: nothing about the submission (validation messages, baseline checks) is
   // answered to a caller who is not an active owner or practitioner of a studio.
+  const savedInline = formData.get("saved_inline") === "1";
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   // Staff only, stated here and not left to the membership-wide policies: a refused save echoes the CURRENT stored
   // values, so a member who is neither owner nor practitioner is refused before anything is read (Privacy EO-1).
@@ -241,6 +247,7 @@ export async function updateClientAction(
   // Nothing changed: nothing to write, and nothing to claim was saved beyond what is already stored.
   if (Object.keys(plan.patch).length === 0) {
     revalidatePath(`/clients/${clientId}`);
+    if (savedInline) return { ok: true, redirectTo: `/clients/${clientId}` };
     redirect(`/clients/${clientId}`);
   }
 
@@ -368,6 +375,7 @@ export async function updateClientAction(
 
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/clients");
+  if (savedInline) return { ok: true, redirectTo: `/clients/${clientId}` };
   redirect(`/clients/${clientId}`);
 }
 

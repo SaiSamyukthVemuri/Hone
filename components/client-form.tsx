@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import {
   COMMON_ALLERGIES,
@@ -91,8 +92,19 @@ type Props = {
   // HON-58: the probable-duplicate "save anyway" button. Create saves a new
   // record; the edit page saves the existing one and says so.
   saveAnywayLabel?: string;
-  action: (formData: FormData) => Promise<ClientFormActionResult | void>;
+  action: (formData: FormData) => Promise<ClientFormActionResult | ClientFormSavedResult | void>;
+  /**
+   * HON-109 (edit page only): ask the action to RETURN on success instead of redirecting, so "Saved." shows the moment the server has confirmed
+   * and the form then soft-navigates to the profile. The action still redirects for any caller that does not send the flag.
+   */
+  softSave?: boolean;
 };
+
+/** What a saved edit returns to a form that asked for it (`softSave`). The address comes from the server. */
+export type ClientFormSavedResult = { ok: true; redirectTo: string };
+
+// Only an in-app client profile address is ever navigated to; anything else is ignored (the form then just says Saved).
+const SAVED_REDIRECT = /^\/clients\/[0-9a-f-]{36}$/i;
 
 // Blocks the browser's implicit submit-on-Enter for single-line text inputs;
 // textareas keep normal Enter (newline) behavior.
@@ -209,7 +221,12 @@ export function ClientForm({
   baseline: initialBaseline,
   saveAnywayLabel = "Save as a new client anyway",
   action,
+  softSave = false,
 }: Props) {
+  const router = useRouter();
+  // "Saved." only ever appears after the server returned ok. `inFlight` closes the window between two clicks before React re-renders.
+  const [saved, setSaved] = useState(false);
+  const inFlight = useRef(false);
   const [values, setValues] = useState<ClientFormValues>(initialValues);
   const [error, setError] = useState<string | null>(null);
   // "Apply my change" stays a deliberate click and is only offered once the review panel has actually rendered.
@@ -248,6 +265,7 @@ export function ClientForm({
     confirmPossibleDuplicateIds: ReadonlyArray<string> | null,
     override?: { baseline?: ProfileBaseline },
   ) {
+    if (inFlight.current || saved) return;
     setError(null);
     setConflicts(undefined);
     if (!values.name.trim()) {
@@ -263,13 +281,23 @@ export function ClientForm({
       values,
       {
         ...hiddenFields,
+        ...(softSave ? { saved_inline: "1" } : {}),
         ...(sent ? { baseline: JSON.stringify(sent) } : {}),
         ...(clearPreferred ? { clear_preferred_name: "yes" } : {}),
       },
       confirmPossibleDuplicateIds,
     );
+    inFlight.current = true;
     startTransition(async () => {
       const outcome = await runClientSave(action, fd);
+      if (outcome.kind === "saved" && outcome.redirectTo && SAVED_REDIRECT.test(outcome.redirectTo)) {
+        // Confirmed by the server: say so now, then move on. The push stays inside the transition, so the button stays pending (and the
+        // form stays closed to a second submit) until the profile has been applied.
+        setSaved(true);
+        router.push(outcome.redirectTo);
+        return;
+      }
+      inFlight.current = false;
       if (outcome.kind === "redirect") {
         // The server confirmed the save and asked the router to move on. Hand the redirect back to the
         // router untouched: showing an error here is the false "could not save" flash.
@@ -575,6 +603,11 @@ export function ClientForm({
         >
           {pending ? pendingLabel : submitLabel}
         </button>
+        {saved && (
+          <p role="status" data-testid="client-saved" className="text-sm text-green-700 dark:text-green-400">
+            Saved.
+          </p>
+        )}
         <Link
           href={cancelHref}
           className="rounded-md border border-neutral-300 px-5 py-3 text-base hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
