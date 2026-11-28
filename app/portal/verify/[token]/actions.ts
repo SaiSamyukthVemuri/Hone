@@ -1,5 +1,9 @@
 "use server";
 
+import { waitUntilMinimumElapsed } from "@/lib/portal/login-timing";
+import { limitPortalLinkIp, limitPortalLinkRecipient } from "@/lib/rate-limit/public";
+import { headers } from "next/headers";
+import { issuePortalMagicLink } from "@/lib/portal/magic-link";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { hashToken } from "@/lib/portal/tokens";
@@ -29,7 +33,7 @@ import { dbErrorCode, thrownErrorClass } from "@/lib/logging/error-class";
 // Any failure path redirects back to /portal/verify/<token>; the
 // page re-runs its GET-side validation, finds the token now
 // missing / consumed / expired, and renders the same generic
-// "This secure link can't be used right now" surface. No internal
+// link recovery surface. No internal
 // state is leaked.
 
 export async function verifyPortalMagicLinkAction(
@@ -48,12 +52,11 @@ export async function verifyPortalMagicLinkAction(
 
   const tokenHash = hashToken(token);
   const admin = createAdminClient();
-  const nowIso = new Date().toISOString();
 
   const { data: link, error: lookupErr } = await admin
     .from("client_portal_magic_links")
     .select(
-      "id, studio_id, client_id, expires_at, consumed_at",
+      "id, studio_id, client_id, email_normalized, expires_at, consumed_at",
     )
     .eq("token_hash", tokenHash)
     .maybeSingle();
@@ -67,7 +70,7 @@ export async function verifyPortalMagicLinkAction(
     );
     redirect(`/portal/verify/${token}`);
   }
-  if (!link || link.consumed_at != null || link.expires_at <= nowIso) {
+  if (!link || link.consumed_at != null || !(Date.parse(link.expires_at) > Date.now())) {
     redirect(`/portal/verify/${token}`);
   }
 
@@ -75,11 +78,16 @@ export async function verifyPortalMagicLinkAction(
   // validation and this POST must not let a session through.
   const { data: clientRow } = await admin
     .from("clients")
-    .select("id, studio_id, archived_at")
+    .select("id, studio_id, archived_at, normalized_email")
     .eq("id", link.client_id)
     .eq("studio_id", link.studio_id)
     .maybeSingle();
-  if (!clientRow || clientRow.archived_at != null) {
+  if (
+    !clientRow ||
+    clientRow.archived_at != null ||
+    !clientRow.normalized_email ||
+    clientRow.normalized_email !== link.email_normalized
+  ) {
     redirect(`/portal/verify/${token}`);
   }
 
@@ -98,9 +106,10 @@ export async function verifyPortalMagicLinkAction(
   // which will then render the same generic unavailable surface.
   const { data: consumedRows, error: consumeErr } = await admin
     .from("client_portal_magic_links")
-    .update({ consumed_at: nowIso })
+    .update({ consumed_at: new Date().toISOString() })
     .eq("id", link.id)
     .is("consumed_at", null)
+    .gt("expires_at", new Date().toISOString())
     .select("id");
   if (consumeErr) {
     console.error(
@@ -143,4 +152,60 @@ export async function verifyPortalMagicLinkAction(
   }
 
   redirect("/portal");
+}
+
+// This action can only request an email. Even a genuine old link never
+// grants a session, reveals an address, or lets its holder select a recipient.
+export type RecoveryState = "ready" | "requested" | "limited";
+
+export async function requestReplacementPortalLink(
+  _previous: RecoveryState,
+  formData: FormData,
+): Promise<RecoveryState> {
+  const gate = await limitPortalLinkIp(await headers());
+  if (!gate.allowed) return "limited";
+
+  const token = formData.get("token");
+  const startedAt = Date.now();
+  try {
+    if (typeof token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(token)) return "requested";
+    const admin = createAdminClient();
+    const { data: link, error } = await admin
+      .from("client_portal_magic_links")
+      .select("studio_id, client_id")
+      .eq("token_hash", hashToken(token))
+      .maybeSingle();
+    if (error) throw error;
+    if (!link) return "requested";
+
+    // normalized_email is the current registered mailbox, unique per studio.
+    const { data: client, error: clientError } = await admin
+      .from("clients")
+      .select("normalized_email")
+      .eq("id", link.client_id)
+      .eq("studio_id", link.studio_id)
+      .is("archived_at", null)
+      .maybeSingle();
+    if (clientError) throw clientError;
+    const email = client?.normalized_email;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return "requested";
+    const recipient = await limitPortalLinkRecipient(email);
+    if (!recipient.allowed) return "requested";
+    // The issuer rechecks the studio policy immediately before minting and
+    // obtains the public studio name from that same read.
+    await issuePortalMagicLink(admin, {
+      studioId: link.studio_id,
+      clientId: link.client_id,
+      email,
+    });
+    return "requested";
+  } catch (err) {
+    console.error(JSON.stringify({
+      event: "portal_link_recovery_failed",
+      code: dbErrorCode(err),
+    }));
+    return "requested";
+  } finally {
+    await waitUntilMinimumElapsed(startedAt);
+  }
 }

@@ -41,10 +41,12 @@ function admin() {
           update: () => ({
             eq: () => ({
               is: () => ({
-                select: async () => {
-                  state.consumed += 1;
-                  return { data: [{ id: "l1" }], error: null };
-                },
+                gt: () => ({
+                  select: async () => {
+                    state.consumed += 1;
+                    return { data: [{ id: "l1" }], error: null };
+                  },
+                }),
               }),
             }),
           }),
@@ -56,7 +58,7 @@ function admin() {
             eq: () => ({
               eq: () => ({
                 maybeSingle: async () => ({
-                  data: { id: "c1", studio_id: "s1", archived_at: null },
+                  data: { id: "c1", studio_id: "s1", archived_at: null, normalized_email: "a@example.test" },
                   error: null,
                 }),
               }),
@@ -103,6 +105,7 @@ beforeEach(() => {
     id: "l1",
     studio_id: "s1",
     client_id: "c1",
+    email_normalized: "a@example.test",
     expires_at: new Date(Date.now() + 600_000).toISOString(),
     consumed_at: null,
   };

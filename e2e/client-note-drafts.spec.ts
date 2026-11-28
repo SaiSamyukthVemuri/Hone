@@ -23,7 +23,7 @@ test.beforeAll(async () => {
   if (existing.length === 1) {
     seed = { studioId: E2E_NOTE_DRAFTS_STUDIO_ID, ownerEmail: existing[0].owner_email, studioName: existing[0].name, runId: "rerun", slug: "", serviceName: "", clientName: "", clientEmail: "" } as E2eSeed;
   } else {
-    seed = await seedE2eStudio({ studioId: E2E_NOTE_DRAFTS_STUDIO_ID });
+    seed = await seedE2eStudio(E2E_NOTE_DRAFTS_STUDIO_ID);
   }
   await sql(`insert into public.client_note_draft_enabled_studios (studio_id) values ($1) on conflict do nothing`, [E2E_NOTE_DRAFTS_STUDIO_ID]);
   const tag = Math.random().toString(36).slice(2, 8);

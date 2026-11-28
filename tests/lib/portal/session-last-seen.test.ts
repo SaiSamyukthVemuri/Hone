@@ -66,7 +66,7 @@ describe("last_seen_at touch: failure visibility", () => {
   });
 
   it("the failure log withholds the session identifier and error text", () => {
-    const touch = SESSION_CODE.slice(SESSION_CODE.indexOf("void admin"), SESSION_CODE.indexOf("return {\n    id: data.id"));
+    const touch = SESSION_CODE.slice(SESSION_CODE.indexOf("void admin"), SESSION_CODE.indexOf("type StoredPortalSession"));
     expect(touch).not.toMatch(/sessionId:|message:|err:/);
     expect(touch).toContain("code: dbErrorCode(touchError)");
   });
@@ -90,7 +90,7 @@ describe("last_seen_at touch: failure visibility", () => {
     // The .then arms only log; the function's success return is the
     // plain object literal after the chain, untouched by the touch.
     expect(SESSION_CODE).toMatch(
-      /return \{\s*\n?\s*id: data\.id as string,\s*\n?\s*studioId: data\.studio_id as string,\s*\n?\s*clientId: data\.client_id as string,\s*\n?\s*expiresAt: data\.expires_at as string,\s*\n?\s*\};/,
+      /return \{\s*\n?\s*id: data\.id,\s*\n?\s*studioId: data\.studio_id,\s*\n?\s*clientId: data\.client_id,\s*\n?\s*expiresAt: data\.expires_at,\s*\n?\s*\};/,
     );
   });
 });
@@ -98,18 +98,15 @@ describe("last_seen_at touch: failure visibility", () => {
 describe("session lookup / validity behavior: unchanged", () => {
   it("lookup still filters by session_token_hash via maybeSingle", () => {
     expect(SESSION_CODE).toMatch(
-      /\.select\("id, studio_id, client_id, expires_at, revoked_at"\)\s*\.eq\("session_token_hash", tokenHash\)\s*\.maybeSingle\(\)/,
+      /\.select\("id, studio_id, client_id, expires_at, revoked_at, client:clients!client_portal_sessions_client_id_fkey\(id, studio_id, archived_at\)"\)\s*\.eq\("session_token_hash", tokenHash\)\s*\.maybeSingle<StoredPortalSession>\(\)/,
     );
   });
 
   it("revoked and expired rows still resolve to null", () => {
-    expect(SESSION_CODE).toMatch(/if \(data\.revoked_at\) return null;/);
-    expect(SESSION_CODE).toMatch(
-      /if \(data\.expires_at <= nowIso\) return null;/,
-    );
+    expect(SESSION_CODE).toMatch(/if \(!data \|\| data\.revoked_at \|\| !\(Date\.parse\(data\.expires_at\) > Date\.now\(\)\)\) return null;/);
   });
 
-  it("lookup errors still log sanitized and resolve to null", () => {
+  it("lookup errors still log a sanitized code", () => {
     expect(SESSION_CODE).toMatch(/portal_session_lookup_failed/);
   });
 
