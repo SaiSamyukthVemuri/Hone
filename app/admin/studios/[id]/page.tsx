@@ -1,10 +1,12 @@
 import { requirePlatformAdmin } from "@/lib/auth/require-platform-admin";
 import Link from "next/link";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import {
   loadStudioPaymentStatus,
   type StudioModeRow,
+  type StudioPaymentStatus,
 } from "@/lib/payments/admin-payment-status";
 import { AdminModeBadge } from "@/app/admin/mode-badge";
 import { FormattedDateTime } from "@/components/formatted-date-time";
@@ -181,15 +183,10 @@ export default async function AdminStudioPage({
   const { id } = await params;
   const studio = await loadStudioDetail(id);
   if (!studio) notFound();
-  // PR B: per-studio payment status: capability/status/counts only, both
-  // modes, redacted account suffix. Read via the shared admin helper.
-  const payments = await loadStudioPaymentStatus(createAdminClient(), id);
-  // HON-82: read-only and never throwing; each degrades to its own "Unknown" state rather than failing the page.
-  const adminForActivity = createAdminClient();
-  const [activity, staffSignIns] = await Promise.all([
-    loadStudioActivity(adminForActivity, id),
-    loadStaffSignIns(adminForActivity, id),
-  ]);
+  const admin = createAdminClient();
+  const paymentReport = loadStudioPaymentStatus(admin, id);
+  const activityReport = loadStudioActivity(admin, id);
+  const signInReport = loadStaffSignIns(admin, id);
 
   const inviteLabel =
     studio.owner_invite_status === "accepted"
@@ -247,9 +244,13 @@ export default async function AdminStudioPage({
         </p>
       </section>
 
-      <StudioActivitySection activity={activity} />
+      <Suspense fallback={<p role="status">Loading studio activity…</p>}>
+        {activityReport.then((activity) => <StudioActivitySection activity={activity} />)}
+      </Suspense>
 
-      <StaffSignInSection report={staffSignIns} />
+      <Suspense fallback={<p role="status">Loading staff sign-ins…</p>}>
+        {signInReport.then((report) => <StaffSignInSection report={report} />)}
+      </Suspense>
 
       <section>
         <h2 className="mb-3 text-xl font-medium">Setup checks</h2>
@@ -261,18 +262,12 @@ export default async function AdminStudioPage({
             label="Availability configured"
           />
           <Flag ok={Boolean(studio.slug)} label="Booking slug set" />
-          <Flag
-            ok={
-              (payments.runtimeMode === "live"
-                ? payments.live.capability
-                : payments.test.capability) === "ready"
-            }
-            label={`Payments (${payments.runtimeMode} mode): ${
-              payments.runtimeMode === "live"
-                ? payments.live.capability
-                : payments.test.capability
-            }`}
-          />
+          <Suspense fallback={<span role="status">Checking payment capability…</span>}>
+            {paymentReport.then((payments) => {
+              const { capability } = payments[payments.runtimeMode];
+              return <Flag ok={capability === "ready"} label={`Payments (${payments.runtimeMode} mode): ${capability}`} />;
+            })}
+          </Suspense>
         </div>
       </section>
 
@@ -327,25 +322,9 @@ export default async function AdminStudioPage({
         </p>
       </section>
 
-      <section>
-        <h2 className="mb-3 text-xl font-medium">Payments</h2>
-        <p className="mb-3 max-w-prose text-sm text-neutral-500">
-          Runtime: {payments.runtimeMode} mode. Capability, status, and
-          mode-separated counts only: account ids are redacted; no payment,
-          card, or customer identifiers are shown.
-        </p>
-        {payments.loadError ? (
-          <p className="text-sm text-amber-700 dark:text-amber-300">
-            Payment status could not be loaded. Check ops alerts before
-            assuming this studio is healthy.
-          </p>
-        ) : (
-          <div className="flex flex-wrap gap-4">
-            <PaymentModeCard label="Live" row={payments.live} />
-            <PaymentModeCard label="Test" row={payments.test} />
-          </div>
-        )}
-      </section>
+      <Suspense fallback={<p role="status">Loading payment details…</p>}>
+        {paymentReport.then((payments) => <PaymentsSection payments={payments} />)}
+      </Suspense>
 
       <section className="flex flex-wrap gap-4 text-sm">
         <Link href="/admin" className="underline">
@@ -356,6 +335,30 @@ export default async function AdminStudioPage({
         </Link>
       </section>
     </div>
+  );
+}
+
+function PaymentsSection({ payments }: { payments: StudioPaymentStatus }) {
+  return (
+    <section>
+      <h2 className="mb-3 text-xl font-medium">Payments</h2>
+      <p className="mb-3 max-w-prose text-sm text-neutral-500">
+        Runtime: {payments.runtimeMode} mode. Capability, status, and
+        mode-separated counts only: account ids are redacted; no payment,
+        card, or customer identifiers are shown.
+      </p>
+      {payments.loadError ? (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          Payment status could not be loaded. Check ops alerts before
+          assuming this studio is healthy.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-4">
+          <PaymentModeCard label="Live" row={payments.live} />
+          <PaymentModeCard label="Test" row={payments.test} />
+        </div>
+      )}
+    </section>
   );
 }
 

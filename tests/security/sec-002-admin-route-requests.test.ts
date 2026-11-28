@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream } from "react-dom/server";
 import type { ReactElement } from "react";
 
 // SEC-002 request level: a document request and an RSC request for every
@@ -308,7 +308,8 @@ async function serve(kind: Kind, page: PageCase): Promise<Outcome> {
     stage: "render",
     status: 200,
     location: null,
-    body: renderToStaticMarkup(pageResult.value),
+    // Include streamed sections and finish this request before simulating revocation.
+    body: await new Response(await renderToReadableStream(pageResult.value)).text(),
   };
 }
 
