@@ -110,4 +110,18 @@ describe("draft registry", () => {
     const on = acquireEntry(key, null, actions(save), () => undefined);
     expect(on.saver).not.toBe(off.saver);
   });
+
+  it("the unload guard stays armed while ANY registry entry holds unsent text, even with no editor mounted, and drops once it is saved", async () => {
+    const save = vi.fn(async () => ({ status: "error" }) as NoteDraftSaveResult);
+    const entry = acquireEntry(key, null, actions(save), () => undefined); // no editor ever attached: a detached saver
+    entry.saver.change({ body: "typed during an outage, editor switched away" });
+    await vi.advanceTimersByTimeAsync(1500); // the save failed: the text is held
+    const held = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(held);
+    expect(held.defaultPrevented).toBe(true);
+    entry.saver.settle(); // the real note was saved
+    const clean = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(clean);
+    expect(clean.defaultPrevented).toBe(false);
+  });
 });

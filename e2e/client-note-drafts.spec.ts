@@ -341,13 +341,11 @@ async function freshClient(): Promise<string> {
 }
 
 async function typeUnsentWhileSavesFail(page: Page, hold: { failing: boolean; attempts: number }, clientId: string) {
-  await page.route("**/clients/**", (route) => {
-    if (route.request().method() === "POST" && isSave(route)) {
-      hold.attempts += 1;
-      if (hold.failing) return route.abort();
-    }
-    return route.continue();
+  // Counted on EVERY url: after a soft sign-out a Server Action posts to the page it was invoked from (/login), not to /clients/...
+  page.on("request", (r) => {
+    if (r.method() === "POST" && (r.postData() ?? "").includes("expectedRevision")) hold.attempts += 1;
   });
+  await page.route("**/clients/**", (route) => (hold.failing && route.request().method() === "POST" && isSave(route) ? route.abort() : route.continue()));
   await page.goto(treatment(clientId));
   const restoredBanner = card(page, "Consultation notes").getByText(/Draft restored/);
   if (await restoredBanner.first().isVisible().catch(() => false)) {

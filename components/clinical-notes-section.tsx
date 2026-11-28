@@ -552,7 +552,7 @@ function NoteForm({
           restoredAt={restoredAt}
           onRetry={draft.retry}
           onKeepMine={draft.keepMine}
-          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => { const f = draft.latest(); if (f) { draft.settle(); onKeepAsNewNote(f); } } : draft.keepAsNew}
+          onKeepAsNew={mode === "revise" && onKeepAsNewNote ? () => { void draft.moveOut().then((f) => { if (f) onKeepAsNewNote(f); }); } : draft.keepAsNew}
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) applyTheirs(t);

@@ -30,19 +30,11 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
     const hide = () => {
       if (document.visibilityState === "hidden") void saver.flush();
     };
-    const leave = (e: BeforeUnloadEvent) => {
-      if (saver.hasUnsavedWork()) {
-        e.preventDefault();
-        e.returnValue = "";
-      }
-    };
     document.addEventListener("visibilitychange", hide);
     window.addEventListener("pagehide", hide);
-    window.addEventListener("beforeunload", leave);
     return () => {
       document.removeEventListener("visibilitychange", hide);
       window.removeEventListener("pagehide", hide);
-      window.removeEventListener("beforeunload", leave);
       // Section/client switch: detach and try to save what is pending, bounded by a timeout. Whatever is still unsaved after that STAYS in
       // the saver (and keeps retrying quietly); the remount re-attaches to it. Nothing is disposed.
       saver.setListener(() => undefined);
@@ -69,6 +61,23 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
     useTheirs: () => saver.useTheirs(),
     /** The newest text of this key (acknowledged or not), for moving it to another key. */
     latest: () => saver.latestFields(),
+    /**
+     * Move this key's text to ANOTHER key (Keep as new note): stop sending, delete the stored draft of THIS key (live rows only; an already
+     * cleared one is left as is), then settle. Returns the newest text, or null when there is none. A failed delete is ignored on purpose: the
+     * text is not lost (the caller seeds the new key with it) and a live row can only linger until it expires.
+     */
+    moveOut: async (): Promise<NoteDraftFields | null> => {
+      await saver.quiesce();
+      const fields = saver.latestFields();
+      try {
+        await entry.actions.discard(key, entry.scope);
+      } catch {
+        // ignored, see above
+      }
+      saver.settle();
+      markNone(key, entry.actions.scope);
+      return fields;
+    },
     /** The real record was saved (its transaction already cleared the draft): stop sending and remember the draft is gone. */
     settle: () => {
       saver.settle();

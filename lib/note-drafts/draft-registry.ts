@@ -36,6 +36,25 @@ export type DraftEntry = {
 const inBrowser = () => typeof window !== "undefined";
 const entries = new Map<string, DraftEntry>();
 let currentScope: string | null = null;
+let unloadGuardInstalled = false;
+
+/**
+ * Closing or reloading the tab with unsent draft text asks first. It is owned by the REGISTRY, not by an editor, because a detached saver (the editor
+ * was switched away while the server was unreachable) still holds text that exists nowhere else: the guard must live as long as any entry does.
+ */
+function installUnloadGuard(): void {
+  if (unloadGuardInstalled || !inBrowser()) return;
+  unloadGuardInstalled = true;
+  window.addEventListener("beforeunload", (e) => {
+    for (const entry of entries.values()) {
+      if (entry.saver.hasUnsavedWork()) {
+        e.preventDefault();
+        e.returnValue = "";
+        return;
+      }
+    }
+  });
+}
 const idOf = (k: NoteDraftKey) => `${currentScope}|${k.clientId}|${k.kind}|${k.target}`;
 
 /** Any identity or studio change drops EVERY saver first: timers cleared, queued text discarded, no send can follow. */
@@ -48,7 +67,10 @@ function enterScope(scope: string): void {
 export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions, onState: (s: DraftState) => void, register = true): DraftEntry {
   // `register` false (autosave is off for this studio) or no browser (server render): a private saver that is never stored and so can never be shared.
   const shared = register && inBrowser();
-  if (shared) enterScope(actions.scope);
+  if (shared) {
+    enterScope(actions.scope);
+    installUnloadGuard();
+  }
   let entry = shared ? entries.get(idOf(key)) : undefined;
   if (!entry) {
     const created: DraftEntry = {

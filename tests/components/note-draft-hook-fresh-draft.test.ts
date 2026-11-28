@@ -44,4 +44,26 @@ describe("useNoteDraft", () => {
     expect(latestDraft(key, null, "p1:s1")).toBeNull();
     await act(async () => root.unmount());
   });
+
+  it("moveOut (Keep as new note) stops sending, deletes THIS key's stored draft and returns the newest text", async () => {
+    const discard = vi.fn(async () => ({ ok: true }));
+    const save = vi.fn(async () => ({ status: "error" as const }));
+    const local = { scope: "p1:s1", save, discard };
+    let api!: ReturnType<typeof useNoteDraft>;
+    const Probe = () => {
+      api = useNoteDraft({ clientId: "c1", kind: "consultation", target: "note-1" }, null, local, true);
+      return null;
+    };
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(createElement(Probe)));
+    await act(async () => api.change({ body: "text to move" }));
+    let moved: unknown;
+    await act(async () => {
+      moved = await api.moveOut();
+    });
+    expect(moved).toEqual({ body: "text to move" });
+    expect(discard).toHaveBeenCalledWith({ clientId: "c1", kind: "consultation", target: "note-1" }, "p1:s1");
+    expect(latestDraft({ clientId: "c1", kind: "consultation", target: "note-1" }, null, "p1:s1")).toBeNull(); // the old key holds nothing
+    await act(async () => root.unmount());
+  });
 });
