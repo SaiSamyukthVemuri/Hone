@@ -22,7 +22,7 @@ describe("portal gating computes the new card-authorization-needed placeholder",
     // The flag name and semantic (true when no signature at all)
     // are preserved.
     expect(PORTAL_SOURCE).toMatch(
-      /const showCardAuthorizationNeeded\s*=\s*\n?\s*cardAuthTemplate != null &&\s*\n?\s*cardAuthSignatureSummary == null &&\s*\n?\s*activeCard == null;/,
+      /const showCardAuthorizationNeeded\s*=\s*\n?\s*cardAuthTemplate != null &&\s*\n?\s*cardAuthSignatureSummary == null &&\s*\n?\s*activeCard === null;/,
     );
   });
 
@@ -42,7 +42,7 @@ describe("portal gating computes the new card-authorization-needed placeholder",
     // authorization is signed; PR #170 makes "signed" mean "at
     // the current version."
     expect(PORTAL_SOURCE).toMatch(
-      /const showAddCardInNeedsYou\s*=\s*\n?\s*cardAuthTemplate != null &&\s*\n?\s*cardAuthSignedCurrent &&\s*\n?\s*activeCard == null &&\s*\n?\s*publishableKeyResolution\.ok;/,
+      /const showAddCardInNeedsYou\s*=\s*\n?\s*cardAuthTemplate != null &&\s*\n?\s*cardAuthSignedCurrent &&\s*\n?\s*activeCard === null &&\s*\n?\s*publishableKeyResolution\.ok;/,
     );
   });
 });

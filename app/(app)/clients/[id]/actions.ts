@@ -47,6 +47,14 @@ async function isClientVisible(
   studioId: string,
   clientId: string,
 ): Promise<boolean> {
+  return (await visibleClientId(studioId, clientId)) !== null;
+}
+
+/** The stored id of the client row this staff member can see in this studio, or null. It is the DATABASE's value, not the one the form sent. */
+async function visibleClientId(
+  studioId: string,
+  clientId: string,
+): Promise<string | null> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("clients")
@@ -61,9 +69,9 @@ async function isClientVisible(
         timestamp: new Date().toISOString(),
       }),
     );
-    return false;
+    return null;
   }
-  return !!data;
+  return data ? String((data as { id: unknown }).id) : null;
 }
 
 function nullableString(value: FormDataEntryValue | null): string | null {
@@ -97,6 +105,13 @@ function dollarsToCents(value: FormDataEntryValue | null): number | null {
 // date of birth makes this client match others (same phone, or same name and
 // date of birth). Nothing was saved; ClientForm lists them and "Save as a new
 // client anyway" resubmits with one confirm_possible_duplicate per client.
+// HON-109: a form that navigates itself (the edit page) sends `saved_inline=1`. A SAVED edit then RETURNS this and the form shows "Saved" at
+// once and soft-navigates to the profile, instead of waiting for the redirected profile render inside the same response. The address is built
+// HERE from the id the database reported (the visible row's stored id, or the id the update changed), not from a value the form echoed. A call without the flag (any other caller) still ends in redirect() AFTER revalidating.
+// The inline path revalidates only the directory (/clients), never the page being left: revalidating the edit/profile page made the response wait for a
+// re-render of it. The directory must be invalidated because Back restores a previously visited list from the router cache.
+export type ClientSavedResult = { ok: true; redirectTo: string };
+
 export type ClientSaveResult = {
   ok: false;
   error: string;
@@ -212,9 +227,10 @@ function isClientDuplicateEmailDbError(
 
 export async function updateClientAction(
   formData: FormData,
-): Promise<ClientSaveResult | void> {
+): Promise<ClientSaveResult | ClientSavedResult | void> {
   // Who is asking comes first: nothing about the submission (validation messages, baseline checks) is
   // answered to a caller who is not an active owner or practitioner of a studio.
+  const savedInline = formData.get("saved_inline") === "1";
   const { practitioner, studio } = await getCurrentPractitionerWithStudio();
   // Staff only, stated here and not left to the membership-wide policies: a refused save echoes the CURRENT stored
   // values, so a member who is neither owner nor practitioner is refused before anything is read (Privacy EO-1).
@@ -235,11 +251,12 @@ export async function updateClientAction(
   const plan = planProfileUpdate(formData, baseline);
   if (!plan.ok) return { ok: false, error: plan.error };
 
-  const visible = await isClientVisible(studio.id, clientId);
-  if (!visible) return { ok: false, error: "Client not found." };
+  const storedClientId = await visibleClientId(studio.id, clientId);
+  if (!storedClientId) return { ok: false, error: "Client not found." };
 
   // Nothing changed: nothing to write, and nothing to claim was saved beyond what is already stored.
   if (Object.keys(plan.patch).length === 0) {
+    if (savedInline) return { ok: true, redirectTo: `/clients/${storedClientId}` };
     revalidatePath(`/clients/${clientId}`);
     redirect(`/clients/${clientId}`);
   }
@@ -366,6 +383,10 @@ export async function updateClientAction(
     return { ok: false, error: CHANGED_BY_SOMEONE_ELSE_ERROR, conflicts };
   }
 
+  // The id the UPDATE reported it changed, not the form's echo of it.
+  // The directory (not the page being left) is invalidated so Back to a previously visited list never restores the old name.
+  if (savedInline) revalidatePath("/clients");
+  if (savedInline) return { ok: true, redirectTo: `/clients/${typeof changedId === "string" ? changedId : storedClientId}` };
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/clients");
   redirect(`/clients/${clientId}`);

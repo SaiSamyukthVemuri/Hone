@@ -8,10 +8,11 @@ import { followMagicLinkWebkit, installWebkitLocalhostFix, isWebKit } from "./we
 // the core-memory-loop spec so the mobile spec reuses the exact same
 // real flows (public booking; REAL magic-link login via Mailpit).
 
-export async function bookAppointment(page: Page, s: E2eSeed): Promise<void> {
+export async function bookAppointment(page: Page, s: E2eSeed, date?: string): Promise<void> {
   await page.goto(`/book/${s.slug}`);
   await expect(page.getByText(s.studioName).first()).toBeVisible();
   await page.getByRole("button", { name: /new client/i }).click();
+  if (date) await page.getByLabel(/^date/i).fill(date);
   // Single seeded consultation service is preselected; pick the first
   // available slot, jumping forward if the default day has none.
   const slotButton = page.getByRole("button", {

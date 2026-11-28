@@ -6,12 +6,12 @@
 // save that had already succeeded flashed "Couldn't save the client" until the next page painted. A redirect is
 // the server's confirmation that the write returned no error; it must be passed back to the router untouched.
 
-export type SaveActionResult = { ok: false; error: string } | void;
+export type SaveActionResult = { ok: false; error: string } | { ok: true; redirectTo: string } | void;
 
 export type SaveOutcome<R> =
   | { kind: "redirect"; redirect: unknown }
   | { kind: "refused"; result: Extract<R, { ok: false }> }
-  | { kind: "saved" }
+  | { kind: "saved"; redirectTo?: string }
   | { kind: "failed" };
 
 /** Next's redirect error carries a digest "NEXT_REDIRECT;<type>;<url>;<status>;". */
@@ -32,6 +32,7 @@ export async function runClientSave<R extends SaveActionResult>(
     if (result && (result as { ok?: boolean }).ok === false) {
       return { kind: "refused", result: result as Extract<R, { ok: false }> };
     }
+    if (result && (result as { ok?: boolean }).ok === true) return { kind: "saved", redirectTo: (result as { redirectTo?: string }).redirectTo };
     return { kind: "saved" };
   } catch (error) {
     if (isRedirectError(error)) return { kind: "redirect", redirect: error };
