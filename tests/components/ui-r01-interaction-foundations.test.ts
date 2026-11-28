@@ -446,3 +446,14 @@ describe("UI-R01 proof surface: the migrated controls", () => {
     expect(nav).not.toContain('from "next/link"');
   });
 });
+
+describe("a nav row on the dark admin bar keeps a visible keyboard focus ring", () => {
+  it("draws a light ring, not the shared one, which is the colour of that bar", async () => {
+    const { NAV_ROW_FEEDBACK_ON_DARK } = await import("@/components/ui/control-base");
+    // --color-focus-ring is neutral-900 and the admin bar is bg-neutral-900: the shared ring would be invisible there.
+    expect(NAV_ROW_FEEDBACK_ON_DARK).not.toContain("ring-focus-ring");
+    expect(NAV_ROW_FEEDBACK_ON_DARK).toContain("focus-visible:ring-2");
+    expect(NAV_ROW_FEEDBACK_ON_DARK).toMatch(/focus-visible:ring-(white|neutral-(50|100|200))\b/);
+    expect(NAV_ROW_FEEDBACK_ON_DARK).toContain("focus-visible:outline-hidden");
+  });
+});
