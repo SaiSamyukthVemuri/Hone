@@ -141,6 +141,8 @@ import {
 import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
 import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
+import { noteDraftsEnabledFor } from "@/lib/note-drafts/enabled";
+import { discardNoteDraftAction, loadNoteDrafts, saveNoteDraftAction } from "./note-draft-actions";
 import { ClinicalNotesSummary } from "@/components/clinical-notes-summary";
 import { updateClientBudgetContextAction } from "./budget-context-actions";
 import { getClientBudgetContext } from "@/lib/budget/queries";
@@ -498,6 +500,8 @@ export default async function ClientCheatSheetPage({
 
   // Migration 0126: dated consultation + skin/hair analysis clinical notes.
   // Loaded only when the Consultation tab is active so other tabs pay no cost.
+  // HON-130: this practitioner's own autosaved drafts (author-only RLS). Started beside the notes read, awaited with it.
+  const noteDraftsPromise = needsConsultationNotes ? loadNoteDrafts(client.id) : Promise.resolve([] as Awaited<ReturnType<typeof loadNoteDrafts>>);
   const clinicalNoteSections =
     needsConsultationNotes
       ? await buildClinicalNoteSections(client.id, { historyLimit: 25 })
@@ -511,6 +515,7 @@ export default async function ClientCheatSheetPage({
       ? await getClientBudgetContext(client.id)
       : null;
 
+  const noteDrafts = await noteDraftsPromise;
   const lifetimeCents = sessions.reduce(
     (sum, s) => sum + (s.price_paid_cents ?? 0),
     0,
@@ -1837,6 +1842,8 @@ export default async function ClientCheatSheetPage({
           sections={clinicalNoteSections}
           addAction={addClinicalNoteAction}
           reviseAction={reviseClinicalNoteAction}
+          drafts={noteDrafts}
+          draftActions={noteDraftsEnabledFor(studio.id) ? { save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
           printHref={`/clients/${client.id}/clinical-notes/print`}
         />
       )}
@@ -1871,6 +1878,8 @@ export default async function ClientCheatSheetPage({
                   : "",
             }}
             action={updateClientBudgetContextAction}
+            draft={noteDrafts.find((d) => d.key.kind === "budget") ?? null}
+            draftActions={noteDraftsEnabledFor(studio.id) ? { save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
           />
         )}
 

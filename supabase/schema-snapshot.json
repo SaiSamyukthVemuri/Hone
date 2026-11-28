@@ -1,9 +1,9 @@
 {
   "generated_by": "npm run schema:snapshot -- --write",
   "migrations": {
-    "count": 291,
-    "last": "0386_export_treatment_setup_readings.sql",
-    "sha256": "47548599105c780e52221d2a78f9cdb0d06eda1d03d5a9af88f3cdcee846f8ff"
+    "count": 292,
+    "last": "0399_client_note_drafts.sql",
+    "sha256": "5bfefd83afdfbbd2a3ec941ded5073cb11071cbcb4e0b7ac5ff9e842b74b8b4e"
   },
   "public": {
     "tables": [
@@ -34,6 +34,7 @@
       "client_intake_forms",
       "client_legal_identities",
       "client_legal_name_access_audit",
+      "client_note_drafts",
       "client_payment_methods",
       "client_personal_notes",
       "client_pinned_notes",
@@ -260,6 +261,12 @@
       "client_legal_identities_guard",
       "client_legal_identities_revision",
       "client_legal_name_access_audit_immutable",
+      "client_note_draft_retention",
+      "client_note_drafts_cap",
+      "client_note_drafts_clear_on_budget",
+      "client_note_drafts_clear_on_note",
+      "client_note_drafts_guard",
+      "client_note_drafts_set_studio_id",
       "client_personal_notes_set_studio_id",
       "clients_erase_waitlist_decline_answers",
       "clients_identity_guard",
@@ -313,6 +320,7 @@
       "delete_recurring_break_rule",
       "delivery_concerns_identity_guard",
       "delivery_concerns_server_defaults",
+      "discard_client_note_draft",
       "dismiss_attention_item",
       "edit_client_pinned_note",
       "edit_session_started_at",
@@ -571,6 +579,7 @@
       "save_cancellation_fee_rules",
       "save_client_card_on_file",
       "save_client_card_on_file_ordered",
+      "save_client_note_draft",
       "save_weekly_availability",
       "service_is_bookable_by_new_client",
       "session_actor_practitioner",
@@ -644,6 +653,7 @@
       "support_delivery_incidents",
       "support_email_receipt_outcomes",
       "suppress_waitlist_prospects",
+      "sweep_client_note_drafts",
       "sync_appointment_to_calendar_reservation",
       "sync_blockout_to_calendar_reservation",
       "sync_machine_profile_contract",

@@ -24,6 +24,9 @@
 // email, or SMS surface. It is authenticated practitioner UI only.
 
 import { useActionState, useState } from "react";
+import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
+import { NoteDraftStatus } from "@/components/note-draft-status";
+import { targetFor, type NoteDraftFields, type NoteDraftKey, type NoteDraftSaveResult, type StoredNoteDraft } from "@/lib/note-drafts/types";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { formatClinicalDate } from "@/lib/clinical-notes/clinical-date";
@@ -63,6 +66,9 @@ type Props = {
   profileHref?: string;
   // Deep link to the print/export view.
   printHref?: string;
+  // HON-130: the caller's own autosaved drafts for this client and the actions that save them. Omit both to disable autosave.
+  drafts?: StoredNoteDraft[];
+  draftActions?: DraftActions;
 };
 
 const AREA_ENABLED_KINDS: ReadonlyArray<ClinicalNoteKind> = ["skin_hair_analysis"];
@@ -119,6 +125,8 @@ export function ClinicalNotesSection({
   reviseAction,
   profileHref,
   printHref,
+  drafts,
+  draftActions,
 }: Props) {
   const compact = variant === "compact";
   return (
@@ -151,11 +159,22 @@ export function ClinicalNotesSection({
           compact={compact}
           addAction={addAction}
           reviseAction={reviseAction}
+          drafts={drafts}
+          draftActions={draftActions}
         />
       ))}
     </div>
   );
 }
+
+export type DraftActions = {
+  save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string }) => Promise<NoteDraftSaveResult>;
+  discard: (key: NoteDraftKey) => Promise<{ ok: boolean }>;
+};
+const NO_DRAFT_ACTIONS: DraftActions = {
+  save: async () => ({ status: "error" }),
+  discard: async () => ({ ok: false }),
+};
 
 type OpenForm =
   | { mode: "add" }
@@ -168,18 +187,31 @@ function KindCard({
   compact,
   addAction,
   reviseAction,
+  drafts,
+  draftActions,
 }: {
   clientId: string;
   section: ClinicalNoteSectionData;
   compact: boolean;
   addAction: ClinicalNoteAction;
   reviseAction: ClinicalNoteAction;
+  drafts?: StoredNoteDraft[];
+  draftActions?: DraftActions;
 }) {
   const [notes, setNotes] = useState<ClinicalNoteWithAuthor[]>(
     withDerivedSupersede(section.notes),
   );
   const [total, setTotal] = useState(section.total);
-  const [openForm, setOpenForm] = useState<OpenForm>(null);
+  // A saved draft re-opens its editor on load (refresh / coming back), so the latest text is there without pressing Save.
+  const initialOpen = (): OpenForm => {
+    const mine = (drafts ?? []).filter((d) => d.key.kind === section.kind);
+    const fresh = mine.find((d) => d.key.target === "new");
+    if (fresh) return { mode: "add" };
+    const rev = mine.find((d) => section.notes.some((n) => n.id === d.key.target));
+    const note = rev ? section.notes.find((n) => n.id === rev.key.target) : undefined;
+    return note ? { mode: "revise", note: note as ClinicalNoteWithAuthor } : null;
+  };
+  const [openForm, setOpenForm] = useState<OpenForm>(initialOpen);
   const [historyOpen, setHistoryOpen] = useState(!compact);
 
   const latest = deriveLatest(notes);
@@ -249,6 +281,8 @@ function KindCard({
           mode={openForm.mode}
           revising={openForm.mode === "revise" ? openForm.note : null}
           action={openForm.mode === "revise" ? reviseAction : addAction}
+          restored={(drafts ?? []).find((d) => d.key.kind === section.kind && d.key.target === targetFor(section.kind, openForm.mode === "revise" ? openForm.note.id : null)) ?? null}
+          draftActions={draftActions}
           onSaved={handleSaved}
           onCancel={() => setOpenForm(null)}
         />
@@ -352,9 +386,13 @@ function NoteForm({
   mode,
   revising,
   action,
+  restored,
+  draftActions,
   onSaved,
   onCancel,
 }: {
+  restored: StoredNoteDraft | null;
+  draftActions?: DraftActions;
   clientId: string;
   kind: ClinicalNoteKind;
   placeholder: string;
@@ -367,12 +405,35 @@ function NoteForm({
 }) {
   const router = useRouter();
   const [areasText, setAreasText] = useState(
-    revising ? revising.areas.join(", ") : "",
+    restored?.fields.areas ? restored.fields.areas.join(", ") : revising ? revising.areas.join(", ") : "",
   );
+  const [body, setBody] = useState(restored?.fields.body ?? (mode === "revise" && revising ? revising.body : ""));
+  const [occurredAt, setOccurredAt] = useState(restored?.fields.occurred_at ?? todayISODate());
+  const draftKey: NoteDraftKey = { clientId, kind, target: targetFor(kind, mode === "revise" && revising ? revising.id : null) };
+  const draft = useNoteDraft(draftKey, restored, draftActions ?? NO_DRAFT_ACTIONS);
+  const [restoredAt, setRestoredAt] = useState<string | null>(restored ? restored.savedAt : null);
+  function applyTheirs(t: NoteDraftFields) {
+    // Keep what the person typed visible until they dismiss it; adopt the other window's text.
+    setYourVersion(body);
+    if (t.body !== undefined) setBody(t.body);
+    if (t.areas) setAreasText(t.areas.join(", "));
+    if (t.occurred_at) setOccurredAt(t.occurred_at);
+  }
+  const [yourVersion, setYourVersion] = useState<string | null>(null);
+  function touch(next: { body?: string; areasText?: string; occurredAt?: string }) {
+    if (!draftActions) return;
+    setRestoredAt(null);
+    draft.change({
+      body: next.body ?? body,
+      areas: parseAreas(next.areasText ?? areasText),
+      occurred_at: next.occurredAt ?? occurredAt,
+    });
+  }
   const [state, formAction] = useActionState(
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
       const result = await action(formData);
       if (result.ok) {
+        draft.settle(); // the save already cleared the draft in its own transaction
         onSaved(result.note, result.author_name);
         return { status: "idle" };
       }
@@ -405,7 +466,11 @@ function NoteForm({
         </label>
         <textarea
           name="body"
-          defaultValue={mode === "revise" && revising ? revising.body : ""}
+          value={body}
+          onChange={(e) => {
+            setBody(e.target.value);
+            touch({ body: e.target.value });
+          }}
           rows={5}
           required
           maxLength={20000}
@@ -423,7 +488,11 @@ function NoteForm({
           <input
             type="date"
             name="occurred_at"
-            defaultValue={todayISODate()}
+            value={occurredAt}
+            onChange={(e) => {
+              setOccurredAt(e.target.value);
+              touch({ occurredAt: e.target.value });
+            }}
             className="min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
           />
         </label>
@@ -435,13 +504,44 @@ function NoteForm({
             <input
               type="text"
               value={areasText}
-              onChange={(e) => setAreasText(e.target.value)}
+              onChange={(e) => {
+                setAreasText(e.target.value);
+                touch({ areasText: e.target.value });
+              }}
               placeholder="e.g. chin, upper lip"
               className="min-h-[44px] rounded-md border border-neutral-300 bg-white px-3 py-2 text-base outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
             />
           </label>
         )}
       </div>
+
+      {yourVersion !== null && (
+        <div className="rounded-md border border-neutral-300 p-2 text-xs" data-testid="note-draft-your-version">
+          <p className="font-medium">Your version (not saved in the draft)</p>
+          <pre className="whitespace-pre-wrap">{yourVersion}</pre>
+          <button type="button" onClick={() => setYourVersion(null)} className="min-h-[44px] underline">Dismiss</button>
+        </div>
+      )}
+      {draftActions && (
+        <NoteDraftStatus
+          state={draft.state}
+          restoredAt={restoredAt}
+          onRetry={draft.retry}
+          onKeepMine={draft.keepMine}
+          onKeepAsNew={draft.keepAsNew}
+          onUseTheirs={() => {
+            const t = draft.useTheirs();
+            if (t) applyTheirs(t);
+          }}
+          onDiscard={async () => {
+            await draft.discard();
+            setRestoredAt(null);
+            setBody(mode === "revise" && revising ? revising.body : "");
+            setAreasText(revising ? revising.areas.join(", ") : "");
+            setOccurredAt(todayISODate());
+          }}
+        />
+      )}
 
       {mode === "revise" && (
         <p className="text-[11px] text-neutral-500">

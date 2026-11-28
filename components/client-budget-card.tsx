@@ -24,6 +24,9 @@
 // app/api/stripe/*.
 
 import { useActionState, useState } from "react";
+import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
+import { NoteDraftStatus } from "@/components/note-draft-status";
+import type { NoteDraftFields, NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "@/lib/note-drafts/types";
 import { useFormStatus } from "react-dom";
 import {
   CLIENT_BUDGET_LEVELS,
@@ -71,7 +74,14 @@ export function ClientBudgetCard({
   clientId,
   initial,
   action,
+  draft: restored = null,
+  draftActions,
 }: {
+  draft?: StoredNoteDraft | null;
+  draftActions?: {
+    save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string }) => Promise<NoteDraftSaveResult>;
+    discard: (key: NoteDraftKey) => Promise<{ ok: boolean }>;
+  };
   clientId: string;
   initial: {
     budgetLevel: ClientBudgetLevel | null;
@@ -82,8 +92,19 @@ export function ClientBudgetCard({
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
 }) {
   const [level, setLevel] = useState<ClientBudgetLevel | null>(
-    initial.budgetLevel,
+    (restored?.fields.budget_level as ClientBudgetLevel | undefined) ?? initial.budgetLevel,
   );
+  // HON-130: budget draft. The saved record is written only by the Save button; the same transaction clears the draft.
+  const [notes, setNotes] = useState(restored?.fields.budget_notes ?? initial.budgetNotes);
+  const draftKey: NoteDraftKey = { clientId, kind: "budget", target: "current" };
+  const draft = useNoteDraft(draftKey, restored, draftActions ?? { save: async () => ({ status: "error" }), discard: async () => ({ ok: false }) });
+  const [restoredAt, setRestoredAt] = useState<string | null>(restored ? restored.savedAt : null);
+  function touch(next: { level?: ClientBudgetLevel | null; notes?: string }) {
+    if (!draftActions) return;
+    setRestoredAt(null);
+    const l = next.level !== undefined ? next.level : level;
+    draft.change({ budget_level: l ?? "", budget_notes: next.notes ?? notes });
+  }
 
   const [state, formAction] = useActionState(
     async (
@@ -92,6 +113,7 @@ export function ClientBudgetCard({
     ): Promise<BudgetCardActionState> => {
       const r = await action(formData);
       if (!r.ok) return { status: "error", message: r.error };
+      draft.settle(); // the save cleared the draft in its own transaction
       return { status: "saved", at: Date.now() };
     },
     INITIAL_STATE,
@@ -135,7 +157,11 @@ export function ClientBudgetCard({
                 key={value}
                 type="button"
                 aria-pressed={selected}
-                onClick={() => setLevel(selected ? null : value)}
+                onClick={() => {
+                  const next = selected ? null : value;
+                  setLevel(next);
+                  touch({ level: next });
+                }}
                 // min-h-11 == 44px: the iPad/phone touch-target floor.
                 className={
                   selected
@@ -152,7 +178,10 @@ export function ClientBudgetCard({
           <div>
             <button
               type="button"
-              onClick={() => setLevel(null)}
+              onClick={() => {
+                setLevel(null);
+                touch({ level: null });
+              }}
               className="text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-900 dark:hover:text-neutral-100"
             >
               Clear budget level
@@ -171,13 +200,40 @@ export function ClientBudgetCard({
         <textarea
           id="client-budget-notes"
           name="budget_notes"
-          defaultValue={initial.budgetNotes}
+          value={notes}
+          onChange={(e) => {
+            setNotes(e.target.value);
+            touch({ notes: e.target.value });
+          }}
           rows={5}
           maxLength={MAX_BUDGET_NOTE_LENGTH}
           placeholder="Anything that shapes how you plan: preferred spend per visit, saving for a specific area, wants to spread sessions out…"
           className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:focus:border-neutral-100"
         />
       </div>
+
+      {draftActions && (
+        <NoteDraftStatus
+          state={draft.state}
+          restoredAt={restoredAt}
+          onRetry={draft.retry}
+          onKeepMine={draft.keepMine}
+          onKeepAsNew={draft.keepAsNew}
+          onUseTheirs={() => {
+            const t = draft.useTheirs();
+            if (t) {
+              if (t.budget_notes !== undefined) setNotes(t.budget_notes);
+              if (t.budget_level !== undefined) setLevel((t.budget_level || null) as ClientBudgetLevel | null);
+            }
+          }}
+          onDiscard={async () => {
+            await draft.discard();
+            setRestoredAt(null);
+            setNotes(initial.budgetNotes);
+            setLevel(initial.budgetLevel);
+          }}
+        />
+      )}
 
       <footer className="flex flex-wrap items-center justify-end gap-3">
         {state.status === "error" && (
