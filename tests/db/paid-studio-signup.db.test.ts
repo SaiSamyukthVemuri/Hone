@@ -310,7 +310,7 @@ describe("sandbox paid signup", () => {
       first + 3600,
     );
     expect(await status()).toMatchObject({
-      status: "past_due", invoice: f.invoice.id, customer: f.sub.customer, subscription: f.sub.id,
+      status: "past_due", invoice: f.invoice.id,
     });
     expect(Date.parse((await status()).deadline)).toBe(
       (first + 7 * 86400) * 1000,
@@ -325,24 +325,11 @@ describe("sandbox paid signup", () => {
     expect(await status()).toMatchObject({ status: "paused", invoice: f.invoice.id });
     await expect(chart()).rejects.toThrow(/subscription_payment_required/);
     await expect(book()).rejects.toThrow(/subscription_payment_required/);
-    await expect(
-      adminQuery(
-        "insert into public.session_blocks(studio_id,session_id) values ($1,$2)",
-        [owner.studio_id, sessionId],
-      ),
-    ).rejects.toThrow(/subscription_payment_required/);
-    await expect(
-      adminQuery(
-        "insert into public.electrolysis_entries(session_id,area) values ($1,'chin')",
-        [sessionId],
-      ),
-    ).rejects.toThrow(/subscription_payment_required/);
-    await expect(
-      adminQuery(
-        "insert into public.laser_entries(session_id,zone) values ($1,'chin')",
-        [sessionId],
-      ),
-    ).rejects.toThrow(/subscription_payment_required/);
+    // Care already under way is never refused: the session existed before the lock, so its block,
+    // electrolysis entry and laser entry are all accepted.
+    await adminQuery("insert into public.session_blocks(studio_id,session_id) values ($1,$2)", [owner.studio_id, sessionId]);
+    await adminQuery("insert into public.electrolysis_entries(session_id,area) values ($1,'chin')", [sessionId]);
+    await adminQuery("insert into public.laser_entries(session_id,zone) values ($1,'chin')", [sessionId]);
     f.invoice.status = "paid";
     f.invoice.amountPaid = 4900;
     f.invoice.collected = 4900;

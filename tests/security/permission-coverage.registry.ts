@@ -475,6 +475,9 @@ export const PATH_DECISIONS: Readonly<Record<string, Readonly<Record<string, str
   "app/api/cron/subscription-emails/route.ts": {
     GET: "not_staff(cron)+admin",
   },
+  "app/api/cron/subscription-retention/route.ts": {
+    GET: "not_staff(cron)+admin",
+  },
   "app/api/cron/waitlist-decline-owner-email/route.ts": {
     GET: "not_staff(cron)+admin",
   },
@@ -694,6 +697,8 @@ export const RPC_NAMES: readonly string[] = [
   "practitioner_cancel_appointment",
   "preview_waitlist_over_invite",
   "public_cancel_appointment_with_token",
+  "purge_abandoned_hone_signups",
+  "read_hone_billing_provider_ids",
   "read_waitlist_followup_status",
   "read_waitlist_followups",
   "reconcile_bound_payment_event",
@@ -910,6 +915,8 @@ export const RPC_PRIVILEGES: Readonly<Record<string, string>> = {
   practitioner_cancel_appointment: "--sD",
   preview_waitlist_over_invite: "--sD",
   public_cancel_appointment_with_token: "--sD,--sD",
+  purge_abandoned_hone_signups: "--sD",
+  read_hone_billing_provider_ids: "--sD",
   read_waitlist_followup_status: "--sD",
   read_waitlist_followups: "--sD",
   reconcile_bound_payment_event: "--sD",

@@ -6,28 +6,30 @@ do $$ begin
     then raise exception 'subscription_change_history_present'; end if;
 end $$;
 drop function public.claim_hone_restart(uuid,uuid,uuid),public.apply_hone_restart_invoice(text,uuid,uuid,text,text,text,text,text,timestamptz,uuid);
-drop function public.my_hone_solo_impact(uuid), public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid),
+drop function public.read_hone_billing_provider_ids(uuid,uuid), public.my_hone_solo_impact(uuid), public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid),
   public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid);
 create or replace function public.check_hone_new_work_allowed() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare
-  target_studio uuid;
+  lock_at timestamptz;
 begin
-  if tg_table_name in ('electrolysis_entries','laser_entries') then
-    select s.studio_id into target_studio from public.sessions s where s.id=new.session_id;
-  else
-    target_studio := new.studio_id;
+  select min(i.failed_at + interval '168 hours') into lock_at
+  from public.hone_signup_attempts a join public.hone_renewal_invoices i on i.attempt_id=a.id
+  where a.studio_id=new.studio_id and not i.paid and i.failed_at is not null;
+  if lock_at is null or now() < lock_at then return new; end if;
+  if tg_table_name = 'sessions' then
+    if new.appointment_id is not null and exists (
+      select 1 from public.appointments ap where ap.id=new.appointment_id and ap.created_at < lock_at) then
+      return new;
+    end if;
   end if;
-  if exists (select 1 from public.hone_signup_attempts a join public.hone_renewal_invoices i on i.attempt_id=a.id
-    where a.studio_id=target_studio and not i.paid and now() >= i.failed_at + interval '168 hours')
-    then raise exception 'subscription_payment_required'; end if;
-  return new;
+  raise exception 'subscription_payment_required';
 end $$;
 
 create or replace function public.my_hone_billing_status(p_studio uuid) returns jsonb
 language sql stable security definer set search_path = '' as $$
-  select jsonb_build_object('plan', a.plan, 'customer', a.customer_id, 'subscription', a.subscription_id,
+  select jsonb_build_object('plan', a.plan,
     'invoice', overdue.invoice_id, 'deadline', overdue.deadline, 'status', case
       when overdue.invoice_id is null then 'active'
       when now() >= overdue.deadline then 'paused'
@@ -45,12 +47,14 @@ $$;
 
 create or replace function public.hone_team_seat_counts(p_studio uuid)
 returns table(plan text, practitioner_used int, practitioner_limit int, receptionist_used int, receptionist_limit int)
-language sql stable security definer set search_path = '' as $$
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  return query
   select a.plan,
     (select count(*) from public.practitioners p where p.studio_id=a.studio_id and p.active)::int + pending.clinical,
     case a.plan when 'solo' then 1 when 'studio' then 3 end,
     (select count(*) from public.studio_receptionists r where r.studio_id=a.studio_id and r.active)::int + pending.desk,
-    case a.plan when 'solo' then 0 when 'studio' then 1 end
+    public.front_desk_seat_limit(a.studio_id)
   from public.hone_signup_attempts a
   cross join lateral (
     select count(*) filter (where i.role is distinct from 'receptionist')::int as clinical,
@@ -58,7 +62,7 @@ language sql stable security definer set search_path = '' as $$
     from public.pending_invitations i where i.studio_id=a.studio_id and i.status='pending'
   ) pending
   where a.state='paid' and a.studio_id=p_studio;
-$$;
+end $$;
 
 create or replace function public.apply_hone_billing_invoice(p_event text, p_attempt uuid, p_user uuid, p_plan text,
   p_customer text, p_subscription text, p_invoice text, p_kind text, p_event_at timestamptz)

@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin-server";
 import { isSelfServeCheckoutEnabled, type PlanKey } from "./plans";
 
 export type OwnerBilling = {
@@ -10,10 +11,12 @@ export type OwnerBilling = {
   pending: PlanKey | "cancel" | null;
   canceled_at: string | null;
   deadline: string | null;
-  customer: string;
-  subscription: string;
   invoice: string | null;
 };
+
+// The provider ids never travel in the signed-in status call. The server reads them for the
+// verified owner only, to open the portal or list invoices.
+export type ProviderIds = { customer: string; subscription: string };
 
 // Request-local so the Settings rail, notice and page share one owner-scoped read.
 export const readOwnerBilling = cache(async (studioId: string) => {
@@ -22,10 +25,19 @@ export const readOwnerBilling = cache(async (studioId: string) => {
   return { billing: data as OwnerBilling | null, error: Boolean(error) };
 });
 
+export async function readOwnerProviderIds(studioId: string): Promise<ProviderIds | null> {
+  const { data: { user } } = await (await createClient()).auth.getUser();
+  if (!user) return null;
+  const { data, error } = await createAdminClient().rpc("read_hone_billing_provider_ids", { p_studio: studioId, p_user: user.id });
+  if (error || !data?.customer || !data?.subscription) return null;
+  return data as ProviderIds;
+}
+
+// Only an EFFECTIVE cancellation pauses the owner's workspace; a pending cancel request never does.
 export async function ownerWorkspacePaused(studioId: string) {
   if (!isSelfServeCheckoutEnabled(process.env)) return false;
   const { billing } = await readOwnerBilling(studioId);
-  return billing?.status === "canceled" || billing?.status === "canceling";
+  return billing?.status === "canceled";
 }
 
 export type SoloImpact = {

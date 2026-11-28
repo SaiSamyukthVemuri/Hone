@@ -5,7 +5,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { SubscriptionControls } from "./subscription-controls";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createBillingStripeClient } from "@/lib/subscriptions/billing-client";
-import { readOwnerBilling, readSoloImpact } from "@/lib/subscriptions/owner-billing";
+import { readOwnerBilling, readOwnerProviderIds, readSoloImpact } from "@/lib/subscriptions/owner-billing";
 import { isSelfServeCheckoutEnabled, PLANS, teamAllowance } from "@/lib/subscriptions/plans";
 import { openOwnerBilling, payOutstandingInvoice, restartSubscription, updateBillingCard } from "./actions";
 import { PaymentConfirmation } from "@/components/billing/payment-confirmation";
@@ -37,6 +37,11 @@ async function stripeOverview(customer: string, subscription: string) {
   }
 }
 
+async function ownerOverview(studioId: string) {
+  const ids = await readOwnerProviderIds(studioId);
+  return ids ? stripeOverview(ids.customer, ids.subscription) : { profile: null, invoices: null, editTax: false };
+}
+
 export default async function SubscriptionPage({ searchParams }: {
   searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
@@ -50,7 +55,7 @@ export default async function SubscriptionPage({ searchParams }: {
     return <section className="space-y-4">{heading}<p role="alert">We couldn’t load your subscription. Refresh this page to try again.</p></section>;
   }
   const [{ profile, invoices, editTax }, soloImpact] = await Promise.all([
-    stripeOverview(billing.customer, billing.subscription), billing.plan === "studio" && billing.status === "active" ? readSoloImpact(studio.id).catch(() => null) : null,
+    ownerOverview(studio.id), billing.plan === "studio" && billing.status === "active" ? readSoloImpact(studio.id).catch(() => null) : null,
   ]);
   const terminal = billing.status === "canceled" || billing.status === "canceling";
   const controls = { studioId: studio.id, studioName: studio.name, current: billing.plan, version: billing.change_id ?? null,

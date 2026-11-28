@@ -15,26 +15,35 @@ create index hone_pending_subscription_changes on public.hone_signup_attempts(re
 create or replace function public.check_hone_new_work_allowed() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare
-  target_studio uuid;
+  lock_at timestamptz;
 begin
-  if tg_table_name in ('electrolysis_entries','laser_entries') then
-    select s.studio_id into target_studio from public.sessions s where s.id=new.session_id;
-  else
-    target_studio := new.studio_id;
+  -- The lock starts at an EFFECTIVE cancellation (canceled_at) or at the seven-day unpaid
+  -- deadline. A pending or retrying cancel request never locks anything.
+  select min(x) into lock_at from (
+    select a.canceled_at as x from public.hone_signup_attempts a
+      where a.studio_id=new.studio_id and a.canceled_at is not null
+    union all
+    select i.failed_at + interval '168 hours' from public.hone_signup_attempts a
+      join public.hone_renewal_invoices i on i.attempt_id=a.id
+      where a.studio_id=new.studio_id and i.former_subscription is null and not i.paid and i.failed_at is not null
+  ) q;
+  if lock_at is null or now() < lock_at then return new; end if;
+  -- A session for an appointment that existed before the lock is allowed. Entries, laser rows
+  -- and blocks have no trigger at all: they belong to a session that already passed this gate.
+  if tg_table_name = 'sessions' then
+    if new.appointment_id is not null and exists (
+      select 1 from public.appointments ap where ap.id=new.appointment_id and ap.created_at < lock_at) then
+      return new;
+    end if;
   end if;
-  if exists (select 1 from public.hone_signup_attempts where studio_id=target_studio
-      and (canceled_at is not null or change_target='cancel')) then
-    raise exception 'subscription_canceled';
-  end if;
-  if exists (select 1 from public.hone_signup_attempts a join public.hone_renewal_invoices i on i.attempt_id=a.id
-    where a.studio_id=target_studio and i.former_subscription is null and not i.paid and now() >= i.failed_at + interval '168 hours')
-    then raise exception 'subscription_payment_required'; end if;
-  return new;
+  raise exception using message = case when exists (select 1 from public.hone_signup_attempts
+    where studio_id=new.studio_id and canceled_at is not null) then 'subscription_canceled'
+    else 'subscription_payment_required' end;
 end $$;
 
 create or replace function public.my_hone_billing_status(p_studio uuid) returns jsonb
 language sql stable security definer set search_path = '' as $$
-  select jsonb_build_object('plan', a.plan, 'customer', a.customer_id, 'subscription', a.subscription_id,
+  select jsonb_build_object('plan', a.plan,
     'change_id',a.change_id,'pending',a.change_target,'canceled_at',a.canceled_at,
     'invoice', overdue.invoice_id, 'deadline', overdue.deadline, 'status', case
       when a.canceled_at is not null then 'canceled'
@@ -267,7 +276,7 @@ $$;
 create function public.my_hone_studio_canceled(p_studio uuid) returns boolean
 language sql stable security definer set search_path='' as $$
   select exists(select from public.hone_signup_attempts a where a.studio_id=p_studio
-    and (a.canceled_at is not null or a.change_target='cancel')
+    and a.canceled_at is not null
     and (exists(select from public.practitioners p where p.studio_id=p_studio and p.user_id=auth.uid() and p.active)
       or exists(select from public.studio_receptionists r where r.studio_id=p_studio and r.user_id=auth.uid() and r.active)));
 $$;
@@ -278,6 +287,19 @@ revoke all on function public.my_hone_solo_impact(uuid),public.request_hone_subs
 grant execute on function public.my_hone_solo_impact(uuid),public.request_hone_subscription_change(uuid,text,uuid,text),public.my_hone_studio_canceled(uuid) to authenticated;
 grant execute on function public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid) to service_role;
+
+-- The raw Stripe customer and subscription ids are not part of any result the signed-in role can
+-- call. The server reads them here, after it has verified the signed-in user, to open the portal
+-- or list invoices; the owner check is in the same statement as the read.
+create function public.read_hone_billing_provider_ids(p_studio uuid,p_user uuid) returns jsonb
+language sql stable security definer set search_path='' as $$
+  select jsonb_build_object('customer',a.customer_id,'subscription',a.subscription_id)
+  from public.hone_signup_attempts a
+  where a.studio_id=p_studio and a.state='paid' and p_user is not null
+    and exists(select from public.practitioners p where p.studio_id=a.studio_id and p.user_id=p_user and p.role='owner' and p.active);
+$$;
+revoke all on function public.read_hone_billing_provider_ids(uuid,uuid) from public,anon,authenticated,service_role;
+grant execute on function public.read_hone_billing_provider_ids(uuid,uuid) to service_role;
 
 -- The existing studio, customer and team survive cancellation. Serialize retries
 -- of a replacement Checkout Session on the original purchase.

@@ -9,11 +9,16 @@ import type { Studio } from "@/lib/types/database";
 
 const h = vi.hoisted(() => ({
   rpc: vi.fn(), impact: vi.fn(), actor: vi.fn(), portal: vi.fn(), invoice: vi.fn(),
-  profile: vi.fn(), invoices: vi.fn(), taxEdit: vi.fn(),
+  profile: vi.fn(), invoices: vi.fn(), taxEdit: vi.fn(), ids: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/queries", () => ({ requirePractitionerWithStudio: h.actor }));
-vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc: (fn: string, args: unknown) => fn === "my_hone_solo_impact" ? h.impact(args) : h.rpc(fn,args) }) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({
+  auth: { getUser: async () => ({ data: { user: { id: "owner-1" } } }) },
+  rpc: (fn: string, args: unknown) => fn === "my_hone_solo_impact" ? h.impact(args) : h.rpc(fn,args),
+}) }));
+// The raw Stripe ids come only from the server-side command, never from the signed-in status call.
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => ({ rpc: (fn: string, args: unknown) => h.ids(fn, args) }) }));
 vi.mock("@/lib/subscriptions/billing-client", () => ({
   createBillingStripeClient: () => ({ ownerPortal: h.portal, readNoticeInvoice: h.invoice, billingProfile: h.profile, billingInvoices: h.invoices, canEditTaxId: h.taxEdit }),
 }));
@@ -40,7 +45,8 @@ beforeEach(() => {
   vi.stubEnv("HONE_BILLING_PORTAL_CONFIGURATION", "bpc_test");
   vi.stubEnv("NEXT_PUBLIC_APP_ORIGIN", "https://hone.example.test");
   h.actor.mockResolvedValue({ studio, practitioner: { role: "owner" } });
-  h.rpc.mockResolvedValue({ data: billing });
+  h.rpc.mockResolvedValue({ data: { plan: billing.plan, invoice: billing.invoice, status: billing.status, deadline: billing.deadline } });
+  h.ids.mockResolvedValue({ data: { customer: billing.customer, subscription: billing.subscription } });
   h.impact.mockResolvedValue({data:{owner:"Example owner",can_confirm:true,members:[{name:"Test staff",role:"practitioner"}],invitations:["pending@example.test"]}});
   h.portal.mockResolvedValue("https://billing.stripe.com/p/session/test");
   h.invoice.mockResolvedValue(invoice);

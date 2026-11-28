@@ -3,7 +3,7 @@
   "migrations": {
     "count": 294,
     "last": "0389_subscription_self_service.sql",
-    "sha256": "146e43304c17f37dfca8cbbd7ffb4d45f43a8e88ad436d3191ff5ff4e4f40569"
+    "sha256": "48a6e5cf01d7d195c772330d2f87c399f7cae59f2870138225cb1e143b97330a"
   },
   "public": {
     "tables": [
@@ -388,6 +388,8 @@
       "guard_snapshot_append_only",
       "guard_treatment_reading_history_immutable",
       "handle_new_user",
+      "hone_sync_included_desk",
+      "hone_sync_included_desk_trg",
       "hone_team_seat_counts",
       "import_legacy_waitlist_entry",
       "imported_treatment_memory_audit_row",
@@ -474,6 +476,8 @@
       "public_booking_tz_offset_minutes",
       "public_cancel_appointment_with_token",
       "public_reschedule_slot_candidates",
+      "purge_abandoned_hone_signups",
+      "read_hone_billing_provider_ids",
       "read_waitlist_admission_round_consumed",
       "read_waitlist_followup_status",
       "read_waitlist_followups",

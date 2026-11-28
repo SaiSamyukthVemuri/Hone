@@ -4,8 +4,6 @@ drop trigger hone_plan_seats_update on public.hone_signup_attempts;
 drop trigger hone_plan_seats_insert on public.hone_signup_attempts;
 drop trigger hone_invitation_seat_update on public.pending_invitations;
 drop trigger hone_invitation_seat_insert on public.pending_invitations;
-drop trigger hone_receptionist_seat_update on public.studio_receptionists;
-drop trigger hone_receptionist_seat_insert on public.studio_receptionists;
 drop trigger hone_practitioner_seat_update on public.practitioners;
 drop trigger hone_practitioner_seat_insert on public.practitioners;
 drop function public.enforce_hone_team_seats();

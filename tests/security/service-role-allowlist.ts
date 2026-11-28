@@ -26,6 +26,18 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "isAuthorizedCronRequest",
   },
   {
+    path: "app/api/cron/subscription-retention/route.ts",
+    purpose: "Delete signup attempts that never became a paid studio, 30 days after their last activity.",
+    why: "Only the authenticated scheduler runs it. The database command keeps paid studios, Stripe-linked rows and any invoice or notice, and touches no sign-in account.",
+    scopeGuard: "isAuthorizedCronRequest",
+  },
+  {
+    path: "lib/subscriptions/owner-billing.ts",
+    purpose: "Read the owner's Stripe customer and subscription ids for the server-side portal and invoice calls.",
+    why: "The signed-in status call no longer returns provider ids. The command returns them only for a user id the server has just verified, and only for that studio's active owner.",
+    scopeGuard: "read_hone_billing_provider_ids",
+  },
+  {
     path: "lib/subscriptions/subscription-change.ts",
     purpose: "Finish an owner’s persisted tier change or cancellation.",
     why: "Only the service worker can claim a pending decision. It uses the customer, studio purchase and subscription from that decision and checks the Stripe result before applying it.",

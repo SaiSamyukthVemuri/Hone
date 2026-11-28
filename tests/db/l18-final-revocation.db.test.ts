@@ -232,7 +232,7 @@ describe("0169 — the command surface is untouched", () => {
     );
     const byTable = Object.fromEntries(r.rows.map((x) => [x.t, x.n]));
     // 0214 adds the jurisdiction lock; preserve every prior clinical guard.
-    // 0387 adds subscription_allows_new_chart (refuses a NEW chart while the studio's Hone subscription is canceled or seven days unpaid; insert only).
+    // 0387 adds subscription_allows_new_chart (refuses only a NEW session with no earlier appointment once a Hone cancellation is effective or seven days unpaid; entries, laser rows and blocks have no trigger; insert only).
     expect(byTable.sessions).toBe(6);
     const sessionTriggers = await adminQuery(
       "select tgname from pg_trigger where tgrelid='public.sessions'::regclass and not tgisinternal order by tgname",

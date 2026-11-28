@@ -9,7 +9,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { requirePractitionerWithStudio } from "@/lib/supabase/queries";
 import { createBillingStripeClient } from "@/lib/subscriptions/billing-client";
 import { hostedInvoiceUrl } from "@/lib/subscriptions/hosted-invoice-url";
-import { readOwnerBilling } from "@/lib/subscriptions/owner-billing";
+import { readOwnerBilling, readOwnerProviderIds } from "@/lib/subscriptions/owner-billing";
 import { isSelfServeCheckoutEnabled, parsePlanKey } from "@/lib/subscriptions/plans";
 
 const billingPath = "/settings/subscription";
@@ -19,8 +19,9 @@ async function requireOwnerBilling(expectedStudio: string) {
   const { studio, practitioner } = await requirePractitionerWithStudio();
   if (practitioner.role !== "owner" || studio.id !== expectedStudio) redirect("/settings");
   const { billing, error } = await readOwnerBilling(studio.id);
-  if (error || !billing?.customer || !billing.subscription) redirect(billingPath + "?error=billing");
-  return billing;
+  const ids = billing ? await readOwnerProviderIds(studio.id) : null;
+  if (error || !billing || !ids) redirect(billingPath + "?error=billing");
+  return { ...billing, ...ids };
 }
 
 async function openPortal(billing: Awaited<ReturnType<typeof requireOwnerBilling>>, updateCard = false) {

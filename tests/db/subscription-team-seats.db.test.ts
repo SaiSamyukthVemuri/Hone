@@ -1,10 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, adminTx, closePool, userQuery } from "./helpers/harness";
 import { PLANS, type PlanKey } from "@/lib/subscriptions/plans";
 import type { InvitationRole } from "@/lib/types/database";
 
-afterAll(closePool);
+// 0390 owns receptionist seats: a studio's receptionists are allowed only while the Front Desk switch is on
+// for it and a seat grant covers them. The plan writes its own grant (Studio: 1, Solo: none); the platform
+// mode is switched to 'pilot' here only so those per-studio switches take effect, and restored afterwards.
+beforeAll(async () => {
+  await adminQuery("update public.platform_rollouts set mode='pilot' where key='front_desk'");
+});
+afterAll(async () => {
+  await adminQuery("update public.platform_rollouts set mode='off' where key='front_desk'");
+  await closePool();
+});
 
 const email = () => randomUUID() + "@example.test";
 
@@ -110,14 +119,14 @@ describe("subscription team limits through the owner invite and acceptance paths
       ).rejects.toMatchObject({ code: "HN001" });
     }
     await expect(invite(t, "receptionist")).rejects.toMatchObject({
-      code: "HN002",
+      message: "front_desk_not_enabled",
     });
     await expect(
       adminQuery(
         "insert into public.studio_receptionists(studio_id,display_name) values ($1,'Front desk')",
         [t.studio],
       ),
-    ).rejects.toMatchObject({ code: "HN002" });
+    ).rejects.toMatchObject({ message: "front_desk_not_enabled" });
     expect((await usage(t)).practitioner_used).toBe(1);
   });
 
@@ -132,7 +141,7 @@ describe("subscription team limits through the owner invite and acceptance paths
       code: "HN001",
     });
     await expect(invite(t, "receptionist")).rejects.toMatchObject({
-      code: "HN002",
+      message: "front_desk_seat_limit_reached",
     });
     const ids = await Promise.all(people.map(authUser));
     for (const id of ids) await accept(id);
@@ -171,7 +180,7 @@ describe("subscription team limits through the owner invite and acceptance paths
       const won = results.filter((r) => r.status === "fulfilled");
       expect(won).toHaveLength(1);
       expect(results.find((r) => r.status === "rejected")).toMatchObject({
-        reason: { code: role === "practitioner" ? "HN001" : "HN002" },
+        reason: role === "practitioner" ? { code: "HN001" } : { message: "front_desk_seat_limit_reached" },
       });
       await cancel(t, won[0].value);
       await invite(t, role);
@@ -200,9 +209,6 @@ describe("subscription team limits through the owner invite and acceptance paths
       });
     const results = await Promise.allSettled([contender(), contender()]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(results.find((r) => r.status === "rejected")).toMatchObject({
-      reason: { code: "40001" },
-    });
     expect(await usage(t)).toMatchObject({ receptionist_used: 1 });
   });
 
@@ -223,7 +229,7 @@ describe("subscription team limits through the owner invite and acceptance paths
       );
     expect((await setActive(false)).rows[0].result).toBe("updated");
     const replacement = await invite(t, "receptionist");
-    await expect(setActive(true)).rejects.toMatchObject({ code: "HN002" });
+    expect((await setActive(true)).rows[0].result).toBe("seat_limit");
     await cancel(t, replacement);
     expect((await setActive(true)).rows[0].result).toBe("updated");
   });
@@ -251,7 +257,7 @@ describe("subscription team limits through the owner invite and acceptance paths
         "update public.pending_invitations set role='receptionist' where email=$1",
         [replacement],
       ),
-    ).rejects.toMatchObject({ code: "HN002" });
+    ).rejects.toMatchObject({ message: "front_desk_seat_limit_reached" });
     await cancel(t, replacement);
     await adminQuery(
       "update public.practitioners set active=true where user_id=$1",
@@ -274,17 +280,15 @@ describe("subscription team limits through the owner invite and acceptance paths
       );
     await expect(setPlan("solo")).rejects.toMatchObject({ code: "HN001" });
     await cancel(t, clinical);
-    await expect(setPlan("solo")).rejects.toMatchObject({ code: "HN002" });
-    expect(await usage(t)).toMatchObject({
-      plan: "studio",
-      receptionist_used: 1,
-    });
     await cancel(t, desk);
+    // The plan decides the receptionist right even for a direct write: Solo withdraws the grant.
     await setPlan("solo");
+    expect(await usage(t)).toMatchObject({ plan: "solo", receptionist_limit: 0 });
     await expect(invite(t, "receptionist")).rejects.toMatchObject({
-      code: "HN002",
+      message: "front_desk_not_enabled",
     });
     await setPlan("studio");
+    expect(await usage(t)).toMatchObject({ plan: "studio", receptionist_limit: 1 });
     await invite(t, "receptionist");
   });
 
@@ -297,10 +301,6 @@ describe("subscription team limits through the owner invite and acceptance paths
         [email(), randomUUID()],
       )
     ).rows[0].id;
-    await adminQuery(
-      "insert into public.studio_receptionists(studio_id,display_name) values ($1,'One'),($1,'Two')",
-      [pilot],
-    );
     expect(
       (
         await adminQuery("select * from public.hone_team_seat_counts($1)", [
@@ -346,32 +346,72 @@ it("switches tiers once and reserves the lower limits while Stripe confirms a do
   expect((await adminQuery("select status from public.pending_invitations where email=$1",[recipient])).rows[0].status).toBe("revoked");
 });
 
-it("immediately pauses the canceled studio, keeps its billing and history, and stays paused after late payment", async () => {
+it("locks only new bookings and new unscheduled sessions once cancellation takes effect, never on a pending cancel", async () => {
   const t = await signup("studio");
   const staff = await authUser(await invite(t, "practitioner"));
   await accept(staff);
   const desk = await authUser(await invite(t, "receptionist"));
   await accept(desk);
   const client = (await adminQuery("insert into public.clients(studio_id,name) values($1,'Example') returning id", [t.studio])).rows[0].id;
-  const chart = () => adminQuery("insert into public.sessions(studio_id,client_id,practitioner_id,modality) values($1,$2,$3,'electrolysis') returning id", [t.studio,client,t.practitioner]);
+  const chart = (appointment: string | null = null) => adminQuery("insert into public.sessions(studio_id,client_id,practitioner_id,modality,appointment_id) values($1,$2,$3,'electrolysis',$4) returning id", [t.studio,client,t.practitioner,appointment]);
+  let hour = 24;
+  const book = () => adminQuery("insert into public.appointments(studio_id,client_id,practitioner_id,starts_at,ends_at,duration_minutes) values ($1,$2,$3,now()+make_interval(hours=>$4),now()+make_interval(hours=>$4,mins=>15),15) returning id", [t.studio,client,t.practitioner,hour += 2]);
+  const entry = (session: string) => adminQuery("insert into public.electrolysis_entries(session_id,area) values ($1,'chin')", [session]);
+  const existingBooking = (await book()).rows[0].id;
   const existingChart = (await chart()).rows[0].id;
+  const canceled = async (actor: string) => (await userQuery(actor, "select public.my_hone_studio_canceled($1) as paused", [t.studio])).rows[0].paused;
+
+  // A PENDING cancellation is visible to the owner only and locks nothing.
   const change = await requestChange(t, "cancel");
   expect((await billingState(t)).status).toBe("canceling");
-  for (const actor of [t.owner, staff, desk]) {
-    expect((await userQuery(actor, "select public.my_hone_studio_canceled($1) as paused", [t.studio])).rows[0].paused).toBe(true);
-  }
+  for (const actor of [t.owner, staff, desk]) expect(await canceled(actor)).toBe(false);
   expect(await requestChange(t,"cancel",null,staff)).toBeNull();
-  await expect(chart()).rejects.toThrow("subscription_canceled");
+  await book(); await chart(); await entry(existingChart);
+
   const claim = (await adminQuery("select public.claim_hone_subscription_change($1) as job", [change.id])).rows[0].job;
   expect(claim.target).toBe("cancel");
+  // Cancellation takes effect.
   await adminQuery("select public.record_hone_subscription_canceled($1,$2,$3,$4)", [claim.subscription,claim.customer,claim.attempt,t.owner]);
   await adminQuery("select public.apply_hone_billing_invoice($1,$2,$3,'studio',$4,$5,$6,'renewal_paid',now())",
     [randomUUID(),claim.attempt,t.owner,claim.customer,claim.subscription,randomUUID()]);
   expect((await billingState(t)).status).toBe("canceled");
   expect((await requestChange(t,"studio",change.id)).result).toBe("canceled");
+  // Staff see the operational status only once it is effective: the studio's receptionist and
+  // practitioner get true; a deactivated member, another studio's member and a no-studio user get false.
+  for (const actor of [t.owner, staff, desk]) expect(await canceled(actor)).toBe(true);
+  await adminQuery("update public.studio_receptionists set active=false,deactivated_at=now() where studio_id=$1 and user_id=$2", [t.studio, desk]);
+  expect(await canceled(desk)).toBe(false);
+  expect(await canceled((await signup("studio")).owner)).toBe(false);
+  expect(await canceled(await authUser())).toBe(false);
+  // Only a new booking and a new session with no earlier appointment are refused.
+  await expect(book()).rejects.toThrow("subscription_canceled");
   await expect(chart()).rejects.toThrow("subscription_canceled");
+  // Care already begun can always be documented: an existing session takes a new entry, a session for an
+  // appointment that existed before the lock is allowed, and everything stays readable.
+  await entry(existingChart);
+  await chart(existingBooking);
   expect((await adminQuery("select id from public.sessions where id=$1", [existingChart])).rowCount).toBe(1);
   expect((await billingState(await signup("studio"))).status).toBe("active");
+});
+
+it("applies the same narrow lock at the seven-day non-payment deadline and lifts it on payment", async () => {
+  const t = await signup("studio");
+  const client = (await adminQuery("insert into public.clients(studio_id,name) values($1,'Example') returning id", [t.studio])).rows[0].id;
+  let hour = 24;
+  const book = () => adminQuery("insert into public.appointments(studio_id,client_id,practitioner_id,starts_at,ends_at,duration_minutes) values ($1,$2,$3,now()+make_interval(hours=>$4),now()+make_interval(hours=>$4,mins=>15),15) returning id", [t.studio,client,t.practitioner,hour += 2]);
+  const chart = (appointment: string | null = null) => adminQuery("insert into public.sessions(studio_id,client_id,practitioner_id,modality,appointment_id) values($1,$2,$3,'electrolysis',$4) returning id", [t.studio,client,t.practitioner,appointment]);
+  const existing = (await book()).rows[0].id;
+  await adminQuery("update public.appointments set created_at=now()-interval '10 days' where id=$1", [existing]);
+  const attempt = (await adminQuery("select id from public.hone_signup_attempts where studio_id=$1", [t.studio])).rows[0].id;
+  const invoice = "in_late_" + randomUUID();
+  await adminQuery("insert into public.hone_renewal_invoices(invoice_id,attempt_id,failed_at) values ($2,$1,now()-interval '6 days')", [attempt, invoice]);
+  await book(); await chart();
+  await adminQuery("update public.hone_renewal_invoices set failed_at=now()-interval '8 days' where invoice_id=$1", [invoice]);
+  await expect(book()).rejects.toThrow("subscription_payment_required");
+  await expect(chart()).rejects.toThrow("subscription_payment_required");
+  await chart(existing);
+  await adminQuery("update public.hone_renewal_invoices set paid=true,settled_at=now() where invoice_id=$1", [invoice]);
+  await book(); await chart();
 });
 
 it("automatically retains the subscribing owner, deactivates staff only here, and keeps appointments and charts attributed", async () => {
