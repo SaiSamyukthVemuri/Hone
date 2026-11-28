@@ -12,7 +12,8 @@ vi.mock("next/link", async () => {
   return { default: (props: { href: string; children?: ReactNode }) => react.createElement("a", { href: props.href }, props.children) };
 });
 vi.mock("@/app/(app)/clients/[id]/portal-link-actions", () => ({ sendPortalLinkAction: async () => ({ ok: false, error: "x" }) }));
-vi.mock("@/lib/portal/session", () => ({ getCurrentPortalSession: async () => null }));
+const activeSession = vi.hoisted(() => ({ value: null as { studioId: string } | null }));
+vi.mock("@/lib/portal/session", () => ({ getCurrentPortalSession: async () => activeSession.value }));
 const studioRow = vi.hoisted(() => ({ value: null as Record<string, unknown> | null }));
 vi.mock("@/lib/booking/queries", () => ({ getStudioBySlug: async () => studioRow.value }));
 vi.mock("@/app/_components/MarketingFooter", () => ({ MarketingFooter: () => null }));
@@ -82,6 +83,14 @@ describe("/portal/login page", () => {
     const el = await mod.default({ searchParams: Promise.resolve({ studio: slug }) });
     return html(el);
   }
+  it("an existing session at another studio cannot redirect a studio-scoped login", async () => {
+    activeSession.value = { studioId: "another-studio" };
+    try {
+      expect(await render({ id: "s1", name: "Requested Studio" })).toContain("Sign in to your Requested Studio portal");
+    } finally {
+      activeSession.value = null;
+    }
+  });
   it("DEFAULT (flag absent): the sign-in form copy and the expiry note", async () => {
     const out = await render({ id: "s1", name: "Synthetic Studio" });
     expect(out).toContain("Sign in to your Synthetic Studio portal");

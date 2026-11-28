@@ -191,3 +191,7 @@ Environment variables: see [`.env.local.example`](./.env.local.example) for the 
 Every PR that changes product behavior, data model, security posture, payment behavior, env config, routes, cron, email/SMS, legal copy, or operational behavior **must update the relevant docs in the same PR**. The `.github/pull_request_template.md` checklist enforces this at review time. See [docs/15_DOCS_MAINTENANCE.md](./docs/15_DOCS_MAINTENANCE.md) for the map of "which doc to update for which change."
 
 A PR is not complete if it changes behavior but leaves docs stale.
+
+### Client portal pilot
+
+`HONE_PORTAL_REDESIGN_STUDIO_IDS` enrolls specific studios in the owner-published portal layout. It defaults to empty. See the [verification and rollback steps](docs/11_RUNBOOK.md#client-portal-pilot-and-rollback).

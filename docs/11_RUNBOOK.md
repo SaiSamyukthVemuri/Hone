@@ -52,9 +52,16 @@ Manual (cannot be done from the harness).
 6. Sign out (or wait for cookie expiry) and confirm `/portal/messages` redirects to `/login` (the global app login surface) when anonymous.
 
 If a client reports a magic link that "stopped working":
-- Confirm the link was clicked within 60 minutes of the email being sent. If the email arrived more than 60 minutes ago, the link is expired by design; the remediation is "request a new link from `/portal/login`."
-- If the email arrived within 60 minutes but the link still shows "this secure link can't be used right now," check (a) whether the token was already consumed by a prior click (the row's `consumed_at` is non-null) and (b) whether the client's row is still `status='active'` (archived clients see the same generic surface). Both are visible in `client_portal_magic_links` (look up by SHA-256 hash of the token from the URL) and `clients`.
+- Open the original email. An active session for the same studio and client goes directly to the portal. Otherwise a valid proof offers Continue. For an old link, select **Email me a new link** and check the registered mailbox. Reopening the URL alone sends no mail.
+- If mail does not arrive, check the studio portal policy, whether the client is active, the transactional email provider and rate-limit events. Keep the raw token and mailbox out of support logs.
 - A NEW magic link request invalidates nothing: prior unconsumed rows remain valid until their `expires_at`. Issuing a fresh link is always safe.
+
+## Client portal pilot and rollback
+
+1. Verify the deployment’s server-side database connection resolves to an isolated project or the loopback test stack. Use synthetic studio owners and clients, a captured mail inbox, and test payment data. Run the [portal smoke](./12_SMOKE_TESTS.md#2-portal-smoke) against the proposed release.
+2. Apply the reviewed presentation-settings migration through the normal migration release process. Leave `HONE_PORTAL_REDESIGN_STUDIO_IDS` empty for deployment with the classic layout. Old sessions and emailed links keep their existing URLs.
+3. For the approved Willow pilot, configure only Willow’s verified studio UUID in that server variable and deploy the configuration. An owner can open Settings → Client portal, save a draft, inspect the client preview and publish. Confirm the new overview with the same signed-in client, then confirm a second, unenrolled studio still shows the classic layout.
+4. To roll back Willow at once, use the owner setting to return to the classic portal and reload `/portal` in the same session. The saved draft, signatures, bookings, messages and card references persist. Removing the UUID from deployment configuration and redeploying also disables the redesigned layout. If the appointment query fails in either layout, verify Retry recovers before interpreting an empty calendar.
 
 ## Live payments ARE enabled for approved studios — and real money is moving
 
