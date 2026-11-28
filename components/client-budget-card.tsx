@@ -23,7 +23,7 @@
 // app/intake/*, app/cancel/*, app/reschedule/*, app/api/cron/* or
 // app/api/stripe/*.
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { latestDraft, type DraftActions } from "@/lib/note-drafts/draft-registry";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
 import { NoteDraftStatus } from "@/components/note-draft-status";
@@ -115,6 +115,9 @@ export function ClientBudgetCard({
     setLevel(next);
     touch({ level: next });
   }
+  // The card's CURRENT values, kept fresh every render, for the moment a failed Discard resumes (its closure is older than the typing).
+  const currentFields = useRef<NoteDraftFields>({ budget_level: level ?? "", budget_notes: budgetText });
+  currentFields.current = { budget_level: level ?? "", budget_notes: budgetText };
   function touch(next: { level?: ClientBudgetLevel | null; notes?: string }) {
     // While the real Save is pending the card is locked (below). An edit that still arrives (a script, an assistive tool) is not taken: it would
     // reach the draft but not the submitted FormData, and the settle that follows a successful Save would then delete it unseen.
@@ -247,6 +250,7 @@ export function ClientBudgetCard({
           onKeepMine={draft.keepMine}
           onKeepAsNew={draft.keepAsNew}
           discardFailed={draft.discardFailed}
+          discarding={draft.discarding}
           onUseTheirs={() => {
             const t = draft.useTheirs();
             if (t) {
@@ -258,7 +262,13 @@ export function ClientBudgetCard({
             }
           }}
           onDiscard={async () => {
-            if (!(await draft.discard())) return; // failed: the card stays exactly as it was and the status says so
+            if (!(await draft.discard())) {
+              // Failed: the card stays exactly as it was and the status says so. Text that reached the form in the one frame before the lock
+              // rendered never reached the saver (edits are ignored while a Discard is out): hand the CURRENT values over so they are sent.
+              const cur = currentFields.current;
+              if (JSON.stringify(cur) !== JSON.stringify(draft.latest())) draft.change(cur);
+              return;
+            }
             setRestoredAt(null);
             resetBudgetText(initial.budgetNotes);
             setLevel(initial.budgetLevel); // a reset is not a typed change: nothing reports it, so it cannot start an autosave

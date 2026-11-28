@@ -25,6 +25,7 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
   /** True while a Discard is out: the editor is read-only and edits are ignored, so text typed now can neither be queued nor wiped by the settle. */
   const [discarding, setDiscarding] = useState(false);
   const discardingRef = useRef(false);
+  const discardRun = useRef<Promise<boolean> | null>(null);
   const [entry] = useState<DraftEntry | null>(() => (enabled ? acquireEntry(key, restored, actions, () => undefined) : null));
   if (entry) entry.actions = actions;
   const saver = entry?.saver ?? null;
@@ -142,7 +143,10 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
      * End the stored draft. Stops sending first and waits for any request in flight, so a late save cannot recreate the draft. TRUE only when
      * the server confirmed; on failure the queued text is kept and sending resumes, and `discardFailed` says so.
      */
-    discard: async (): Promise<boolean> => {
+    discard: (): Promise<boolean> => {
+      // Re-entry: a second Discard while one is out gets THAT one's answer (same promise); it never starts a second request or an early unlock.
+      if (discardRun.current) return discardRun.current;
+      const run = (async (): Promise<boolean> => {
       discardingRef.current = true;
       setDiscarding(true);
       try {
@@ -165,6 +169,12 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
         discardingRef.current = false;
         setDiscarding(false);
       }
+      })();
+      discardRun.current = run;
+      void run.finally(() => {
+        if (discardRun.current === run) discardRun.current = null;
+      });
+      return run;
     },
   };
 }

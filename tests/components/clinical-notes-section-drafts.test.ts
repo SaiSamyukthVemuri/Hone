@@ -71,12 +71,38 @@ describe("r4 (Codex P2): the note editor is locked while a Discard is pending", 
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "TYPED DURING DISCARD");
       ta.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(save.mock.calls.some((c) => JSON.stringify(c[0]).includes("TYPED DURING DISCARD"))).toBe(false); // nothing is queued or sent while the Discard is out
     await act(async () => { answer({ ok: false }); }); // the discard FAILED
     expect((host.querySelector("textarea") as HTMLTextAreaElement).readOnly).toBe(false); // unlocked again
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    const sent = save.mock.calls.map((c) => JSON.stringify(c[0]));
-    expect(sent.some((x) => x.includes("TYPED DURING DISCARD"))).toBe(false); // the refused edit was never queued or sent
+    // the failed Discard hands the CURRENT text over, so it is sent from here on (the unload guard knows it too)
+    expect(save.mock.calls.some((c) => JSON.stringify(c[0]).includes("TYPED DURING DISCARD"))).toBe(true);
     expect(host.textContent).toMatch(/Couldn't discard|discard/i);
+    vi.useRealTimers();
+    await act(async () => root.unmount());
+  });
+});
+
+describe("r4 (Insurance final1716): Discard buttons are disabled while discarding, and text from the frame before the lock reaches the saver", () => {
+  it("every action in the status is disabled during a slow Discard; text that reached the body meanwhile is handed to the saver after a FAILED discard", async () => {
+    vi.useFakeTimers();
+    let answer!: (r: { ok: boolean }) => void;
+    const discard = () => new Promise<{ ok: boolean }>((r) => (answer = r));
+    const draft = { key: { clientId: C, kind: "consultation", target: "new" }, fields: { body: "STORED DRAFT TEXT" }, revision: 2, savedAt: "t", generation: G1 };
+    const { host, root, save } = await mount({ notes: [note(N1, null)], drafts: [draft], peek: async () => ({ ok: true, draft: null }), discard });
+    const ta = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => { button(host, "Discard draft")?.click(); });
+    expect((button(host, "Discard draft") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { // the one frame before readOnly applied: the text reaches the body state
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "TYPED IN THE LAST FRAME");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { answer({ ok: false }); });
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("TYPED IN THE LAST FRAME"); // not wiped
+    expect((button(host, "Discard draft") as HTMLButtonElement | undefined)?.disabled ?? false).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(save.mock.calls.some((c) => JSON.stringify(c[0]).includes("TYPED IN THE LAST FRAME"))).toBe(true); // the saver (and so the unload guard) knows it
     vi.useRealTimers();
     await act(async () => root.unmount());
   });

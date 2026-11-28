@@ -23,7 +23,7 @@
 // This component must NOT be imported by any client-portal, public-booking,
 // email, or SMS surface. It is authenticated practitioner UI only.
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
 import { heldText, latestDraft, seedEntry, type DraftActions } from "@/lib/note-drafts/draft-registry";
 import { NoteDraftStatus } from "@/components/note-draft-status";
@@ -529,6 +529,9 @@ function NoteForm({
   const [yourVersion, setYourVersion] = useState<string | null>(null);
   // A superseded target is never autosaved, but the person can still edit the reopened text before choosing Keep as new note. Those edits are HELD
   // in the registry saver (never sent; they survive this editor unmounting) and are what the move carries.
+  // The editor's CURRENT text, kept fresh every render, for the moment a failed Discard resumes (its closure is older than the typing).
+  const currentFields = useRef<NoteDraftFields>({ body, areas: parseAreas(areasText), occurred_at: occurredAt });
+  currentFields.current = { body, areas: parseAreas(areasText), occurred_at: occurredAt };
   function touch(next: { body?: string; areasText?: string; occurredAt?: string }) {
     if (!draftActions || draft.discarding || draft.moving) return;
     const fields: NoteDraftFields = {
@@ -655,8 +658,17 @@ function NoteForm({
             if (t) applyTheirs(t);
           }}
           discardFailed={draft.discardFailed}
+          discarding={draft.discarding}
           onDiscard={async () => {
-            if (!(await draft.discard())) return; // failed: the editor stays exactly as it was and the status says so
+            if (!(await draft.discard())) {
+              // Failed: the editor stays exactly as it was and the status says so. Text that reached the body in the one frame before the lock
+              // rendered never reached the saver (edits are ignored while a Discard is out): hand the CURRENT text over now, so it is sent and the
+              // unload guard knows about it.
+              const cur = currentFields.current;
+              if (revised) draft.hold(cur);
+              else if (JSON.stringify(cur) !== JSON.stringify(draft.latest())) draft.change(cur);
+              return;
+            }
             setRestoredAt(null);
             resetBody(mode === "revise" && revising ? revising.body : "");
             setAreasText(revising ? revising.areas.join(", ") : "");

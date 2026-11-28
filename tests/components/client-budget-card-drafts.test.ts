@@ -132,10 +132,36 @@ describe("r4 (Codex P2): the budget card is locked while a Discard is pending", 
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(area, "TYPED DURING DISCARD");
       area.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(save.mock.calls.some((c) => JSON.stringify(c[0]).includes("TYPED DURING DISCARD"))).toBe(false); // nothing is queued or sent while the Discard is out
     await act(async () => { answer({ ok: false }); });
     expect((host.querySelector("textarea") as HTMLTextAreaElement).readOnly).toBe(false);
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    expect(save.mock.calls.some((c) => JSON.stringify(c[0]).includes("TYPED DURING DISCARD"))).toBe(false);
+    expect(save.mock.calls.some((c) => JSON.stringify(c[0]).includes("TYPED DURING DISCARD"))).toBe(true); // handed over after the failure
+    vi.useRealTimers();
+    await act(async () => root.unmount());
+  });
+});
+
+describe("r4 (Insurance final1716): budget Discard buttons are disabled while discarding, and the current text reaches the saver after a failed one", () => {
+  it("Discard is disabled during a slow Discard; text that reached the form meanwhile is sent after a FAILED discard", async () => {
+    vi.useFakeTimers();
+    let answer!: (r: { ok: boolean }) => void;
+    const discard = () => new Promise<{ ok: boolean }>((r) => (answer = r));
+    const save = vi.fn(async (_i: unknown) => ({ status: "ok", revision: 3, savedAt: "t", generation: G1 }));
+    const stored = { key, fields: { budget_level: "somewhat_limited", budget_notes: "STORED" }, revision: 2, savedAt: "t", generation: G1 };
+    const { host, root } = await mount(stored, save, discard);
+    const area = host.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => { btn(host, "Discard draft")?.click(); });
+    expect((btn(host, "Discard draft") as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(area, "TYPED IN THE LAST FRAME");
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { answer({ ok: false }); });
+    expect((host.querySelector("textarea") as HTMLTextAreaElement).value).toBe("TYPED IN THE LAST FRAME");
+    await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+    expect(save.mock.calls.some((c) => JSON.stringify(c[0]).includes("TYPED IN THE LAST FRAME"))).toBe(true);
     vi.useRealTimers();
     await act(async () => root.unmount());
   });

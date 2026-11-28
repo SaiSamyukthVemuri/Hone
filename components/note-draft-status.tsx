@@ -23,7 +23,10 @@ export function NoteDraftStatus({
   onKeepAsNew,
   discardFailed = false,
   revised = false,
+  discarding = false,
 }: {
+  /** A Discard is out: every action here is disabled, so none can start a second Discard or race the first. */
+  discarding?: boolean;
   onKeepAsNew?: () => void;
   /** The note being revised has ALREADY been revised since this draft was written: the text can only live as a NEW note. */
   revised?: boolean;
@@ -68,26 +71,26 @@ export function NoteDraftStatus({
         </span>
       )}
       {state.phase === "error" && (
-        <button type="button" onClick={onRetry} className="min-h-[44px] px-2 font-medium underline">
+        <button type="button" disabled={discarding} onClick={onRetry} className="min-h-[44px] px-2 font-medium underline">
           Retry
         </button>
       )}
       {(state.phase === "cleared" || revised) && (
         <>
-          <button type="button" onClick={onKeepAsNew} className="min-h-[44px] px-2 font-medium underline">
+          <button type="button" disabled={discarding} onClick={onKeepAsNew} className="min-h-[44px] px-2 font-medium underline">
             Keep as new draft
           </button>
-          <button type="button" onClick={onDiscard} className="min-h-[44px] px-2 font-medium underline">
+          <button type="button" disabled={discarding} onClick={onDiscard} className="min-h-[44px] px-2 font-medium underline">
             {DRAFT_COPY.discard}
           </button>
         </>
       )}
       {state.phase === "conflict" && (
         <>
-          <button type="button" onClick={onKeepMine} className="min-h-[44px] px-2 font-medium underline">
+          <button type="button" disabled={discarding} onClick={onKeepMine} className="min-h-[44px] px-2 font-medium underline">
             Keep mine
           </button>
-          <button type="button" onClick={() => setConfirmTheirs(true)} className="min-h-[44px] px-2 font-medium underline">
+          <button type="button" disabled={discarding} onClick={() => setConfirmTheirs(true)} className="min-h-[44px] px-2 font-medium underline">
             Use theirs
           </button>
           <ConfirmDialog
@@ -104,7 +107,7 @@ export function NoteDraftStatus({
         </>
       )}
       {!revised && (restoredAt || state.phase === "saved") && (
-        <button type="button" onClick={onDiscard} className="min-h-[44px] px-2 font-medium underline">
+        <button type="button" disabled={discarding} onClick={onDiscard} className="min-h-[44px] px-2 font-medium underline">
           {DRAFT_COPY.discard}
         </button>
       )}
