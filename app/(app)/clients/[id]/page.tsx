@@ -142,6 +142,7 @@ import { buildClinicalNoteSections } from "@/lib/clinical-notes/section-data";
 import { getClinicalNotesSummary } from "@/lib/clinical-notes/queries";
 import { ClinicalNotesSection } from "@/components/clinical-notes-section";
 import { noteDraftsEnabledFor } from "@/lib/note-drafts/enabled";
+import { draftScope } from "@/lib/note-drafts/scope";
 import { discardNoteDraftAction, loadNoteDrafts, saveNoteDraftAction } from "./note-draft-actions";
 import { ClinicalNotesSummary } from "@/components/clinical-notes-summary";
 import { updateClientBudgetContextAction } from "./budget-context-actions";
@@ -1845,7 +1846,7 @@ export default async function ClientCheatSheetPage({
           addAction={addClinicalNoteAction}
           reviseAction={reviseClinicalNoteAction}
           drafts={noteDrafts}
-          draftActions={noteDraftsEnabledFor(studio.id) ? { scope: `${practitioner.id}:${studio.id}`, save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
+          draftActions={noteDraftsEnabledFor(studio.id) ? { scope: draftScope(practitioner.id, studio.id), save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
           printHref={`/clients/${client.id}/clinical-notes/print`}
         />
       )}
@@ -1881,7 +1882,7 @@ export default async function ClientCheatSheetPage({
             }}
             action={updateClientBudgetContextAction}
             draft={noteDrafts.find((d) => d.key.kind === "budget") ?? null}
-            draftActions={noteDraftsEnabledFor(studio.id) ? { scope: `${practitioner.id}:${studio.id}`, save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
+            draftActions={noteDraftsEnabledFor(studio.id) ? { scope: draftScope(practitioner.id, studio.id), save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
           />
         )}
 

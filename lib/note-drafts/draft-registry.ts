@@ -14,14 +14,16 @@ export type DraftActions = {
    * background, so it is partitioned by identity: a different identity never sees, and never sends, another identity's text.
    */
   scope: string;
-  save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string }) => Promise<NoteDraftSaveResult>;
-  discard: (key: NoteDraftKey) => Promise<{ ok: boolean }>;
+  save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string; scope: string }) => Promise<NoteDraftSaveResult>;
+  discard: (key: NoteDraftKey, scope: string) => Promise<{ ok: boolean }>;
 };
 
 export type DraftEntry = {
   key: NoteDraftKey;
   saver: DraftSaver;
   writer: string;
+  /** The scope this saver was created under. Every send carries IT (never the page's current one), so a saver that outlives a sign-out cannot act as someone else. */
+  scope: string;
   actions: DraftActions;
   /** True once the draft is known to be gone (real record saved, or discarded): the page's older `drafts` prop must not bring it back. */
   none: boolean;
@@ -47,6 +49,7 @@ export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null
     const created: DraftEntry = {
       key,
       writer: crypto.randomUUID(),
+      scope: actions.scope,
       actions,
       none: false,
       floor: restored?.revision ?? 0,
@@ -55,7 +58,7 @@ export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null
     created.saver = new DraftSaver({
       initialRevision: restored?.revision ?? 0,
       onState: () => undefined,
-      send: (fields, expectedRevision) => created.actions.save({ key, fields, expectedRevision, writer: created.writer }),
+      send: (fields, expectedRevision) => created.actions.save({ key, fields, expectedRevision, writer: created.writer, scope: created.scope }),
     });
     if (restored) created.saver.adopt(restored.fields);
     entries.set(idOf(key), created);

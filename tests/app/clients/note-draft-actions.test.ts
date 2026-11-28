@@ -13,7 +13,7 @@ vi.mock("@/lib/logging/safe-log", () => ({ safeLog: { error: (m: string) => logs
 
 import { discardNoteDraftAction, loadNoteDrafts, saveNoteDraftAction } from "@/app/(app)/clients/[id]/note-draft-actions";
 
-const input = { key: { clientId: C, kind: "consultation" as const, target: "new" }, fields: { body: "SECRET CLINICAL TEXT" }, expectedRevision: 0, writer: W };
+const input = { key: { clientId: C, kind: "consultation" as const, target: "new" }, fields: { body: "SECRET CLINICAL TEXT" }, expectedRevision: 0, writer: W, scope: `p1:${S}` };
 
 beforeEach(() => {
   rpc.mockReset();
@@ -32,7 +32,7 @@ describe("switch OFF (the default in every environment)", () => {
   });
   it("discard still reaches the database: an author can always delete their own draft", async () => {
     rpc.mockResolvedValue({ data: true, error: null });
-    expect(await discardNoteDraftAction(input.key)).toEqual({ ok: true });
+    expect(await discardNoteDraftAction(input.key, input.scope)).toEqual({ ok: true });
     expect(rpc).toHaveBeenCalledWith("discard_client_note_draft", expect.objectContaining({ p_studio_id: S, p_client_id: C }));
   });
   it("another studio on the list does not enable this one", async () => {
@@ -77,5 +77,15 @@ describe("switch ON for this studio", () => {
       rpc.mockResolvedValueOnce({ data: [{ status, revision: 0, fields: {}, updated_at: null }], error: null });
       expect(await saveNoteDraftAction(input)).toEqual({ status });
     }
+  });
+
+  it("a save or discard sent under ANOTHER identity's scope (a different user signed in elsewhere) is refused before any database call", async () => {
+    process.env.HONE_NOTE_DRAFTS_STUDIO_IDS = S;
+    expect(await saveNoteDraftAction({ ...input, scope: `someone-else:${S}` })).toEqual({ status: "refused" });
+    expect(await saveNoteDraftAction({ ...input, scope: `p1:99999999-9999-4999-8999-999999999999` })).toEqual({ status: "refused" });
+    expect(await discardNoteDraftAction(input.key, `someone-else:${S}`)).toEqual({ ok: false });
+    expect(rpc).not.toHaveBeenCalled();
+    rpc.mockResolvedValueOnce({ data: [{ status: "ok", revision: 1, fields: { body: "x" }, updated_at: "t" }], error: null });
+    expect((await saveNoteDraftAction(input)).status).toBe("ok"); // the matching scope still works
   });
 });

@@ -17,6 +17,7 @@ import {
 } from "@/lib/note-drafts/types";
 import { sanitizeDraftFields } from "@/lib/note-drafts/sanitize";
 import { noteDraftsEnabledFor } from "@/lib/note-drafts/enabled";
+import { draftScope } from "@/lib/note-drafts/scope";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,6 +35,8 @@ export async function saveNoteDraftAction(input: {
   fields: NoteDraftFields;
   expectedRevision: number;
   writer: string;
+  /** The practitioner:studio the sending saver was created under. */
+  scope: string;
 }): Promise<NoteDraftSaveResult> {
   if (!validKey(input.key) || !UUID.test(input.writer) || !Number.isInteger(input.expectedRevision) || input.expectedRevision < 0) {
     return { status: "invalid" };
@@ -41,7 +44,9 @@ export async function saveNoteDraftAction(input: {
   const fields = sanitizeDraftFields(input.key.kind, input.fields);
   if (!fields) return { status: "invalid" };
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { studio, practitioner } = await getCurrentPractitionerWithStudio();
+    // Another user signed in (in another tab) since this saver was created: refuse, store nothing. Checked BEFORE the command is called.
+    if (input.scope !== draftScope(practitioner.id, studio.id)) return { status: "refused" };
     // Server-side switch: OFF means nothing is stored, whatever the client sends.
     if (!noteDraftsEnabledFor(studio.id)) return { status: "disabled" };
     const supabase = await createClient();
@@ -75,10 +80,11 @@ export async function saveNoteDraftAction(input: {
   }
 }
 
-export async function discardNoteDraftAction(key: NoteDraftKey): Promise<{ ok: boolean }> {
+export async function discardNoteDraftAction(key: NoteDraftKey, scope: string): Promise<{ ok: boolean }> {
   if (!validKey(key)) return { ok: false };
   try {
-    const { studio } = await getCurrentPractitionerWithStudio();
+    const { studio, practitioner } = await getCurrentPractitionerWithStudio();
+    if (scope !== draftScope(practitioner.id, studio.id)) return { ok: false };
     // NOT behind the switch: an author can always delete their own draft, whether or not autosave is on for the studio.
     const supabase = await createClient();
     const { error } = await supabase.rpc("discard_client_note_draft", {

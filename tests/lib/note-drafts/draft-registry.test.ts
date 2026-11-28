@@ -92,4 +92,12 @@ describe("draft registry", () => {
     expect(save).toHaveBeenCalledTimes(1);
     expect(latestDraft(key, null, SCOPE_A)).toBeNull();
   });
+
+  it("every send carries the scope the saver was CREATED under, for save and for the retry", async () => {
+    const save = vi.fn(async () => ({ status: "error" }) as NoteDraftSaveResult);
+    const entry = acquireEntry(key, null, actions(save, SCOPE_A), () => undefined);
+    entry.saver.change({ body: "x" });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ scope: SCOPE_A }));
+  });
 });

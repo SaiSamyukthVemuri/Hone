@@ -171,8 +171,8 @@ export function ClinicalNotesSection({
 export type DraftActions = {
   /** Practitioner + studio of the signed-in session: the draft registry is partitioned by it. */
   scope: string;
-  save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string }) => Promise<NoteDraftSaveResult>;
-  discard: (key: NoteDraftKey) => Promise<{ ok: boolean }>;
+  save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string; scope: string }) => Promise<NoteDraftSaveResult>;
+  discard: (key: NoteDraftKey, scope: string) => Promise<{ ok: boolean }>;
 };
 const NO_DRAFT_ACTIONS: DraftActions = {
   scope: "none",

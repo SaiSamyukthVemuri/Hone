@@ -74,7 +74,7 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
       await saver.quiesce();
       let ok = false;
       try {
-        ok = (await entry.actions.discard(key)).ok;
+        ok = (await entry.actions.discard(key, entry.scope)).ok;
       } catch {
         ok = false;
       }
