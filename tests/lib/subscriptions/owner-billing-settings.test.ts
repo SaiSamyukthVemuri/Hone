@@ -45,8 +45,8 @@ beforeEach(() => {
   vi.stubEnv("HONE_BILLING_PORTAL_CONFIGURATION", "bpc_test");
   vi.stubEnv("NEXT_PUBLIC_APP_ORIGIN", "https://hone.example.test");
   h.actor.mockResolvedValue({ studio, practitioner: { role: "owner" } });
-  h.rpc.mockResolvedValue({ data: { plan: billing.plan, invoice: billing.invoice, status: billing.status, deadline: billing.deadline } });
-  h.ids.mockResolvedValue({ data: { customer: billing.customer, subscription: billing.subscription } });
+  h.rpc.mockResolvedValue({ data: { plan: billing.plan, overdue: true, status: billing.status, deadline: billing.deadline } });
+  h.ids.mockResolvedValue({ data: { customer: billing.customer, subscription: billing.subscription, invoice: billing.invoice } });
   h.impact.mockResolvedValue({data:{owner:"Example owner",can_confirm:true,members:[{name:"Test staff",role:"practitioner"}],invitations:["pending@example.test"]}});
   h.portal.mockResolvedValue("https://billing.stripe.com/p/session/test");
   h.invoice.mockResolvedValue(invoice);

@@ -94,7 +94,7 @@ export default async function SubscriptionPage({ searchParams }: {
       </div>
       {billing.pending && !terminal && <p role="status" className="mt-4 text-sm">Your tier change is processing. Refresh Billing to check its status.</p>}
       {!terminal && <p className="mt-5 text-sm text-fg-muted">{teamAllowance(billing.plan)}. The owner uses one practitioner seat.</p>}
-      {(billing.status !== "active" || billing.invoice) && <div className="mt-4 space-y-3 rounded-lg border border-line bg-surface-sunken p-4 text-sm">
+      {(billing.status !== "active" || billing.overdue) && <div className="mt-4 space-y-3 rounded-lg border border-line bg-surface-sunken p-4 text-sm">
         {terminal && <p role="status">{billing.status === "canceled"
           ? "Your subscription is canceled. Studio access is paused. You can still manage billing and download invoices."
           : "Studio access is paused. We’re confirming the cancellation with Stripe."}</p>}
@@ -105,7 +105,7 @@ export default async function SubscriptionPage({ searchParams }: {
           timeZone: tz, timeZoneName: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
         })} to keep new bookings and chart entries available.</p>}
         {billing.status === "paused" && <p>You can still view your records. Pay your overdue invoices to resume new bookings and chart entries.</p>}
-        {billing.invoice && <form action={payOutstandingInvoice.bind(null, studio.id)}><Button type="submit" variant="primary">Pay outstanding invoice</Button></form>}
+        {billing.overdue && <form action={payOutstandingInvoice.bind(null, studio.id)}><Button type="submit" variant="primary">Pay outstanding invoice</Button></form>}
       </div>}
     </section>
     <section aria-labelledby="billing-payment" className={section}>

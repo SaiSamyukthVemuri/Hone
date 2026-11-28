@@ -12,6 +12,8 @@ import { dbErrorCode } from "@/lib/logging/error-class";
 // already showed, and everything else becomes one generic message with the
 // detail logged server-side.
 
+import { BILLING_LOCK_STAFF_MESSAGE } from "@/lib/subscriptions/lock-message";
+
 /** Shape PostgREST returns on an RPC failure. */
 export type RpcError = {
   message?: string | null;
@@ -111,6 +113,10 @@ const KNOWN: ReadonlyArray<{ raised: string; safe: string }> = [
     raised: "An explicit aftercare value is required.",
     safe: "Something went wrong saving this session. Please reload and try again.",
   },
+
+  // --- billing (0387/0389): neutral text for staff, the owner reads the reason in Billing -------
+  { raised: "subscription_payment_required", safe: BILLING_LOCK_STAFF_MESSAGE },
+  { raised: "subscription_canceled", safe: BILLING_LOCK_STAFF_MESSAGE },
 
   // --- preserved clinical guards (triggers, 0159/0160) ---------------------
   {

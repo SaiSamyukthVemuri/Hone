@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, closePool, userQuery } from "./helpers/harness";
 
-afterAll(closePool);
+beforeAll(async () => {
+  await adminQuery("update public.platform_rollouts set mode='pilot' where key='front_desk'");
+});
+afterAll(async () => {
+  await adminQuery("update public.platform_rollouts set mode='off' where key='front_desk'");
+  await closePool();
+});
 
 async function authUser() {
   const id = randomUUID();
@@ -41,6 +47,7 @@ describe("billing status carries no raw provider id", () => {
     expect(status).toMatchObject({ plan: "studio", status: "active" });
     expect(Object.keys(status)).not.toContain("customer");
     expect(Object.keys(status)).not.toContain("subscription");
+    expect(Object.keys(status)).not.toContain("invoice");
     expect(JSON.stringify(status)).not.toMatch(/cus_|sub_/);
   });
 
@@ -49,7 +56,7 @@ describe("billing status carries no raw provider id", () => {
     const other = await paidStudio();
     const ids = (p: string, u: string | null) =>
       adminQuery("select public.read_hone_billing_provider_ids($1,$2) as ids", [p, u]);
-    expect((await ids(t.studio, t.user)).rows[0].ids).toEqual({ customer: "cus_" + t.user, subscription: "sub_" + t.user });
+    expect((await ids(t.studio, t.user)).rows[0].ids).toEqual({ customer: "cus_" + t.user, subscription: "sub_" + t.user, invoice: null });
     expect((await ids(t.studio, other.user)).rows[0].ids).toBeNull();
     expect((await ids(t.studio, null)).rows[0].ids).toBeNull();
     expect((await ids(t.studio, await authUser())).rows[0].ids).toBeNull();
@@ -161,5 +168,58 @@ describe("abandoned signup retention", () => {
     const byOwner = await attempt();
     await adminQuery("delete from auth.users where id=$1", [byOwner.user]);
     expect(await exists(byOwner.id)).toBe(false);
+  });
+});
+
+describe("the plan's receptionist seat is audited, never over-removed, and race-free", () => {
+  const setPlan = (studio: string, plan: string) =>
+    adminQuery("update public.hone_signup_attempts set plan=$2 where studio_id=$1", [studio, plan]);
+  const events = async (studio: string) =>
+    (await adminQuery("select action,actor_email,metadata from public.admin_action_events where studio_id=$1 and actor_email='hone-billing' order by created_at,id", [studio])).rows;
+
+  it("audits every enrolment, grant and withdrawal with ids and counts only", async () => {
+    const t = await paidStudio("studio");
+    await setPlan(t.studio, "solo");
+    await setPlan(t.studio, "studio");
+    const rows = await events(t.studio);
+    expect(rows.map((r) => r.action).sort()).toEqual([
+      "front_desk_enrolled", "front_desk_seats_granted", "front_desk_seats_granted", "front_desk_seats_withdrawn",
+    ]);
+    expect(rows.every((r) => r.actor_email === "hone-billing")).toBe(true);
+    expect(JSON.stringify(rows.map((r) => r.metadata))).not.toMatch(/@/);
+  });
+
+  it("keeps a custom grant AND the enrolment through Studio to Solo, and removes only the plan's own seat", async () => {
+    const t = await paidStudio("studio");
+    await adminQuery(
+      "insert into public.studio_front_desk_seats(studio_id,seats,source,reason,granted_by_admin) values ($1,2,'custom_agreed','agreed outside the plan','ops@example.test')",
+      [t.studio],
+    );
+    await setPlan(t.studio, "solo");
+    const grants = (await adminQuery("select source,revoked_at is not null as revoked from public.studio_front_desk_seats where studio_id=$1 order by source", [t.studio])).rows;
+    expect(grants).toEqual([{ source: "custom_agreed", revoked: false }, { source: "plan_included", revoked: true }]);
+    expect((await adminQuery("select 1 from public.platform_rollout_studios where rollout_key='front_desk' and studio_id=$1", [t.studio])).rowCount).toBe(1);
+    expect((await adminQuery("select public.front_desk_seat_limit($1) as n", [t.studio])).rows[0].n).toBe(2);
+  });
+
+  it("never removes the enrolment on its own: Solo leaves a zero limit that seats nobody", async () => {
+    const t = await paidStudio("studio");
+    await setPlan(t.studio, "solo");
+    expect((await adminQuery("select 1 from public.platform_rollout_studios where rollout_key='front_desk' and studio_id=$1", [t.studio])).rowCount).toBe(1);
+    expect((await adminQuery("select public.front_desk_seat_limit($1) as n", [t.studio])).rows[0].n).toBe(0);
+  });
+
+  it("runs invitations and plan changes concurrently without a deadlock", async () => {
+    for (let round = 0; round < 6; round++) {
+      const t = await paidStudio("studio");
+      const owner = (await adminQuery("select id from public.practitioners where studio_id=$1 and user_id=$2", [t.studio, t.user])).rows[0].id;
+      const results = await Promise.allSettled([
+        userQuery(t.user, "insert into public.pending_invitations(studio_id,invited_by,email,role) values ($1,$2,$3,'receptionist')", [t.studio, owner, randomUUID() + "@example.test"]),
+        setPlan(t.studio, "solo"),
+        userQuery(t.user, "insert into public.pending_invitations(studio_id,invited_by,email,role) values ($1,$2,$3,'practitioner')", [t.studio, owner, randomUUID() + "@example.test"]),
+        setPlan(t.studio, "studio"),
+      ]);
+      for (const r of results) if (r.status === "rejected") expect((r.reason as { code?: string }).code).not.toBe("40P01");
+    }
   });
 });

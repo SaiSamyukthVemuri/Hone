@@ -53,6 +53,8 @@ begin
   return null;
 end $$;
 
+-- Receptionist invitations are 0390's (a seat grant), so they never touch the billing row here: that keeps the
+-- billing row and 0390's seat lock from ever being taken in opposite orders.
 -- Only changes that can acquire a seat need a check. Removing or deactivating
 -- people and cancelling invitations must still work, including for older data.
 create constraint trigger hone_practitioner_seat_insert after insert on public.practitioners
@@ -63,11 +65,11 @@ create constraint trigger hone_practitioner_seat_update after update of active,s
   when (new.active and (not old.active or new.studio_id is distinct from old.studio_id))
   execute function public.enforce_hone_team_seats();
 create constraint trigger hone_invitation_seat_insert after insert on public.pending_invitations
-  deferrable initially deferred for each row when (new.status='pending')
+  deferrable initially deferred for each row when (new.status='pending' and new.role is distinct from 'receptionist')
   execute function public.enforce_hone_team_seats();
 create constraint trigger hone_invitation_seat_update after update of status,role,studio_id on public.pending_invitations
   deferrable initially deferred for each row
-  when (new.status='pending' and (old.status is distinct from new.status
+  when (new.status='pending' and new.role is distinct from 'receptionist' and (old.status is distinct from new.status
     or old.role is distinct from new.role or old.studio_id is distinct from new.studio_id))
   execute function public.enforce_hone_team_seats();
 -- A change of plan must fit the actual team and all reservations at commit.

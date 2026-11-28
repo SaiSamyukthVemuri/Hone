@@ -310,7 +310,7 @@ describe("sandbox paid signup", () => {
       first + 3600,
     );
     expect(await status()).toMatchObject({
-      status: "past_due", invoice: f.invoice.id,
+      status: "past_due", overdue: true,
     });
     expect(Date.parse((await status()).deadline)).toBe(
       (first + 7 * 86400) * 1000,
@@ -322,7 +322,7 @@ describe("sandbox paid signup", () => {
       "invoice.payment_failed",
       first - 86400,
     );
-    expect(await status()).toMatchObject({ status: "paused", invoice: f.invoice.id });
+    expect(await status()).toMatchObject({ status: "paused", overdue: true });
     await expect(chart()).rejects.toThrow(/subscription_payment_required/);
     await expect(book()).rejects.toThrow(/subscription_payment_required/);
     // Care already under way is never refused: the session existed before the lock, so its block,
@@ -336,7 +336,7 @@ describe("sandbox paid signup", () => {
     f.sub.status = "active";
     await f.receive("evt_" + randomUUID());
     await f.receive("evt_" + randomUUID(), "invoice.payment_failed", first);
-    expect(await status()).toMatchObject({ status: "active", deadline: null, invoice: null });
+    expect(await status()).toMatchObject({ status: "active", deadline: null, overdue: false });
     await book();
     await chart();
     expect(await f.memberships()).toEqual([owner]);
@@ -346,8 +346,12 @@ describe("sandbox paid signup", () => {
     const f = await fixture();
     await f.receive(randomUUID());
     const [owner] = await f.memberships();
-    const snapshot = async () => (await userQuery(f.user,
-      "select public.my_hone_billing_status($1) as s", [owner.studio_id])).rows[0].s;
+    // The signed-in status says only THAT an invoice is overdue; which one is read by the server command.
+    const snapshot = async () => {
+      const s = (await userQuery(f.user, "select public.my_hone_billing_status($1) as s", [owner.studio_id])).rows[0].s;
+      const ids = (await adminQuery("select public.read_hone_billing_provider_ids($1,$2) as ids", [owner.studio_id, f.user])).rows[0].ids;
+      return { ...s, invoice: ids.invoice };
+    };
     const earlier = "in_" + randomUUID();
     const later = "in_" + randomUUID();
     const now = Math.floor(Date.now() / 1000);

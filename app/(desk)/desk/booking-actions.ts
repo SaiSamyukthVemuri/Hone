@@ -1,5 +1,6 @@
 "use server";
 
+import { BILLING_LOCK_STAFF_MESSAGE, isBillingLockError } from "@/lib/subscriptions/lock-message";
 import { revalidatePath } from "next/cache";
 import { daysBetween, isRealLocalDate } from "@/lib/business-analytics/period";
 import { bookingClient, deskText, instant, validDeskId, type DeskBookingClient, type DeskBookingOptions, type DeskOpening, type DeskResult } from "@/lib/desk/booking";
@@ -127,6 +128,7 @@ export async function bookDeskOpeningAction(input: {
       p_studio_id: studioId, p_client_id: input.clientId, p_service_id: input.serviceId, p_practitioner_id: input.practitionerId,
       p_start: input.start, p_expected_end: input.end,
     });
+    if (isBillingLockError(booked.error)) return { ok: false, error: BILLING_LOCK_STAFF_MESSAGE };
     if (booked.error?.code === "23P01") return staleOpening;
     if (booked.error?.code === "42501") return { ok: false, error: refusalMessages.not_authorized };
     if (booked.error || !Array.isArray(booked.data) || booked.data.length !== 1) return uncertainBooking;

@@ -187,8 +187,14 @@ describe("subscription team limits through the owner invite and acceptance paths
     },
   );
 
-  it("serializes two transactions that already saw the same last desk seat", async () => {
+  it.each([
+    // A receptionist seat is 0390's: one advisory lock serializes the claim, and the loser is refused.
+    ["receptionist", "read committed", "front_desk_seat_limit_reached"],
+    // A clinical seat is 0388's: a stale snapshot that raced a writer is refused by serialization failure.
+    ["practitioner", "repeatable read", "40001"],
+  ] as const)("serializes two %s transactions racing for the same last seat (%s)", async (role, isolation, refusal) => {
     const t = await signup("studio");
+    if (role === "practitioner") await invite(t, "practitioner");
     let arrived = 0;
     let release!: () => void;
     const bothReady = new Promise<void>((r) => {
@@ -196,20 +202,20 @@ describe("subscription team limits through the owner invite and acceptance paths
     });
     const contender = () =>
       adminTx(async (query) => {
-        await query("set transaction isolation level repeatable read");
-        await query("select * from public.hone_team_seat_counts($1)", [
-          t.studio,
-        ]);
+        await query(`set transaction isolation level ${isolation}`);
+        await query("select * from public.hone_team_seat_counts($1)", [t.studio]);
         if (++arrived === 2) release();
         await bothReady;
         await query(
-          "insert into public.pending_invitations(studio_id,email,role) values($1,$2,'receptionist')",
-          [t.studio, email()],
+          "insert into public.pending_invitations(studio_id,email,role) values($1,$2,$3)",
+          [t.studio, email(), role],
         );
       });
     const results = await Promise.allSettled([contender(), contender()]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(await usage(t)).toMatchObject({ receptionist_used: 1 });
+    const loser = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(refusal === "40001" ? loser.reason.code : loser.reason.message).toBe(refusal);
+    expect(await usage(t)).toMatchObject(role === "receptionist" ? { receptionist_used: 1 } : { practitioner_used: 3 });
   });
 
   it("releases a removed receptionist's seat and refuses reactivation if a replacement was invited", async () => {
@@ -284,8 +290,9 @@ describe("subscription team limits through the owner invite and acceptance paths
     // The plan decides the receptionist right even for a direct write: Solo withdraws the grant.
     await setPlan("solo");
     expect(await usage(t)).toMatchObject({ plan: "solo", receptionist_limit: 0 });
+    // Billing never removes the enrolment, so a studio that held the seat now has a limit of zero.
     await expect(invite(t, "receptionist")).rejects.toMatchObject({
-      message: "front_desk_not_enabled",
+      message: "front_desk_seat_limit_reached",
     });
     await setPlan("studio");
     expect(await usage(t)).toMatchObject({ plan: "studio", receptionist_limit: 1 });
@@ -389,6 +396,8 @@ it("locks only new bookings and new unscheduled sessions once cancellation takes
   // Care already begun can always be documented: an existing session takes a new entry, a session for an
   // appointment that existed before the lock is allowed, and everything stays readable.
   await entry(existingChart);
+  await adminQuery("insert into public.session_blocks(studio_id,session_id) values ($1,$2)", [t.studio, existingChart]);
+  await adminQuery("insert into public.laser_entries(session_id,zone) values ($1,'chin')", [existingChart]);
   await chart(existingBooking);
   expect((await adminQuery("select id from public.sessions where id=$1", [existingChart])).rowCount).toBe(1);
   expect((await billingState(await signup("studio"))).status).toBe("active");

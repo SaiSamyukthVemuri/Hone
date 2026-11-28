@@ -45,7 +45,7 @@ create or replace function public.my_hone_billing_status(p_studio uuid) returns 
 language sql stable security definer set search_path = '' as $$
   select jsonb_build_object('plan', a.plan,
     'change_id',a.change_id,'pending',a.change_target,'canceled_at',a.canceled_at,
-    'invoice', overdue.invoice_id, 'deadline', overdue.deadline, 'status', case
+    'overdue', overdue.invoice_id is not null, 'deadline', overdue.deadline, 'status', case
       when a.canceled_at is not null then 'canceled'
       when a.change_target='cancel' then 'canceling'
       when overdue.invoice_id is null then 'active'
@@ -288,12 +288,14 @@ grant execute on function public.my_hone_solo_impact(uuid),public.request_hone_s
 grant execute on function public.claim_hone_subscription_change(uuid),public.finish_hone_subscription_change(uuid,boolean),
   public.record_hone_subscription_canceled(text,text,uuid,uuid) to service_role;
 
--- The raw Stripe customer and subscription ids are not part of any result the signed-in role can
+-- The raw Stripe customer, subscription and invoice ids are not part of any result the signed-in role can
 -- call. The server reads them here, after it has verified the signed-in user, to open the portal
 -- or list invoices; the owner check is in the same statement as the read.
 create function public.read_hone_billing_provider_ids(p_studio uuid,p_user uuid) returns jsonb
 language sql stable security definer set search_path='' as $$
-  select jsonb_build_object('customer',a.customer_id,'subscription',a.subscription_id)
+  select jsonb_build_object('customer',a.customer_id,'subscription',a.subscription_id,'invoice',
+    (select i.invoice_id from public.hone_renewal_invoices i where i.attempt_id=a.id and i.former_subscription is null
+      and not i.paid and i.failed_at is not null order by i.failed_at, i.invoice_id limit 1))
   from public.hone_signup_attempts a
   where a.studio_id=p_studio and a.state='paid' and p_user is not null
     and exists(select from public.practitioners p where p.studio_id=a.studio_id and p.user_id=p_user and p.role='owner' and p.active);

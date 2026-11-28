@@ -30,7 +30,7 @@ end $$;
 create or replace function public.my_hone_billing_status(p_studio uuid) returns jsonb
 language sql stable security definer set search_path = '' as $$
   select jsonb_build_object('plan', a.plan,
-    'invoice', overdue.invoice_id, 'deadline', overdue.deadline, 'status', case
+    'overdue', overdue.invoice_id is not null, 'deadline', overdue.deadline, 'status', case
       when overdue.invoice_id is null then 'active'
       when now() >= overdue.deadline then 'paused'
       else 'past_due' end)

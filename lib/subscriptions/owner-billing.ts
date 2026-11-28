@@ -11,12 +11,12 @@ export type OwnerBilling = {
   pending: PlanKey | "cancel" | null;
   canceled_at: string | null;
   deadline: string | null;
-  invoice: string | null;
+  overdue: boolean;
 };
 
 // The provider ids never travel in the signed-in status call. The server reads them for the
 // verified owner only, to open the portal or list invoices.
-export type ProviderIds = { customer: string; subscription: string };
+export type ProviderIds = { customer: string; subscription: string; invoice: string | null };
 
 // Request-local so the Settings rail, notice and page share one owner-scoped read.
 export const readOwnerBilling = cache(async (studioId: string) => {
