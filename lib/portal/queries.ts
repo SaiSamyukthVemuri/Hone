@@ -6,6 +6,7 @@ import { getRequiredAppOrigin } from "@/lib/app-origin";
 import { generateCancellationToken } from "@/lib/booking/tokens";
 import { isPubliclyBookable } from "@/lib/booking/readiness";
 import { dbErrorCode } from "@/lib/logging/error-class";
+import { fetchAllRows } from "@/lib/export/paginate";
 
 // Server-side queries that back the authenticated /portal home. Every
 // function on this file expects the caller to have already resolved a
@@ -67,16 +68,15 @@ export type PortalIntakeStatus =
 
 // Resolve the client + studio identity from the session's
 // (studioId, clientId). Returns null when either row is missing or
-// the client is archived (archived clients must not surface portal
-// data; the magic-link request gate filters them out, but defense
-// in depth here covers an archive that happens AFTER login).
+// the client is archived, including an archive after sign-in. Undefined means
+// the read failed. Neither case allows client data to render.
 export async function getPortalIdentity(
   studioId: string,
   clientId: string,
 ): Promise<{
   client: PortalClientSummary;
   studio: PortalStudioSummary;
-} | null> {
+} | null | undefined> {
   const admin = createAdminClient();
 
   const { data: clientRow, error: clientErr } = await admin
@@ -85,7 +85,8 @@ export async function getPortalIdentity(
     .eq("id", clientId)
     .eq("studio_id", studioId)
     .maybeSingle();
-  if (clientErr || !clientRow) return null;
+  if (clientErr) return undefined;
+  if (!clientRow) return null;
   if (clientRow.archived_at != null) return null;
 
   const { data: studioRow, error: studioErr } = await admin
@@ -95,7 +96,8 @@ export async function getPortalIdentity(
     )
     .eq("id", studioId)
     .maybeSingle();
-  if (studioErr || !studioRow) return null;
+  if (studioErr) return undefined;
+  if (!studioRow) return null;
 
   const fullName = (clientRow.name as string).trim() || "Client";
   const firstName = fullName.split(/\s+/)[0] || fullName;
@@ -147,62 +149,61 @@ function safeManageToken(appointmentId: string, startsAt: string): string | null
   }
 }
 
-// Future confirmed appointments for this (studio, client). Soonest
-// first. The Manage token is minted (HMAC), never read from storage.
-//
-// We deliberately do NOT select notes, practitioner_id, status
-// metadata, or any field that could leak practitioner intent. The
-// select shape is the minimum a client needs to recognise the
-// appointment.
+type UpcomingAppointmentRow = {
+  id: string;
+  starts_at: string;
+  ends_at: string;
+  duration_minutes: number;
+  service: { name: string } | Array<{ name: string }> | null;
+};
+
+// Public rescheduling cancels the original and inserts a confirmed successor
+// for the same studio/client. Staff moves keep the row and change its time.
+// A successful empty result means "no upcoming appointments"; null means retry.
 export async function getPortalUpcomingAppointments(
   studioId: string,
   clientId: string,
-  opts: { limit?: number } = {},
-): Promise<PortalUpcomingAppointment[]> {
-  const admin = createAdminClient();
-  const nowIso = new Date().toISOString();
-  const { data, error } = await admin
-    .from("appointments")
-    .select(
-      "id, starts_at, ends_at, duration_minutes, service:services(name)",
-    )
-    .eq("studio_id", studioId)
-    .eq("client_id", clientId)
-    .eq("status", "confirmed")
-    .gt("starts_at", nowIso)
-    .order("starts_at", { ascending: true })
-    .limit(opts.limit ?? 20);
-  if (error) {
-    console.error(
-      JSON.stringify({
-        event: "portal_upcoming_appointments_failed",
-        code: dbErrorCode(error),
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    return [];
-  }
+): Promise<PortalUpcomingAppointment[] | null> {
+  try {
+    const admin = createAdminClient();
+    const nowIso = new Date().toISOString();
+    const { data, error } = await fetchAllRows<UpcomingAppointmentRow>(async (from, to) => {
+      const page = await admin
+        .from("appointments")
+        .select("id, starts_at, ends_at, duration_minutes, service:services!appointments_service_same_studio_fk(name)")
+        .eq("studio_id", studioId)
+        .eq("client_id", clientId)
+        .eq("status", "confirmed")
+        .gt("starts_at", nowIso)
+        .order("starts_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<UpcomingAppointmentRow[]>();
+      // A missing response body is not an empty list of bookings.
+      if (!page.error && !Array.isArray(page.data)) throw new Error("invalid_appointment_response");
+      return page;
+    }, { rowKey: (row) => row.id });
+    if (error || !data) throw error ?? new Error("missing_appointment_response");
 
-  type Row = {
-    id: string;
-    starts_at: string;
-    ends_at: string;
-    duration_minutes: number;
-    service: { name: string } | Array<{ name: string }> | null;
-  };
-  const pick = <T>(v: T | T[] | null): T | null =>
-    Array.isArray(v) ? (v[0] ?? null) : v;
-  return ((data ?? []) as unknown as Row[]).map((row) => {
-    const service = pick(row.service);
-    return {
-      id: row.id,
-      startsAt: row.starts_at,
-      endsAt: row.ends_at,
-      durationMinutes: row.duration_minutes,
-      serviceName: service?.name?.trim() || "Appointment",
-      manageToken: safeManageToken(row.id, row.starts_at),
-    };
-  });
+    return data.map((row) => {
+      const service = Array.isArray(row.service) ? row.service[0] : row.service;
+      return {
+        id: row.id,
+        startsAt: row.starts_at,
+        endsAt: row.ends_at,
+        durationMinutes: row.duration_minutes,
+        serviceName: service?.name?.trim() || "Appointment",
+        manageToken: safeManageToken(row.id, row.starts_at),
+      };
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "portal_upcoming_appointments_failed",
+      code: dbErrorCode(error),
+      timestamp: new Date().toISOString(),
+    }));
+    return null;
+  }
 }
 
 // Pre-care instruction strings for the client's upcoming

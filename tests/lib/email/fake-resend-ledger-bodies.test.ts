@@ -98,6 +98,26 @@ describe("what the fake writes", () => {
   });
 });
 
+describe("the isolated portal recovery mailbox", () => {
+  it("keeps only a loopback portal URL for the selected synthetic recipient", async () => {
+    arm({ HONE_E2E_PORTAL_RECOVERY_MAILBOX: PAYLOAD.to });
+    const path = `/portal/verify/${"a".repeat(43)}`;
+    const url = `http://localhost:3111${path}`;
+    const message = { ...PAYLOAD, text: `Private fixture text ${url} https://example.invalid${path} http://localhost:3111/other` };
+    const transport = createFakeResendTransport();
+    await transport.emails.send(message);
+    await transport.emails.send({ ...message, to: "success+other@harness.local" });
+    process.env.HONE_E2E_PORTAL_RECOVERY_MAILBOX = "other@example.invalid";
+    await transport.emails.send({ ...message, to: process.env.HONE_E2E_PORTAL_RECOVERY_MAILBOX });
+    const [observed, otherFixture, external] = rows();
+    expect(observed.hrefs).toEqual([url]);
+    expect(observed).not.toHaveProperty("text");
+    expect(observed).not.toHaveProperty("html");
+    expect(otherFixture).not.toHaveProperty("hrefs");
+    expect(external).not.toHaveProperty("hrefs");
+  });
+});
+
 describe("bodies are stored for harness recipients only", () => {
   it("a recipient off @harness.local gets the hashes ONLY: no text, no html, no hrefs", async () => {
     arm({ HONE_E2E_FAKE_RESEND_LEDGER_BODIES: "1" });
