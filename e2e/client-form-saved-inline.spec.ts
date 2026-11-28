@@ -146,4 +146,32 @@ test.describe("client form soft save", () => {
     await expect(page.getByText(renamed).first()).toBeVisible({ timeout: T });
     await expect(page.getByText(seed.clientName), "the old name is gone from the list").toHaveCount(0);
   });
+
+  // Codex P2: Back to a directory visited BEFORE the save must show the new name (history restores from the router cache).
+  test("directory, profile, edit, rename, save, Back twice: the directory shows the new name", async ({ page }) => {
+    test.setTimeout(120_000);
+    const seed = await seedE2eStudio();
+    const id = await clientOf(seed);
+    await openEdit(page, seed, id);
+    await page.goto("/clients");
+    await expect(page.getByText(seed.clientName).first()).toBeVisible({ timeout: T });
+    await page.locator(`a[href="/clients/${id}"]`).first().click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
+    await page.locator(`a[href="/clients/${id}/edit"]`).first().click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}/edit$`), { timeout: T });
+    await page.waitForLoadState("networkidle");
+    const renamed = `Renamed Back ${Date.now() % 100000}`;
+    await page.getByRole("textbox", { name: "Name*", exact: true }).fill(renamed);
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
+    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible({ timeout: T });
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}/edit$`), { timeout: T });
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
+    await page.goBack();
+    await expect(page).toHaveURL(/\/clients(\?.*)?$/, { timeout: T });
+    await expect(page.getByText(renamed).first()).toBeVisible({ timeout: T });
+    await expect(page.getByText(seed.clientName), "the old name is gone").toHaveCount(0);
+  });
 });

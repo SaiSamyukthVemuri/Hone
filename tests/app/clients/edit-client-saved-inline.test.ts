@@ -168,7 +168,7 @@ describe("HON-109: a SAVED edit", () => {
     expect(revalidated).toEqual(["/clients/client-bob", "/clients"]);
     revalidated.length = 0;
     await run({ allergies: "aloe" }, true);
-    expect(revalidated).toEqual([]);
+    expect(revalidated).toEqual(["/clients"]);
   });
   it("nothing changed: flag returns ok too, plain redirects, neither writes", async () => {
     expect(await run({}, false)).toEqual({ result: undefined, redirected: "/clients/client-bob" });

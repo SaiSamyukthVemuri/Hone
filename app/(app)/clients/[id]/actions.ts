@@ -108,9 +108,8 @@ function dollarsToCents(value: FormDataEntryValue | null): number | null {
 // HON-109: a form that navigates itself (the edit page) sends `saved_inline=1`. A SAVED edit then RETURNS this and the form shows "Saved" at
 // once and soft-navigates to the profile, instead of waiting for the redirected profile render inside the same response. The address is built
 // HERE from the id the database reported (the visible row's stored id, or the id the update changed), not from a value the form echoed. A call without the flag (any other caller) still ends in redirect() AFTER revalidating.
-// The inline path does not revalidate: a revalidatePath in an action makes the response wait for a re-render of the page being left, and these pages are
-// dynamic (no data cache, no router-cache staleness), so the soft navigation that follows fetches the profile fresh. Checked in a browser: after Back the edit
-// form shows the saved value and a second save does not conflict.
+// The inline path revalidates only the directory (/clients), never the page being left: revalidating the edit/profile page made the response wait for a
+// re-render of it. The directory must be invalidated because Back restores a previously visited list from the router cache.
 export type ClientSavedResult = { ok: true; redirectTo: string };
 
 export type ClientSaveResult = {
@@ -385,6 +384,8 @@ export async function updateClientAction(
   }
 
   // The id the UPDATE reported it changed, not the form's echo of it.
+  // The directory (not the page being left) is invalidated so Back to a previously visited list never restores the old name.
+  if (savedInline) revalidatePath("/clients");
   if (savedInline) return { ok: true, redirectTo: `/clients/${typeof changedId === "string" ? changedId : storedClientId}` };
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/clients");
