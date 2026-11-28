@@ -191,3 +191,41 @@ export function dbHelperReach(root, file) {
   // A non-import reference by path (readFileSync("tests/db/helpers/x.ts"), a workflow step, a script) is not an edge the graph sees.
   return { provable: other.length === 0, lanes: [...lanes].sort(), other: other.sort() };
 }
+
+/**
+ * CI-SELECT-03. Everything `seeds` import, directly or transitively, across the whole repository (the forward closure). A changed file in this
+ * set can change what a seed executes; a file outside it cannot be loaded by it through an import. Seeds that do not exist are ignored.
+ */
+export function forwardClosure(root, seeds) {
+  const g = repoImporters(root);
+  const imports = new Map();
+  for (const [target, who] of g.importedBy) for (const f of who) (imports.get(f) ?? imports.set(f, new Set()).get(f)).add(target);
+  const seen = new Set();
+  const stack = seeds.filter((f) => g.files.has(f));
+  for (const f of stack) seen.add(f);
+  while (stack.length) {
+    for (const t of imports.get(stack.pop()) ?? []) if (!seen.has(t)) { seen.add(t); stack.push(t); }
+  }
+  return seen;
+}
+
+/**
+ * Everything that can render or call `seeds`: the seeds plus their importers, transitively, over the application roots (the reverse walk).
+ * forwardClosure answers "what does this file run"; this answers "what runs this file". A change to a file in the reverse closure can alter what
+ * the seeds do in a page (a wrapper that opens the modal, a page that renders the wrapper), so a lane built around the seeds must start for it.
+ */
+export function reverseClosure(root, seeds) {
+  const g = buildImportGraph(root);
+  const seen = new Set(seeds);
+  const stack = [...seeds];
+  while (stack.length) {
+    const x = stack.pop();
+    for (const y of g.importedBy.get(x) ?? []) {
+      if (seen.has(y)) continue;
+      seen.add(y);
+      stack.push(y);
+    }
+    for (const o of g.outsideImporters.get(x) ?? []) seen.add(o); // e2e specs, scripts and config that import it directly
+  }
+  return seen;
+}

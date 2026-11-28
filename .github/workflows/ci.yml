@@ -111,6 +111,9 @@ jobs:
       mobile: ${{ steps.classify.outputs.mobile }}
       ci_workflows: ${{ steps.classify.outputs.ci_workflows }}
       full_matrix_required: ${{ steps.classify.outputs.full_matrix_required }}
+      # CI-SELECT-03: the storage-photos and webkit lanes' own reasons (scripts/classify-changes.mjs laneSurfaces).
+      storage_photos: ${{ steps.classify.outputs.storage_photos }}
+      webkit_surface: ${{ steps.classify.outputs.webkit_surface }}
       # G4: a docs-only change to a document a unit test reads, and exactly
       # those tests ('; '-joined). Consumed by canonical-record below.
       docs_consistency: ${{ steps.classify.outputs.docs_consistency }}
@@ -1399,6 +1402,8 @@ jobs:
           DATABASE: ${{ needs.changes.outputs.database }}
           SECURITY: ${{ needs.changes.outputs.security }}
           PAYMENT: ${{ needs.changes.outputs.payment }}
+          STORAGE_PHOTOS: ${{ needs.changes.outputs.storage_photos }}
+          WEBKIT_SURFACE: ${{ needs.changes.outputs.webkit_surface }}
           MOBILE: ${{ needs.changes.outputs.mobile }}
           GOOGLE_CALENDAR: ${{ needs.changes.outputs.google_calendar }}
           BROWSER_SPECS: ${{ needs.changes.outputs.browser_specs }}
@@ -1470,6 +1475,8 @@ jobs:
           DATABASE: ${{ needs.changes.outputs.database }}
           SECURITY: ${{ needs.changes.outputs.security }}
           PAYMENT: ${{ needs.changes.outputs.payment }}
+          STORAGE_PHOTOS: ${{ needs.changes.outputs.storage_photos }}
+          WEBKIT_SURFACE: ${{ needs.changes.outputs.webkit_surface }}
           MOBILE: ${{ needs.changes.outputs.mobile }}
           GOOGLE_CALENDAR: ${{ needs.changes.outputs.google_calendar }}
           BROWSER_SPECS: ${{ needs.changes.outputs.browser_specs }}
@@ -1513,6 +1520,7 @@ jobs:
               || [ "${DATABASE:-}" = "true" ] || [ "${SECURITY:-}" = "true" ] \
               || [ "${PAYMENT:-}" = "true" ] || [ "${MOBILE:-}" = "true" ] \
               || [ "${GOOGLE_CALENDAR:-}" = "true" ] || [ "${EXTENDED:-}" = "true" ] \
+              || [ "${STORAGE_PHOTOS:-}" = "true" ] || [ "${WEBKIT_SURFACE:-}" = "true" ] \
               || [ "$SPEC_PHOTO" = "true" ] || [ "$SPEC_WEBKIT" = "true" ]; then
               DEFERRED="true"
             fi
@@ -1543,6 +1551,8 @@ jobs:
           DATABASE: ${{ needs.changes.outputs.database }}
           SECURITY: ${{ needs.changes.outputs.security }}
           PAYMENT: ${{ needs.changes.outputs.payment }}
+          STORAGE_PHOTOS: ${{ needs.changes.outputs.storage_photos }}
+          WEBKIT_SURFACE: ${{ needs.changes.outputs.webkit_surface }}
           MOBILE: ${{ needs.changes.outputs.mobile }}
           GOOGLE_CALENDAR: ${{ needs.changes.outputs.google_calendar }}
           BROWSER_SPECS: ${{ needs.changes.outputs.browser_specs }}
@@ -2433,7 +2443,8 @@ jobs:
   # whole suite" rule, correct only for a run that reaches the shards), so a
   # docs-only or no-browser diff - shards skipped - still started this job and
   # webkit-hon-62. That extended term no longer starts this job on such diffs.
-  # It also runs on ANY database change: CI's db lane starts Supabase without
+  # CI-SELECT-03: it runs on a database change only when that change can touch storage (`storage_photos`, scripts/classify-changes.mjs). Before
+  # that it ran on ANY database change: CI's db lane starts Supabase without
   # storage-api, so this is the only PR-time check of storage buckets and their
   # policies. full_matrix_required and the spec terms are unchanged.
   #
@@ -2449,7 +2460,7 @@ jobs:
   storage-photos:
     name: storage photos (not required)
     needs: [changes, records-preflight, validate]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.database == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts') ) }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || needs.changes.outputs.storage_photos == 'true' || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-thumbnail-recovery.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/treatment-image-upload-formats.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-client-portrait.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts') ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:
@@ -2718,7 +2729,7 @@ jobs:
   webkit-hon-62:
     name: webkit time inputs (HON-62, not required)
     needs: [changes, records-preflight, validate]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.payment == 'true' ) }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.records-preflight.result == 'success' && (github.event_name != 'pull_request' || needs.validate.result == 'success') && github.event.pull_request.draft != true && ( needs.changes.outputs.full_matrix_required == 'true' || (github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && needs.changes.outputs.browser_extended == 'true') || contains(needs.changes.outputs.browser_specs, 'e2e/availability-hours-editor.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/finish-appointment-mobile.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photos-touch-floor.spec.ts') || needs.changes.outputs.webkit_surface == 'true' ) }}
     runs-on: ubuntu-24.04
     # D7b: read-only package scope for the authenticated ghcr.io image pull only.
     permissions:

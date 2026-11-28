@@ -156,9 +156,21 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
 
 // -- the route audit, proved from the specs' own URLs -----------------------------------------------------------------------------------
 describe("VERIFIED_ROUTES: every spec that visits an audited route is in a group its path rule selects", () => {
+  // A spec's visits include those made by the helpers it imports (e2e/helpers/**, followed transitively), not only its own text.
+  const textWithHelpers = (abs: string, seen = new Set<string>()): string => {
+    if (seen.has(abs) || !existsSync(abs)) return "";
+    seen.add(abs);
+    const own = readFileSync(abs, "utf8");
+    let all = own;
+    for (const m of own.matchAll(/(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g)) {
+      const base = path.resolve(path.dirname(abs), m[1]);
+      for (const c of [base, `${base}.ts`, `${base}/index.ts`]) if (existsSync(c) && statSync(c).isFile()) { all += "\n" + textWithHelpers(c, seen); break; }
+    }
+    return all;
+  };
   const specFiles = readdirSync(ROOT, { withFileTypes: true })
     .filter((d) => d.isDirectory() && /^e2e(-[\w]+)?$/.test(d.name))
-    .flatMap((d) => readdirSync(path.join(ROOT, d.name)).filter((f) => f.endsWith(".spec.ts")).map((f) => ({ f, text: readFileSync(path.join(ROOT, d.name, f), "utf8") })));
+    .flatMap((d) => readdirSync(path.join(ROOT, d.name)).filter((f) => f.endsWith(".spec.ts")).map((f) => ({ f, text: textWithHelpers(path.join(ROOT, d.name, f)) })));
   const groupsOfSpec = (spec: string) => Object.entries(BROWSER_GROUPS as Record<string, { specs: string[] }>).filter(([, d]) => d.specs.includes(spec)).map(([g]) => g);
   const audit = (urlRe: RegExp, allowed: string[]) => {
     const visitors = specFiles.filter((x) => urlRe.test(x.text));

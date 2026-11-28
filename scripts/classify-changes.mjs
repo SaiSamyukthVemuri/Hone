@@ -20,11 +20,12 @@
 // identically, and nothing committed can go stale.
 // ---------------------------------------------------------------------------
 
-import { readFileSync, appendFileSync } from "node:fs";
+import { readFileSync, readdirSync, appendFileSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DOCS, isDocsPath } from "./docs-paths.mjs";
 import { scanTestDependencies } from "./test-dependencies.mjs";
-import { dbHelperReach } from "./import-graph.mjs";
+import { dbHelperReach, forwardClosure, reverseClosure } from "./import-graph.mjs";
 
 /** Anything here genuinely affects every lane. Kept deliberately short. */
 const FULL_MATRIX = [
@@ -292,6 +293,9 @@ export function classify(files, deps = dependenciesFor()) {
     mobile: false,
     ci_workflows: false,
     full_matrix_required: false,
+    // CI-SELECT-03. The two non-required lanes' own reasons (see laneSurfaces below); default false here; true on the full matrix, including the empty-diff re-run.
+    storage_photos: false,
+    webkit_surface: false,
     // G4. A docs-only diff runs no unit lane, so a document READ BY A UNIT TEST
     // (the ledger wording 0179 pins, the AGENTS.md text the OpenWiki guards
     // read) broke first on the production push. True when any changed file is
@@ -309,6 +313,8 @@ export function classify(files, deps = dependenciesFor()) {
   if (list.length === 0) {
     // No detectable diff (e.g. a re-run). Be conservative: run everything.
     out.full_matrix_required = true;
+    // Conservative means everything, the two non-required lanes included: laneSurfaces would otherwise leave them false on an empty diff.
+    Object.assign(out, laneSurfaces(list, true, {}));
     Object.assign(out, baselineRisk(list, {}, false));
     return out;
   }
@@ -379,7 +385,130 @@ export function classify(files, deps = dependenciesFor()) {
       out[k] = true;
     }
   }
+  Object.assign(out, laneSurfaces(list, out.full_matrix_required, dbDeps));
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// CI-SELECT-03. The two NON-REQUIRED lanes that used to start on a whole lane flag.
+//
+// storage-photos ran on ANY database change and webkit-hon-62 on ANY payment change, although what they execute is narrow:
+//   storage-photos: tests/db/treatment-image-signed-url-route.db.test.ts and five photo specs, on a stack WITH storage-api;
+//   webkit-hon-62: four WebKit specs and e2e-payment/quick-checkout-payment.spec.ts.
+// A changed file can alter their result only if it is something they load. These flags say so, and fail SAFE: a migration whose text cannot be
+// read, or that names the surface, counts; a file the import closure of the lane's own tests reaches counts; the full matrix counts.
+// The named specs still start the lanes through browser_specs, unchanged.
+// ---------------------------------------------------------------------------
+export const STORAGE_DB_TEST = "tests/db/treatment-image-signed-url-route.db.test.ts";
+const STORAGE_PATHS = [/^lib\/images\//, /^lib\/storage\//, /storage/i, /treatment-image/i, /photo/i, /^supabase\/config\.toml$/];
+const STORAGE_SQL = /storage\.|\bbucket|treatment_image|photo|signed/i;
+export const WEBKIT_PAYMENT_SEEDS = ["components/quick-checkout-modal.tsx", "app/(app)/quick-checkout-actions.ts", "e2e-payment/quick-checkout-payment.spec.ts"];
+const WEBKIT_PATHS = [/quick-checkout/i, /^e2e-payment\//, /^playwright\.payment\.config/, /^tests\/db\/helpers\/payment-seed/];
+const WEBKIT_SQL = /payment|checkout|invoice|charge|receipt/i;
+
+function migrationText(f) {
+  try {
+    return readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
+  } catch {
+    return null; // deleted or unreadable: cannot prove it is unrelated
+  }
+}
+
+// The storage policies call helpers (is_studio_member, from 0001/0092) and the helpers read tables (practitioners). A migration that redefines one of
+// them names none of the storage words, so it would not start the only PR-time check of those policies. The list is DERIVED, not hard-coded: every
+// `create policy` statement in a migration that names the storage surface contributes the public functions it calls and the tables it reads, and each
+// such function contributes the tables and functions its latest definition reads (two levels).
+const FN_DEF = /create\s+(?:or\s+replace\s+)?function\s+public\.(\w+)\s*\([\s\S]*?\$(\w*)\$([\s\S]*?)\$\2\$/gi;
+const refsIn = (text) => ({
+  fns: [...text.matchAll(/\bpublic\.(\w+)\s*\(/g)].map((m) => m[1]),
+  tables: [...text.matchAll(/\b(?:from|join)\s+(?:only\s+)?public\.(\w+)/gi)].map((m) => m[1]),
+});
+let storageDepsCache = new Map();
+export function storagePolicyDeps(root) {
+  if (storageDepsCache.has(root)) return storageDepsCache.get(root);
+  const dir = path.join(root, "supabase/migrations");
+  const fnBody = new Map();
+  const policies = [];
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".sql")).sort()) {
+    const t = readFileSync(path.join(dir, f), "utf8");
+    for (const m of t.matchAll(FN_DEF)) fnBody.set(m[1], m[3]); // later migrations win
+    if (STORAGE_SQL.test(t)) for (const m of t.matchAll(/create\s+policy\s[\s\S]*?;/gi)) policies.push(m[0]);
+  }
+  const fns = new Set();
+  const tables = new Set();
+  let frontier = [];
+  for (const body of policies) {
+    const r = refsIn(body);
+    r.fns.forEach((n) => frontier.push(n));
+    r.tables.forEach((n) => tables.add(n));
+  }
+  for (let depth = 0; depth < 2 && frontier.length; depth++) {
+    const next = [];
+    for (const n of frontier) {
+      if (fns.has(n)) continue;
+      fns.add(n); // in the set BEFORE its definition is parsed: a function whose body cannot be found is still watched
+      if (!fnBody.has(n)) continue;
+      const r = refsIn(fnBody.get(n));
+      r.tables.forEach((x) => tables.add(x));
+      r.fns.forEach((x) => next.push(x));
+    }
+    frontier = next;
+  }
+  const out = { fns: [...fns].sort(), tables: [...tables].sort() };
+  storageDepsCache.set(root, out);
+  return out;
+}
+// Matches DDL on a derived function or table: define, drop, alter, or change who may run or read it (grant, revoke), and policies or triggers on a
+// derived table. KNOWN LIMIT (documented, not solved): a function called WITHOUT the `public.` qualifier inside a policy is not seen by the
+// derivation, and `grant ... on all functions in schema public` names no function. Both would need a SQL parser; the lane's other triggers
+// (storage words, the full matrix on shared infrastructure) still cover the usual cases.
+export function touchesStorageDeps(text, deps) {
+  const fnNames = deps.fns.join("|");
+  const tbNames = deps.tables.join("|");
+  const res = [];
+  if (fnNames) {
+    res.push(new RegExp(`(?:create(?:\\s+or\\s+replace)?|drop|alter)\\s+function\\s+(?:if\\s+exists\\s+)?(?:public\\.)?(?:${fnNames})\\b`, "i"));
+    res.push(new RegExp(`\\b(?:grant|revoke)\\b[^;]*?\\bon\\s+function\\s+(?:public\\.)?(?:${fnNames})\\b`, "i"));
+  }
+  if (tbNames) {
+    res.push(new RegExp(`(?:create|drop|alter)\\s+table\\s+(?:if\\s+(?:not\\s+)?exists\\s+)?(?:only\\s+)?(?:public\\.)?(?:${tbNames})\\b`, "i"));
+    res.push(new RegExp(`\\b(?:grant|revoke)\\b[^;]*?\\bon\\s+(?:table\\s+)?(?:public\\.)?(?:${tbNames})\\b`, "i"));
+    res.push(new RegExp(`(?:create(?:\\s+constraint)?|alter|drop)\\s+(?:policy|trigger)\\b[^;]*?\\bon\\s+(?:only\\s+)?(?:public\\.)?(?:${tbNames})\\b`, "i"));
+  }
+  return res.some((re) => re.test(text));
+}
+
+// Built once per checkout: the graph walks read about 1,500 files, and classify() is called many times in one process (tests, replays).
+const closureCache = new Map();
+function surfaceClosures(root) {
+  if (closureCache.has(root)) return closureCache.get(root);
+  const out = {
+    storageClosure: forwardClosure(root, [STORAGE_DB_TEST]),
+    // Forward: what the seeds run (a helper they import). Reverse: what renders or calls them (checkout-button, dashboard-checkout-entry, the pages).
+    webkitClosure: new Set([...forwardClosure(root, WEBKIT_PAYMENT_SEEDS), ...reverseClosure(root, WEBKIT_PAYMENT_SEEDS)]),
+  };
+  closureCache.set(root, out);
+  return out;
+}
+
+function laneSurfaces(list, full, dbDeps) {
+  if (full) return { storage_photos: true, webkit_surface: true };
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const { storageClosure, webkitClosure } = surfaceClosures(root);
+  const isMigration = (f) => /^supabase\/migrations\/.*\.sql$/.test(f);
+  const storage = list.some((f) => {
+    if (STORAGE_PATHS.some((re) => re.test(f)) || storageClosure.has(f) || (dbDeps[f] ?? []).includes?.(STORAGE_DB_TEST)) return true;
+    if (!isMigration(f)) return false;
+    const t = migrationText(f);
+    return t === null || STORAGE_SQL.test(t) || touchesStorageDeps(t, storagePolicyDeps(root));
+  });
+  const webkit = list.some((f) => {
+    if (WEBKIT_PATHS.some((re) => re.test(f)) || webkitClosure.has(f)) return true;
+    if (!isMigration(f)) return false;
+    const t = migrationText(f);
+    return t === null || WEBKIT_SQL.test(t);
+  });
+  return { storage_photos: storage, webkit_surface: webkit };
 }
 
 function parseArgs(argv) {

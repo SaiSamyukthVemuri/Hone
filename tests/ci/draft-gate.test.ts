@@ -68,10 +68,11 @@ describe("CI-DRAFT-01 triggers", () => {
 // two lanes run only for their own spec, database, payment or full-matrix terms.
 const EXTENDED_TERM = "needs.changes.outputs.browser_extended == 'true'";
 const LATER_EDITS: Record<string, (inner: string) => string> = {
-  // storage-photos also runs on any database change (CI's db lane has no storage-api).
+  // storage-photos runs on a database change that can touch storage (CI-SELECT-03 storage_photos; CI's db lane has no storage-api).
   // The photo label spec (uploads, so it needs storage) is the other deliberate later edit: a diff touching only that spec starts this job.
-  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM}) || needs.changes.outputs.database == 'true'`) + " || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts')",
-  "webkit-hon-62": (s) => s.replace(EXTENDED_TERM, `(github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM})`),
+  "storage-photos": (s) => s.replace(EXTENDED_TERM, `(github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM}) || needs.changes.outputs.storage_photos == 'true'`) + " || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-labels.spec.ts') || contains(needs.changes.outputs.browser_specs, 'e2e/fett-photo-privacy.spec.ts')",
+  // CI-SELECT-03: the payment term is the narrower webkit_surface (the quick-checkout surface the lane's payment spec loads).
+  "webkit-hon-62": (s) => s.replace(EXTENDED_TERM, `(github.event_name != 'pull_request' && needs.changes.outputs.browser_run == 'true' && ${EXTENDED_TERM})`).replace("needs.changes.outputs.payment == 'true'", "needs.changes.outputs.webkit_surface == 'true'"),
 };
 
 describe("CI-DRAFT-01 job conditions", () => {
