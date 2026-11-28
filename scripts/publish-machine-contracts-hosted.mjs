@@ -14,7 +14,7 @@ import { homedir, tmpdir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { execFileSync } from "node:child_process";
 import { runHosted, makeHostedClient, makeFsLedger, sha256, Refusal } from "./lib/hosted-publish.mjs";
-import { resolveProductionBranch } from "./lib/production-branch.mjs";
+import { resolveProductionBranch, remoteBranchExistsViaLsRemote } from "./lib/production-branch.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2);
@@ -51,7 +51,7 @@ const git = (a) => execFileSync("git", a, { cwd: root, env: scrubbed, encoding: 
 let productionBranchMemo = null;
 const productionBranch = () => (productionBranchMemo ??= resolveProductionBranch({
   override: null,
-  remoteBranchExists: (n) => { try { execFileSync("git", ["ls-remote", "--exit-code", "--heads", "origin", n], { cwd: root, env: scrubbed, stdio: "ignore" }); return true; } catch { return false; } },
+  remoteBranchExists: (n) => remoteBranchExistsViaLsRemote((a) => execFileSync("git", a, { cwd: root, env: scrubbed, stdio: "ignore" }), n),
 }));
 const ledgerDir = join(homedir(), ".hone-publish-ledger");
 const receiptsDir = join(root, "docs/production/hosted-publication-receipts");

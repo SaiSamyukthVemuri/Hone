@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 // @ts-expect-error - .mjs utilities ship without type declarations
-import { NEW_PRODUCTION_BRANCH, OLD_PRODUCTION_BRANCH, resolveProductionBranch } from "../../scripts/lib/production-branch.mjs";
+import { NEW_PRODUCTION_BRANCH, OLD_PRODUCTION_BRANCH, resolveProductionBranch, remoteBranchExistsViaLsRemote } from "../../scripts/lib/production-branch.mjs";
 
 // The production branch rename (claude/build-hone-saas-hOex7 -> main) must be survivable in BOTH orders: this tooling merges first, so it has to behave before and after.
 const exists = (names: string[]) => (n: string) => names.includes(n);
@@ -57,4 +57,30 @@ describe("the hosted publisher's dry run (and no-argument usage) makes NO networ
       expect(calls).not.toMatch(/\b(ls-remote|fetch|pull|clone)\b/);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 120_000);
+});
+
+describe("remoteBranchExistsViaLsRemote: only exit code 2 means the branch is absent", () => {
+  // A real child process, through a `git` shim on PATH that answers `ls-remote` with the given exit code and prints nothing else.
+  const withShim = (code: number, fn: (run: (a: string[]) => unknown) => void) => {
+    const dir = mkdtempSync(join(tmpdir(), "lsremote-"));
+    try {
+      const shim = join(dir, "git");
+      writeFileSync(shim, `#!/bin/sh\nexit ${code}\n`);
+      chmodSync(shim, 0o755);
+      fn((a) => execFileSync("git", a, { env: { PATH: dir } as unknown as NodeJS.ProcessEnv, stdio: "ignore" }));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  it("exit 0: present", () => withShim(0, (run) => expect(remoteBranchExistsViaLsRemote(run, "main")).toBe(true)));
+  it("exit 2 (no matching ref): absent, so the resolver falls back to the old name", () => withShim(2, (run) => {
+    expect(remoteBranchExistsViaLsRemote(run, "main")).toBe(false);
+    expect(resolveProductionBranch({ remoteBranchExists: (n: string) => remoteBranchExistsViaLsRemote(run, n) })).toBe(OLD_PRODUCTION_BRANCH);
+  }));
+  it("exit 128 (network, auth or no remote) is NOT 'absent': it refuses instead of falling back", () => withShim(128, (run) => {
+    expect(() => remoteBranchExistsViaLsRemote(run, "main")).toThrow(/cannot tell whether origin has main \(git exited 128\)/);
+    expect(() => resolveProductionBranch({ remoteBranchExists: (n: string) => remoteBranchExistsViaLsRemote(run, n) })).toThrow(/refusing to guess/);
+  }));
+  it("any other failure, including exit 1 and a thrown error with no status, also refuses", () => {
+    withShim(1, (run) => expect(() => remoteBranchExistsViaLsRemote(run, "main")).toThrow(/refusing/));
+    expect(() => remoteBranchExistsViaLsRemote(() => { throw new Error("spawn git ENOENT"); }, "main")).toThrow(/spawn git ENOENT/);
+  });
 });

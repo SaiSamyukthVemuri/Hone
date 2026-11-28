@@ -14,3 +14,21 @@ export function resolveProductionBranch({ override, remoteBranchExists }) {
   if (typeof override === "string" && override.trim() !== "") return override.trim();
   return remoteBranchExists(NEW_PRODUCTION_BRANCH) ? NEW_PRODUCTION_BRANCH : OLD_PRODUCTION_BRANCH;
 }
+
+/**
+ * Does `origin` have this branch? Asks the remote (`git ls-remote --exit-code --heads`), so a stale local ref cannot answer.
+ * Exit code 2 is git's "no matching ref": the branch is ABSENT. Any other failure (network down, auth, a missing remote: 128 and the rest) tells us nothing about the branch,
+ * so it THROWS rather than reading as "absent" and silently falling back to the old name.
+ * @param {(args: string[]) => unknown} run runs `git <args>` and throws the child's error (with `.status`) on a non-zero exit
+ * @param {string} name
+ */
+export function remoteBranchExistsViaLsRemote(run, name) {
+  try {
+    run(["ls-remote", "--exit-code", "--heads", "origin", name]);
+    return true;
+  } catch (e) {
+    if (e && typeof e === "object" && e.status === 2) return false;
+    const why = e && typeof e === "object" && "status" in e ? `git exited ${e.status}` : e instanceof Error ? e.message : String(e);
+    throw new Error(`cannot tell whether origin has ${name} (${why}): refusing to guess the production branch`);
+  }
+}
