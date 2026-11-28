@@ -122,7 +122,7 @@ create table if not exists public.client_note_drafts (
     coalesce(length(fields->>'budget_level'), 0) <= 40
     and coalesce(length(fields->>'occurred_at'), 0) <= 40
     and (jsonb_typeof(fields->'areas') is distinct from 'array'
-         or not exists (select 1 from jsonb_array_elements(fields->'areas') a where jsonb_typeof(a) <> 'string' or length(a #>> '{}') > 200))
+         or not jsonb_path_exists(fields, '$.areas[*] ? (@.type() != "string" || @ like_regex "^.{201}")'))
   ),
   constraint client_note_drafts_revision_check check (revision >= 1),
   constraint client_note_drafts_null_only_when_cleared_check check (fields is not null or cleared_at is not null),

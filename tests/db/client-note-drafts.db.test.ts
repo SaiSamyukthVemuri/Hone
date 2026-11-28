@@ -81,11 +81,10 @@ describe("Privacy conditions on the exact SQL", () => {
   it("pin: the clinical write path carries exactly the known triggers, including the new AFTER INSERT clear", async () => {
     const res = await adminQuery(`select tgname from pg_trigger where tgrelid = 'public.client_clinical_notes'::regclass and not tgisinternal order by tgname`);
     const names = res.rows.map((r) => r.tgname as string);
-    expect(names).toContain("client_note_drafts_clear_on_note");
+    expect(names).toEqual(["client_clinical_notes_before_insert", "client_clinical_notes_no_update", "client_note_drafts_clear_on_note"]);
     const t = await adminQuery(`select (tgtype & 2) = 0 as after_row, (tgtype & 4) <> 0 as on_insert, (tgtype & 8) = 0 as not_delete, (tgtype & 16) = 0 as not_update from pg_trigger where tgname = 'client_note_drafts_clear_on_note'`);
     expect(t.rows[0]).toEqual({ after_row: true, on_insert: true, not_delete: true, not_update: true });
-    // Any later trigger on this table must be added here on purpose.
-    expect(names).toEqual([...names].sort());
+    // Any later trigger on this table must be added to the list above on purpose.
   });
 
   it("only the editor's own keys can be stored, per kind; budget_level and each area are capped", async () => {

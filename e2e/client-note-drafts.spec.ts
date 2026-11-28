@@ -74,6 +74,22 @@ test("each note type keeps the latest text across a section switch and a refresh
   await expect(page.getByText(/Draft restored \(saved \d\d:\d\d\)/).first()).toBeVisible();
 });
 
+test("a budget chip is a draft change: tap, switch away, come back, refresh, and it is still pressed without Save", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await page.goto(treatment(clientId));
+  const form = page.locator("form", { has: page.locator("#client-budget-notes") });
+  const chip = form.getByRole("button", { name: /^somewhat limited$/i });
+  await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+  await expect(form.getByText(/Draft saved \d\d:\d\d/)).toBeVisible({ timeout: T });
+  await page.goto(`/clients/${clientId}?tab=overview`);
+  await page.goto(treatment(clientId));
+  await page.reload();
+  await expect(page.locator("form", { has: page.locator("#client-budget-notes") }).getByRole("button", { name: /^somewhat limited$/i })).toHaveAttribute("aria-pressed", "true", { timeout: T });
+  await expect(page.getByText(/Draft restored \(saved \d\d:\d\d\)/).first()).toBeVisible();
+});
+
 test("a failed save keeps the text and says so; Retry saves", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page);
