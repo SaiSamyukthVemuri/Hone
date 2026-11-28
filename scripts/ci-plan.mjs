@@ -13,15 +13,25 @@
 
 import { execFileSync } from "node:child_process";
 import { classify } from "./classify-changes.mjs";
+import { resolveProductionBranch } from "./lib/production-branch.mjs";
 import { selectBrowserGroups, specsForGroups, BROWSER_GROUPS, EXTENDED } from "./browser-groups.mjs";
 
-const BASE_BRANCH = process.env.HONE_BASE_BRANCH ?? "claude/build-hone-saas-hOex7";
+// `main` once the production branch is renamed, else the old name (HONE_BASE_BRANCH still overrides). Resolved when asked, not at import.
+function remoteBranchExists(name) {
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${name}`], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const baseBranch = () => resolveProductionBranch({ override: process.env.HONE_BASE_BRANCH, remoteBranchExists });
 
 export function changedFiles() {
   const explicit = process.argv.indexOf("--files");
   if (explicit !== -1) return process.argv[explicit + 1].split(",");
   try {
-    const base = execFileSync("git", ["merge-base", "HEAD", `origin/${BASE_BRANCH}`], {
+    const base = execFileSync("git", ["merge-base", "HEAD", `origin/${baseBranch()}`], {
       encoding: "utf8",
     }).trim();
     const committed = execFileSync("git", ["diff", "--name-only", "--no-renames", base, "HEAD"], { encoding: "utf8" });
