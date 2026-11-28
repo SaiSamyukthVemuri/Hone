@@ -212,7 +212,7 @@ export class DraftSaver {
       const delay = this.o.retryMs[Math.min(this.failures, this.o.retryMs.length - 1)];
       this.failures += 1;
       this.set({ phase: "error" });
-      if (result.status === "error") this.timer = this.o.setTimer(() => void this.run(), delay);
+      if (result.status === "error" && !this.disposed) this.timer = this.o.setTimer(() => void this.run(), delay);
     }
     const waiters = this.idleWaiters;
     this.idleWaiters = [];

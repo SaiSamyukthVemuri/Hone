@@ -24,7 +24,7 @@
 // app/api/stripe/*.
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { latestDraft } from "@/lib/note-drafts/draft-registry";
+import { latestDraft, type DraftActions } from "@/lib/note-drafts/draft-registry";
 import { useNoteDraft } from "@/lib/note-drafts/use-note-draft";
 import { NoteDraftStatus } from "@/components/note-draft-status";
 import type { NoteDraftFields, NoteDraftKey, NoteDraftSaveResult, StoredNoteDraft } from "@/lib/note-drafts/types";
@@ -79,10 +79,7 @@ export function ClientBudgetCard({
   draftActions,
 }: {
   draft?: StoredNoteDraft | null;
-  draftActions?: {
-    save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string }) => Promise<NoteDraftSaveResult>;
-    discard: (key: NoteDraftKey) => Promise<{ ok: boolean }>;
-  };
+  draftActions?: DraftActions;
   clientId: string;
   initial: {
     budgetLevel: ClientBudgetLevel | null;
@@ -94,7 +91,7 @@ export function ClientBudgetCard({
 }) {
   const draftKey: NoteDraftKey = { clientId, kind: "budget", target: "current" };
   // Start from the NEWEST text this tab knows (held after a failed flush, or saved since the page loaded), else the page's stored draft.
-  const [start] = useState(() => (draftActions ? latestDraft(draftKey, restored) : null));
+  const [start] = useState(() => (draftActions ? latestDraft(draftKey, restored, draftActions.scope) : null));
   const [level, setLevel] = useState<ClientBudgetLevel | null>(
     (start?.fields.budget_level as ClientBudgetLevel | undefined) ?? initial.budgetLevel,
   );
@@ -108,7 +105,7 @@ export function ClientBudgetCard({
     setBudgetInit(next);
     setNotesKey((k) => k + 1);
   }
-  const draft = useNoteDraft(draftKey, restored, draftActions ?? { save: async () => ({ status: "error" }), discard: async () => ({ ok: false }) });
+  const draft = useNoteDraft(draftKey, restored, draftActions ?? { scope: "none", save: async () => ({ status: "error" }), discard: async () => ({ ok: false }) });
   const [restoredAt, setRestoredAt] = useState<string | null>(start && !start.unsaved ? start.savedAt : null);
   // A chip change is a draft change too (the chips keep their original one-line handlers; this effect reports the change).
   const levelSeen = useRef(level);

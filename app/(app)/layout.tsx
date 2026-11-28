@@ -7,6 +7,7 @@ import { NotificationsProvider } from "./NotificationsProvider";
 import { SearchProvider } from "./SearchProvider";
 import { BusinessMenu } from "./BusinessMenu";
 import { SignOutFlightProvider } from "./signout-flight";
+import { DraftRegistryGuard } from "./DraftRegistryGuard";
 import { createClient } from "@/lib/supabase/server";
 import {
   listActiveStudioMemberships,
@@ -236,6 +237,7 @@ export default async function AppLayout({
       </SearchProvider>
       </NotificationsProvider>
       </SignOutFlightProvider>
+      <DraftRegistryGuard />
       <AppMain>{children}</AppMain>
       <AppFooter />
       {/* PR #142. Analytics mounts here (and at the other safe-tree

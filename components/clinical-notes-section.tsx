@@ -169,10 +169,13 @@ export function ClinicalNotesSection({
 }
 
 export type DraftActions = {
+  /** Practitioner + studio of the signed-in session: the draft registry is partitioned by it. */
+  scope: string;
   save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string }) => Promise<NoteDraftSaveResult>;
   discard: (key: NoteDraftKey) => Promise<{ ok: boolean }>;
 };
 const NO_DRAFT_ACTIONS: DraftActions = {
+  scope: "none",
   save: async () => ({ status: "error" }),
   discard: async () => ({ ok: false }),
 };
@@ -415,7 +418,7 @@ function NoteForm({
   const router = useRouter();
   const draftKey: NoteDraftKey = { clientId, kind, target: targetFor(kind, mode === "revise" && revising ? revising.id : null) };
   // Start from the NEWEST text this tab knows (a draft held after a failed flush, or saved since the page loaded), else the page's stored draft.
-  const [start] = useState(() => (draftActions ? latestDraft(draftKey, restored) : null));
+  const [start] = useState(() => (draftActions ? latestDraft(draftKey, restored, draftActions.scope) : null));
   const [areasText, setAreasText] = useState(
     start?.fields.areas ? start.fields.areas.join(", ") : revising ? revising.areas.join(", ") : "",
   );

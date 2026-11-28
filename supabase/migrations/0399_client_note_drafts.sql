@@ -195,7 +195,9 @@ language plpgsql
 set search_path = pg_catalog, pg_temp
 as $$
 begin
-  if (select count(*) from public.client_note_drafts d where d.practitioner_id = new.practitioner_id and d.cleared_at is null) >= 200 then
+  -- A TOMBSTONE insert (cleared_at set, written by the clear triggers inside a record's own save) is never capped: the clear must not fail.
+  if new.cleared_at is null
+     and (select count(*) from public.client_note_drafts d where d.practitioner_id = new.practitioner_id and d.cleared_at is null) >= 200 then
     raise exception 'too many drafts for this practitioner' using errcode = 'check_violation';
   end if;
   return new;

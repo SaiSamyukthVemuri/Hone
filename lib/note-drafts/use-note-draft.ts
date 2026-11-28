@@ -64,7 +64,7 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
     /** The real record was saved (its transaction already cleared the draft): stop sending and remember the draft is gone. */
     settle: () => {
       saver.settle();
-      markNone(key);
+      markNone(key, entry.actions.scope);
     },
     /**
      * Delete the stored draft. Stops sending first and waits for any request in flight, so a late save cannot recreate the draft. TRUE only when
@@ -80,7 +80,7 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
       }
       if (ok) {
         saver.settle();
-        markNone(key);
+        markNone(key, entry.actions.scope);
         setDiscardFailed(false);
         return true;
       }

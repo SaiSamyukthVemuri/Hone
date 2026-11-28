@@ -244,6 +244,30 @@ describe("visibility and privileges", () => {
 });
 
 describe("one transaction: saving the record clears the draft", () => {
+  it("a practitioner AT the 200-live-draft cap can still save a note and a budget record, and the tombstones are written", async () => {
+    await wipe();
+    const ids = (await adminQuery(
+      `insert into public.clients (id, studio_id, name, email) select gen_random_uuid(), $1, 'cap2 ' || g, 'cap2-' || g || '@harness.local' from generate_series(1, 200) g returning id`,
+      [a.studioId],
+    )).rows.map((r) => r.id as string);
+    try {
+      await adminQuery(
+        `insert into public.client_note_drafts (studio_id, client_id, practitioner_id, kind, target, fields)
+         select $1, c, $2, 'consultation', 'new', '{"body":"x"}'::jsonb from unnest($3::uuid[]) c`,
+        [a.studioId, a.practitionerId, ids],
+      );
+      await expect(save(a.userId, a, "skin_hair_analysis", "new", { body: "over the cap" }, 0)).rejects.toThrow(); // a LIVE draft is still capped
+      // The clinical save must NOT fail: no draft row exists for these keys yet, so each clear inserts a tombstone, which the cap must let through.
+      await asUser(a.userId, (q) => q(NOTE, [a.clientId, a.studioId, a.practitionerId, "skin_hair_analysis", "saved at the cap", null]));
+      await asUser(a.userId, (q) => q(`insert into public.client_budget_context (client_id, studio_id, budget_notes, updated_by_practitioner_id) values ($1, $2, 'saved at the cap', $3) on conflict (client_id) do update set budget_notes = excluded.budget_notes, updated_by_practitioner_id = excluded.updated_by_practitioner_id`, [a.clientId, a.studioId, a.practitionerId]));
+      expect((await draftRow(a, a.practitionerId, "skin_hair_analysis", "new")).cleared_at).not.toBeNull();
+      expect((await draftRow(a, a.practitionerId, "budget", "current")).cleared_at).not.toBeNull();
+    } finally {
+      await adminQuery(`delete from public.clients where id = any($1::uuid[])`, [ids]);
+      await adminQuery(`delete from public.client_budget_context where client_id = $1`, [a.clientId]);
+    }
+  });
+
   it("a note insert clears exactly the author's matching draft; other practitioners, kinds and targets are untouched", async () => {
     await wipe();
     await save(a.userId, a, "consultation", "new", { body: "mine" }, 0);

@@ -1845,7 +1845,7 @@ export default async function ClientCheatSheetPage({
           addAction={addClinicalNoteAction}
           reviseAction={reviseClinicalNoteAction}
           drafts={noteDrafts}
-          draftActions={noteDraftsEnabledFor(studio.id) ? { save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
+          draftActions={noteDraftsEnabledFor(studio.id) ? { scope: `${practitioner.id}:${studio.id}`, save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
           printHref={`/clients/${client.id}/clinical-notes/print`}
         />
       )}
@@ -1881,7 +1881,7 @@ export default async function ClientCheatSheetPage({
             }}
             action={updateClientBudgetContextAction}
             draft={noteDrafts.find((d) => d.key.kind === "budget") ?? null}
-            draftActions={noteDraftsEnabledFor(studio.id) ? { save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
+            draftActions={noteDraftsEnabledFor(studio.id) ? { scope: `${practitioner.id}:${studio.id}`, save: saveNoteDraftAction, discard: discardNoteDraftAction } : undefined}
           />
         )}
 

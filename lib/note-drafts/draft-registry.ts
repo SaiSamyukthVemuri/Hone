@@ -9,6 +9,11 @@ import type { NoteDraftFields, NoteDraftKey, NoteDraftSaveResult, StoredNoteDraf
 // the returning editor shows the latest text and the real state (including the failure), and no second writer races it. It also answers
 // "Cancel, then Add note again": the form reopens with the latest draft rather than the one the page was loaded with.
 export type DraftActions = {
+  /**
+   * WHO this saver belongs to (practitioner id + studio id, from the server session). The registry holds clinical text and retries in the
+   * background, so it is partitioned by identity: a different identity never sees, and never sends, another identity's text.
+   */
+  scope: string;
   save: (input: { key: NoteDraftKey; fields: NoteDraftFields; expectedRevision: number; writer: string }) => Promise<NoteDraftSaveResult>;
   discard: (key: NoteDraftKey) => Promise<{ ok: boolean }>;
 };
@@ -25,14 +30,18 @@ export type DraftEntry = {
 };
 
 const entries = new Map<string, DraftEntry>();
-const idOf = (k: NoteDraftKey) => `${k.clientId}|${k.kind}|${k.target}`;
+let currentScope: string | null = null;
+const idOf = (k: NoteDraftKey) => `${currentScope}|${k.clientId}|${k.kind}|${k.target}`;
 
-export function peekEntry(key: NoteDraftKey): DraftEntry | undefined {
-  return entries.get(idOf(key));
+/** Any identity or studio change drops EVERY saver first: timers cleared, queued text discarded, no send can follow. */
+function enterScope(scope: string): void {
+  if (currentScope !== null && currentScope !== scope) resetDraftRegistry();
+  currentScope = scope;
 }
 
 /** The saver for this key, created on first use (continuing from the server's stored draft, if any). */
 export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions, onState: (s: DraftState) => void): DraftEntry {
+  enterScope(actions.scope);
   let entry = entries.get(idOf(key));
   if (!entry) {
     const created: DraftEntry = {
@@ -64,7 +73,8 @@ export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null
  * What a (re)opened editor should start from: the saver's latest text when this tab holds newer or unsaved work, else the server's stored draft.
  * Returns null for "no draft".
  */
-export function latestDraft(key: NoteDraftKey, fromServer: StoredNoteDraft | null): { fields: NoteDraftFields; revision: number; savedAt: string | null; unsaved: boolean } | null {
+export function latestDraft(key: NoteDraftKey, fromServer: StoredNoteDraft | null, scope: string): { fields: NoteDraftFields; revision: number; savedAt: string | null; unsaved: boolean } | null {
+  enterScope(scope);
   const entry = entries.get(idOf(key));
   const server = fromServer ? { fields: fromServer.fields, revision: fromServer.revision, savedAt: fromServer.savedAt as string | null, unsaved: false } : null;
   if (!entry) return server;
@@ -79,7 +89,8 @@ export function latestDraft(key: NoteDraftKey, fromServer: StoredNoteDraft | nul
 }
 
 /** Mark the draft gone for this key (record saved or discarded). */
-export function markNone(key: NoteDraftKey): void {
+export function markNone(key: NoteDraftKey, scope: string): void {
+  if (scope !== currentScope) return;
   const entry = entries.get(idOf(key));
   if (entry) {
     entry.floor = Math.max(entry.floor, entry.saver.currentRevision());
@@ -94,8 +105,12 @@ export function seedEntry(key: NoteDraftKey, fields: NoteDraftFields, actions: D
   entry.saver.change(fields);
 }
 
-/** Tests only. */
+/**
+ * Drop every saver: stop every timer and retry, discard queued text, make any response that is still on its way inert. Called on sign-out (the
+ * signed-in shell unmounting), on an identity or studio change, and by the tests.
+ */
 export function resetDraftRegistry(): void {
   for (const e of entries.values()) e.saver.dispose();
   entries.clear();
+  currentScope = null;
 }
