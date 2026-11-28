@@ -25,10 +25,11 @@ export type ActiveCardSummary = {
   cardAuthorizationSignatureId: string | null;
 };
 
-export async function getActiveCardForStudioClient(
+/** Undefined means the read failed. Null means the account has no active card in this mode. */
+export async function readActiveCardForStudioClient(
   studioId: string,
   clientId: string,
-): Promise<ActiveCardSummary | null> {
+): Promise<ActiveCardSummary | null | undefined> {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("client_payment_methods")
@@ -52,7 +53,7 @@ export async function getActiveCardForStudioClient(
         timestamp: new Date().toISOString(),
       }),
     );
-    return null;
+    return undefined;
   }
   if (!data) return null;
   return {
@@ -65,4 +66,12 @@ export async function getActiveCardForStudioClient(
     cardAuthorizationSignatureId:
       (data.card_authorization_signature_id as string | null) ?? null,
   };
+}
+
+/** The practitioner profile preserves its existing nullable summary. */
+export async function getActiveCardForStudioClient(
+  studioId: string,
+  clientId: string,
+): Promise<ActiveCardSummary | null> {
+  return (await readActiveCardForStudioClient(studioId, clientId)) ?? null;
 }

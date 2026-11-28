@@ -5,7 +5,7 @@
 // ADMIN_EMAILS in prod to manage the allowlist without a code change,
 // e.g.
 //
-//   ADMIN_EMAILS=samyukth.ssv@gmail.com,other@example.com
+//   ADMIN_EMAILS=you@example.com,other@example.com
 //
 // Fail-closed in production
 // -------------------------
@@ -19,15 +19,15 @@
 // path; admin UI routes redirect) and a one-time error is logged so
 // the operator can fix the config.
 //
-// Local development convenience
-// -----------------------------
-// In non-production environments the built-in DEFAULT_ADMIN_EMAILS
-// list is still honored so local dev does not need an .env entry to
-// hit /admin. This is safe because dev never serves real client data
-// from a production database (the dev Supabase project is separate)
-// and the dev secrets do not unlock prod resources.
+// Local development
+// -----------------
+// DEFAULT_ADMIN_EMAILS is empty: no personal address is kept in the
+// repository. To reach /admin locally, set ADMIN_EMAILS in .env.local
+// (see .env.local.example). The e2e harness sets it in
+// e2e/helpers/local-env.ts. Production behaviour is unchanged: it reads
+// ADMIN_EMAILS only and fails closed when it is unset.
 
-const DEFAULT_ADMIN_EMAILS: ReadonlyArray<string> = ["samyukth.ssv@gmail.com"];
+const DEFAULT_ADMIN_EMAILS: ReadonlyArray<string> = [];
 
 let missingEnvWarned = false;
 

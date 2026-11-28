@@ -683,3 +683,7 @@ trigger. See the [migration ledger](./production/migration-ledger.md) +
 3. [docs/production/known-limitations.md](./production/known-limitations.md) — verified residual gaps.
 4. [docs/production/migration-ledger.md](./production/migration-ledger.md) — migration facts.
 5. [docs/14_AI_HANDOFF.md](./14_AI_HANDOFF.md) — dated chronology, historical only.
+
+### Studio portal presentation
+
+`0398_studio_portal_presentations.sql` adds one optional row per studio for the owner’s draft, published copy, and edit revision. The authenticated editing command checks active owner membership within the transaction. Competing edits must use the latest revision. The portal server reads the published column by the studio ID from the client session. The migration performs no backfill. Hosted application is tracked in the production ledger.

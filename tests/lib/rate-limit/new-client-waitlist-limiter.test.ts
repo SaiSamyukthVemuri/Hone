@@ -50,7 +50,7 @@ vi.mock("@upstash/redis", () => ({
 process.env.UPSTASH_REDIS_REST_URL = "https://fake.upstash.io";
 process.env.UPSTASH_REDIS_REST_TOKEN = "fake-token";
 
-const { limitNewClientBookingWaitlist, limitWaitlistSubmit } = await import(
+const { limitNewClientBookingWaitlist, limitWaitlistSubmit, limitPortalMagicLink, limitPortalLinkIp, limitPortalLinkRecipient } = await import(
   "@/lib/rate-limit/public"
 );
 
@@ -241,5 +241,20 @@ describe("dedicated booking-waitlist limiter — identifiers and refusal", () =>
     Ratelimit.prototype.limit = original;
     err.mockRestore();
     warn.mockRestore();
+  });
+});
+
+describe("public portal login and old-link recovery", () => {
+  it("charges the same hashed IP and recipient buckets exactly once across both entry points", async () => {
+    const headers = headersWithIp(IP);
+    await limitPortalMagicLink({ headers, email: EMAIL });
+    const login = [...calls];
+    calls.length = 0;
+    await limitPortalLinkIp(headers);
+    await limitPortalLinkRecipient(EMAIL);
+    expect(calls).toEqual(login);
+    expect(calls.map(call => call.prefix)).toEqual(["rl:portal_login_ip", "rl:portal_login_email"]);
+    expect(JSON.stringify(calls)).not.toContain(IP);
+    expect(JSON.stringify(calls)).not.toContain(EMAIL);
   });
 });
