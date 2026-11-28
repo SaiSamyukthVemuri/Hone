@@ -159,6 +159,8 @@ import { pickLastVisit, pickNextAppointment } from "@/lib/clients/profile-visits
 import { VisitSummary } from "./_profile/VisitSummary";
 import { ContactSidebar } from "./_profile/ContactSidebar";
 import { PendingButton } from "@/components/pending-button";
+import { buttonClasses } from "@/components/ui/button";
+import { TEXT_LINK_FEEDBACK, cx } from "@/components/ui/control-base";
 
 // Parse the studio-local "YYYY-MM-DD" returned by todayInTz() into
 // month/day numbers for the Birthday card's "today" / "this month"
@@ -955,7 +957,7 @@ export default async function ClientCheatSheetPage({
       <section data-testid="client-profile-header">
         <Link
           href={directoryReturnTo ?? "/clients"}
-          className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+          className={cx("inline-flex items-center min-h-[44px] min-w-[44px] text-sm text-neutral-500", TEXT_LINK_FEEDBACK)}
         >
           ← Clients
         </Link>
@@ -1021,7 +1023,7 @@ export default async function ClientCheatSheetPage({
             <PendingLink
               href={`/clients/${client.id}/edit`}
               pendingLabel="Opening the client editor…"
-              className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
+              className={buttonClasses({ variant: "secondary", className: "shrink-0" })}
             >
               Edit
             </PendingLink>
@@ -1036,7 +1038,7 @@ export default async function ClientCheatSheetPage({
           <PendingLink
             href={`/clients/${client.id}/sessions/new`}
             pendingLabel="Opening new session…"
-            className="rounded-md bg-neutral-900 px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+            className={buttonClasses({ variant: "primary" })}
           >
             + Log session
           </PendingLink>
@@ -1155,7 +1157,7 @@ export default async function ClientCheatSheetPage({
             <PendingLink
               href={`/clients/${client.id}?tab=treatment`}
               pendingLabel="Opening consultation…"
-              className="mt-4 inline-flex items-center rounded-md border border-neutral-900 px-3 py-2 text-xs font-medium uppercase tracking-wider text-neutral-900 hover:bg-neutral-50 dark:border-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-900"
+              className={buttonClasses({ variant: "secondary", size: "sm", className: "mt-4 uppercase tracking-wider" })}
             >
               Add skin &amp; hair analysis
             </PendingLink>
@@ -1266,7 +1268,7 @@ export default async function ClientCheatSheetPage({
               <PendingLink
                 href={`/clients/${client.id}/edit`}
               pendingLabel="Opening the client editor…"
-                className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100"
+                className={cx("inline-flex items-center min-h-[44px] min-w-[44px] text-xs text-neutral-500 underline", TEXT_LINK_FEEDBACK)}
               >
                 Edit
               </PendingLink>
@@ -1557,7 +1559,7 @@ export default async function ClientCheatSheetPage({
           <PendingLink
             href={`/clients/${client.id}/images`}
             pendingLabel="Opening treatment photos…"
-            className="inline-flex min-h-[44px] w-fit items-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            className={buttonClasses({ variant: "secondary", className: "w-fit" })}
           >
             Open treatment photos
           </PendingLink>
@@ -1611,7 +1613,7 @@ export default async function ClientCheatSheetPage({
                 <PendingLink
                   href={`/clients/${client.id}/intake`}
                   pendingLabel="Opening intake…"
-                  className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                  className={cx("inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700", TEXT_LINK_FEEDBACK)}
                 >
                   View intake
                 </PendingLink>
@@ -1641,7 +1643,7 @@ export default async function ClientCheatSheetPage({
               <PendingLink
                 href={`/clients/${client.id}/intake`}
                 pendingLabel="Opening intake…"
-                className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                className={cx("inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700", TEXT_LINK_FEEDBACK)}
               >
                 View intake
               </PendingLink>
@@ -1656,7 +1658,7 @@ export default async function ClientCheatSheetPage({
               <PendingLink
                 href={`/clients/${client.id}/intake`}
                 pendingLabel="Opening intake…"
-                className="inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                className={cx("inline-flex items-center min-h-[44px] min-w-[44px] text-sm font-medium text-neutral-700", TEXT_LINK_FEEDBACK)}
               >
                 View intake
               </PendingLink>
@@ -1733,7 +1735,7 @@ export default async function ClientCheatSheetPage({
                       <PendingLink
                         href={`/clients/${client.id}/sessions/${lastTreatment.id}`}
                         pendingLabel="Opening session…"
-                        className="inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700 hover:underline dark:text-neutral-300"
+                        className={cx("inline-flex items-center min-h-[44px] min-w-[44px] text-xs font-medium text-neutral-700", TEXT_LINK_FEEDBACK)}
                       >
                         Open session
                       </PendingLink>
