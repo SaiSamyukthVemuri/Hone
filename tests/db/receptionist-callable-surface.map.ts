@@ -51,6 +51,7 @@ export const CLASSIFICATION: Record<string, { cls: Cls; anon?: boolean; reason: 
   "public.receptionist_cancel_appointment/3": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_create_appointment/5": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.receptionist_move_appointment/6": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
+  "public.front_desk_access/0": { cls: "pure", reason: "Answers only the caller's own entitlement: derived from auth.uid() with no argument, so it cannot be pointed at another person or studio; behaviour proved in front-desk-seats.db.test.ts." },
   "public.receptionist_studio_timezone/1": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.reconcile_my_pending_invitation/0": { cls: "invite", reason: "Identity-only by design (F1): acts on the caller's own verified email and pending invitation; ruled leave-as-is by Privacy." },
   "public.record_adjusted_appointment_settlement/9": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },

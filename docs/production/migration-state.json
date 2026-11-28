@@ -2695,6 +2695,14 @@
       ]
     },
     {
+      "version": "0390",
+      "unhosted_below": [
+        "0387",
+        "0388",
+        "0389"
+      ]
+    },
+    {
       "version": "0391",
       "unhosted_below": [
         "0387",
@@ -2730,10 +2738,6 @@
     {
       "version": "0303",
       "apply_record": "01-ops/rmin-0303-apply-20261108/NOTES.md"
-    },
-    {
-      "version": "0390",
-      "apply_record": "01-ops/RECORD-0390-APPLIED-20261127.md"
     }
   ]
 }

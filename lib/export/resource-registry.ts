@@ -1112,6 +1112,12 @@ export const EXPORT_RESOURCE_REGISTRY: Readonly<Record<string, ResourceDispositi
     reason:
       "Hone operator pilot list (which studios a platform feature is piloted for). Hone's own release configuration, keyed by studio id only; it holds no studio-authored content.",
   },
+  studio_front_desk_seats: {
+    kind: "excluded",
+    category: "platform",
+    reason:
+      "Hone operator grants of Front Desk receptionist seats (capacity, a short operator reason, expiry, revocation). Hone's own release and entitlement configuration, keyed by studio id; it holds no studio-authored content and no client data.",
+  },
   admin_action_events: {
     kind: "excluded",
     category: "platform",
