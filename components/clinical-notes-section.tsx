@@ -490,6 +490,7 @@ function NoteForm({
         <textarea
           name="body"
           key={bodyKey}
+          readOnly={draft.moving}
           defaultValue={bodyInit}
           onChange={(e) => {
             setBody(e.target.value);
@@ -512,6 +513,7 @@ function NoteForm({
           <input
             type="date"
             name="occurred_at"
+            readOnly={draft.moving}
             value={occurredAt}
             onChange={(e) => {
               setOccurredAt(e.target.value);
@@ -527,6 +529,7 @@ function NoteForm({
             </span>
             <input
               type="text"
+              readOnly={draft.moving}
               value={areasText}
               onChange={(e) => {
                 setAreasText(e.target.value);

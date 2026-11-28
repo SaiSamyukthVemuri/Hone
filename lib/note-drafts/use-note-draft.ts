@@ -9,11 +9,14 @@ import type { NoteDraftFields, NoteDraftKey, StoredNoteDraft } from "./types";
 // fails (or conflicts, or is cleared) leaves the text held in the saver for the remount, and the failure is shown there. A flush is never
 // treated as a save unless it says so.
 const FLUSH_TIMEOUT_MS = 5000;
+const MOVE_DISCARD_TIMEOUT_MS = 8000;
 
 /** `enabled` false (autosave off for this studio): a private, unregistered saver that nothing sends from. The registry is never touched. */
 export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null, actions: DraftActions, enabled = true) {
   const [state, setState] = useState<DraftState>({ phase: "idle", savedAt: null, theirs: null });
   const [discardFailed, setDiscardFailed] = useState(false);
+  /** True while Keep as new note moves the text to another key: the editor is read-only so nothing is typed into a key that is being closed. */
+  const [moving, setMoving] = useState(false);
   const [entry] = useState<DraftEntry>(() => acquireEntry(key, restored, actions, () => undefined, enabled));
   const saver = entry.saver;
   entry.actions = actions;
@@ -53,6 +56,7 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
   return {
     state,
     discardFailed,
+    moving,
     change,
     flush: () => saver.flush(),
     retry: () => saver.retry(),
@@ -67,16 +71,32 @@ export function useNoteDraft(key: NoteDraftKey, restored: StoredNoteDraft | null
      * text is not lost (the caller seeds the new key with it) and a live row can only linger until it expires.
      */
     moveOut: async (): Promise<NoteDraftFields | null> => {
-      await saver.quiesce();
-      const fields = saver.latestFields();
+      setMoving(true);
       try {
-        await entry.actions.discard(key, entry.scope);
-      } catch {
-        // ignored, see above
+        await saver.quiesce();
+        // The delete has no deadline of its own: bound it, and fall through to carrying the text if it does not answer.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            entry.actions.discard(key, entry.scope),
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, MOVE_DISCARD_TIMEOUT_MS);
+            }),
+          ]);
+        } catch {
+          // ignored, see above
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+        // Read the text AFTER the await and immediately before settle(): anything typed while the delete was out is held in the saver, and
+        // settle() clears it, so reading earlier would seed the new form with stale text (silent loss).
+        const fields = saver.latestFields();
+        saver.settle();
+        markNone(key, entry.actions.scope);
+        return fields;
+      } finally {
+        setMoving(false);
       }
-      saver.settle();
-      markNone(key, entry.actions.scope);
-      return fields;
     },
     /** The real record was saved (its transaction already cleared the draft): stop sending and remember the draft is gone. */
     settle: () => {

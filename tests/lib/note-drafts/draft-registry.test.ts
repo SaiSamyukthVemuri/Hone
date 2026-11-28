@@ -124,4 +124,13 @@ describe("draft registry", () => {
     window.dispatchEvent(clean);
     expect(clean.defaultPrevented).toBe(false);
   });
+
+  it("a private saver (autosave off) never schedules a timer, even for a failing send", async () => {
+    const save = vi.fn(async () => ({ status: "error" }) as NoteDraftSaveResult);
+    const off = acquireEntry(key, null, actions(save), () => undefined, false);
+    off.saver.change({ body: "x" });
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(save).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

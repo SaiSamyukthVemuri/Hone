@@ -89,6 +89,8 @@ export function acquireEntry(key: NoteDraftKey, restored: StoredNoteDraft | null
     });
     if (restored) created.saver.adopt(restored.fields);
     if (shared) entries.set(idOf(key), created);
+    // A private saver (autosave off, or a server render) must never schedule anything, ever: it is inert from the start.
+    else created.saver.dispose();
     entry = created;
   }
   entry.actions = actions;
