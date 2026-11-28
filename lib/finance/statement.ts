@@ -8,6 +8,10 @@ import { collectedMoneyLines, type CollectedMoneyRow } from "@/lib/finance/colle
 //
 //   collected_*   money Hone knows was collected and kept (card session payment, card fee, owner-recorded cash / e-transfer / other)
 //   refunded_*    card money provably refunded IN FULL (an adjustment; never subtracted from a collected line)
+//   refunded_partial  a refund recorded against ONE payment in the split-payments ledger (HON-122: card, cash or transfer; part or all of it). An
+//                 adjustment too: the payment it came from stays on its own collected line at its full amount, so nothing is netted.
+//   bill_note     the visit's bill total, recorded (HON-123). A note: it is the agreed amount, never money, never summed; it exists so a visit paid
+//                 in parts is judged against its bill and a lone part is never mistaken for the whole fee.
 //   waived        owner-attested as forgiven (an adjustment)
 //   still_owes    a note only, never money, never summed
 //   unresolved    money that may or may not have moved (in-flight, unprovable or partial refund, legacy fee with no refund record)
@@ -29,13 +33,17 @@ export type StatementAppointment = {
   startsAt: string;
 };
 
-export type StatementCardRow = CollectedMoneyRow & { appointmentId: string };
+export type StatementCardRow = CollectedMoneyRow & { appointmentId: string; /** false = a card payment made BEFORE the visit's split bill (not part of it); undefined = not known (treated as part of the bill). */ inBill?: boolean };
 
 export type StatementSettlementRow = {
   appointmentId: string;
   method: string;
   amountCents: number | null;
   currency: string | null;
+  /** `bill_total` rows only: succeeded price reductions inside the bill (see StatementMoneyLine.reducedCents). */
+  reducedCents?: number;
+  /** Only on an `unresolved` line from a refund still in flight (or an open review): the cents awaiting confirmation. Never in a total; shown as "Refund pending". */
+  pendingCents?: number;
 };
 
 /** `manual_fee_charge_attempts`: the legacy manual fee ledger. It carries NO refund record, so a succeeded real fee cannot be proven un-refunded. */
@@ -55,7 +63,9 @@ export type StatementKind =
   | "collected_other_external"
   | "refunded_card_session"
   | "refunded_card_fee"
+  | "refunded_partial"
   | "waived"
+  | "bill_note"
   | "still_owes_note"
   | "unresolved"
   | "other_currency"
@@ -70,7 +80,9 @@ export const STATEMENT_KINDS: readonly StatementKind[] = [
   "collected_other_external",
   "refunded_card_session",
   "refunded_card_fee",
+  "refunded_partial",
   "waived",
+  "bill_note",
   "still_owes_note",
   "unresolved",
   "other_currency",
@@ -85,7 +97,7 @@ export const COLLECTED_KINDS: readonly StatementKind[] = [
   "collected_e_transfer",
   "collected_other_external",
 ];
-export const ADJUSTMENT_KINDS: readonly StatementKind[] = ["refunded_card_session", "refunded_card_fee", "waived"];
+export const ADJUSTMENT_KINDS: readonly StatementKind[] = ["refunded_card_session", "refunded_card_fee", "refunded_partial", "waived"];
 
 export type KindTotal = { count: number; cents: number };
 export type StatementBucket = {
@@ -95,7 +107,15 @@ export type StatementBucket = {
   rows: number;
 };
 
-export type StatementMoneyLine = { kind: StatementKind; cents: number | null; source: "card" | "settlement" | "legacy_fee" };
+export type StatementMoneyLine = {
+  kind: StatementKind; cents: number | null; source: "card" | "settlement" | "legacy_fee";
+  /** Only on a card line: true when the payment was made before the visit's split bill, so it is not part of the bill and its refund is never added back into the bill's coverage. */
+  preBill?: boolean;
+  /** Only on a `bill_note` line: cents of SUCCEEDED price reductions already inside the bill (the bill dropped by them). A payment reversal never appears here: it does not reopen a balance. */
+  reducedCents?: number;
+  /** Only on an `unresolved` line from a refund still in flight (or an open review): the cents awaiting confirmation. Never in a total; shown as "Refund pending". */
+  pendingCents?: number;
+};
 export type StatementVisit = {
   appointmentId: string;
   startsAt: string;
@@ -152,13 +172,18 @@ const METHOD_KIND: Record<string, StatementKind> = {
   paid_other_external: "collected_other_external",
   waived: "waived",
   still_owes: "still_owes_note",
+  // HON-123 / HON-122: rows of the split-payments ledger, expressed as settlement-shaped rows by lib/finance/statement-money-read.ts. A transfer
+  // that is recorded but not yet confirmed is `still_owes` (owed, not received); a refund still with Stripe is `refund_in_flight` (unresolved).
+  bill_total: "bill_note",
+  partial_refund: "refunded_partial",
+  refund_in_flight: "unresolved",
 };
 
 export function classifySettlementRow(row: StatementSettlementRow, studioCurrency: string): { kind: StatementKind; cents: number | null } {
   const kind = METHOD_KIND[row.method];
   if (!kind) return { kind: "unreadable", cents: null };
   // A still_owes row is a note: never money, never an amount.
-  if (kind === "still_owes_note") return { kind, cents: null };
+  if (kind === "still_owes_note" || kind === "bill_note" || kind === "unresolved") return { kind, cents: null };
   const a = row.amountCents;
   if (typeof a !== "number" || !Number.isInteger(a) || a < 0) return { kind: "unreadable", cents: null };
   // Mirrors outstanding-balance: a currency that is present and different is never summed.
@@ -193,6 +218,7 @@ export function buildStatement(input: {
     appointmentId: string,
     source: StatementMoneyLine["source"],
     c: { kind: StatementKind; cents: number | null },
+    extra?: { reducedCents?: number; pendingCents?: number; preBill?: boolean },
   ): void => {
     rowsIn += 1;
     const appt = apptById.get(appointmentId);
@@ -206,12 +232,12 @@ export function buildStatement(input: {
     if (appt) {
       let v = visitMap.get(appt.id);
       if (!v) visitMap.set(appt.id, (v = { appointmentId: appt.id, startsAt: appt.startsAt, practitionerId: pid, lines: [] }));
-      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source });
+      v.lines.push({ kind: c.kind, cents: AMOUNT_KINDS.includes(c.kind) ? c.cents : null, source, ...(extra?.preBill ? { preBill: true } : {}), ...(c.kind === "bill_note" && extra?.reducedCents ? { reducedCents: extra.reducedCents } : {}), ...(c.kind === "unresolved" && extra?.pendingCents ? { pendingCents: extra.pendingCents } : {}) });
     }
   };
 
-  for (const r of input.cardRows) place(r.appointmentId, "card", classifyCardRow(r, input.studioCurrency));
-  for (const r of input.settlementRows) place(r.appointmentId, "settlement", classifySettlementRow(r, input.studioCurrency));
+  for (const r of input.cardRows) place(r.appointmentId, "card", classifyCardRow(r, input.studioCurrency), r.inBill === false ? { preBill: true } : undefined);
+  for (const r of input.settlementRows) place(r.appointmentId, "settlement", classifySettlementRow(r, input.studioCurrency), { reducedCents: r.reducedCents, pendingCents: r.pendingCents });
   for (const r of input.legacyFeeRows) place(r.appointmentId, "legacy_fee", classifyLegacyFeeRow(r, input.studioCurrency));
 
   const byPractitioner = [...per.entries()]

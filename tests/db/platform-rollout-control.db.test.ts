@@ -227,5 +227,13 @@ describe("rollback", () => {
     await adminQuery(RB);
     expect((await adminQuery(`select to_regclass('public.platform_rollouts') as t`)).rows[0].t).toBeNull();
     await adminQuery(readFileSync(SQL_PATH, "utf8")); // re-apply so later suites on this stack still find it
+    // The replay recreated the table as 0362 made it. When 0394 is on this stack (the split_payments key and its refusal of mode 'all'), put back
+    // exactly what 0394 adds to this table, or every later file that switches a studio on finds no 'split_payments' row.
+    if ((await adminQuery(`select to_regprocedure('public.ensure_visit_bill(uuid,uuid,integer,text,boolean)') as f`)).rows[0].f) {
+      await adminQuery(`alter table public.platform_rollouts drop constraint platform_rollouts_key_check;
+        alter table public.platform_rollouts add constraint platform_rollouts_key_check check (key in ('charting_new_view_xcell', 'front_desk', 'split_payments'));
+        alter table public.platform_rollouts add constraint platform_rollouts_split_payments_mode_check check (key <> 'split_payments' or mode in ('off', 'pilot'));
+        insert into public.platform_rollouts (key) values ('split_payments') on conflict do nothing;`);
+    }
   });
 });

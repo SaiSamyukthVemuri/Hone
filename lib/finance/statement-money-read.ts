@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { readInChunks } from "@/lib/dashboard/in-chunks";
+import { aggregateRefundGaps } from "@/lib/billing/visit-payments-core";
 
 import type { StatementCardRow, StatementLegacyFeeRow } from "./statement";
 import type { AssembleAppointment, AssembleSettlementRow } from "./statement-document-assemble";
@@ -81,6 +82,8 @@ export async function readAppointmentsKeyset(
 }
 
 type CardDb = {
+  id: string;
+  visit_bill_id?: string | null;
   charge_reason: string | null;
   status: string | null;
   amount_cents: number | null;
@@ -95,7 +98,7 @@ type CardDb = {
   session_id: string | null;
 };
 const CARD_COLS =
-  "id, charge_reason, status, amount_cents, currency, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, stripe_livemode, appointment_id, session_id";
+  "id, charge_reason, status, amount_cents, currency, refund_status, refund_amount_cents, stripe_refund_status, stripe_refund_id, stripe_charge_refund_event_id, stripe_livemode, appointment_id, session_id, visit_bill_id";
 
 export type MoneyRows = { cardRows: StatementCardRow[]; settlementRows: AssembleSettlementRow[]; legacyFeeRows: StatementLegacyFeeRow[] };
 
@@ -109,7 +112,31 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
   const sessionToAppt = new Map<string, string>();
   for (const s of sessions.rows) if (s.appointment_id) sessionToAppt.set(s.id, s.appointment_id);
 
-  const [feeCards, sessionCards, settlements, legacy] = await Promise.all([
+  // HON-123 / HON-122: the split-payments ledger, read as settlement-shaped rows so every existing total, line and print follows without a second model.
+  // The three reads fail closed together with the rest: a visit whose bill, cash/transfer or refund rows cannot be read is never shown without them.
+  const [bills, externals, refunds, reviews] = await Promise.all([
+    readInChunks<{ appointment_id: string; total_cents: number | null; currency: string | null }>(ids, (chunk) =>
+      supabase.from("visit_bills").select("appointment_id, total_cents, currency").eq("studio_id", studioId).is("superseded_at", null).in("appointment_id", chunk),
+    ),
+    readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null; state: string }>(ids, (chunk) =>
+      supabase.from("visit_external_payments").select("appointment_id, method, amount_cents, currency, state").eq("studio_id", studioId).in("appointment_id", chunk),
+    ),
+    readInChunks<{ appointment_id: string | null; attempt_id: string | null; amount_cents: number | null; currency: string | null; status: string; legacy: boolean; kind: string }>(ids, (chunk) =>
+      supabase.from("payment_refunds").select("appointment_id, attempt_id, amount_cents, currency, status, legacy, kind").eq("studio_id", studioId).in("appointment_id", chunk),
+    ),
+    // OPEN reviews (a refund made in the Stripe dashboard that the owner has not confirmed): the visit is unresolved until then, never "paid".
+    readInChunks<{ appointment_id: string | null; attempt_id: string | null; amount_cents: number | null; currency: string | null }>(ids, (chunk) =>
+      supabase.from("payment_refund_reviews").select("appointment_id, attempt_id, amount_cents, currency").eq("studio_id", studioId).is("resolved_at", null).in("appointment_id", chunk),
+    ),
+  ]);
+  if (!bills.ok || !externals.ok || !refunds.ok || !reviews.ok) return { ok: false };
+  const ledgerRows: AssembleSettlementRow[] = [];
+  for (const e of externals.rows) {
+    if (e.state === "voided") continue; // retracted before any money moved: nothing to show
+    // Confirmed money is cash / e-transfer / other as the owner recorded it. A transfer still waiting for confirmation is owed, not received.
+    ledgerRows.push({ appointmentId: e.appointment_id, method: e.state === "confirmed" ? e.method : "still_owes", amountCents: e.amount_cents, currency: e.currency, quotedAmountCents: null });
+  }
+  const [feeCards, sessionCardsBySession, sessionCardsByAppt, settlements, legacy] = await Promise.all([
     readInChunks<CardDb>(ids, (chunk) =>
       supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studioId).in("charge_reason", FEE_REASONS).in("appointment_id", chunk),
     ),
@@ -118,6 +145,10 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
       : readInChunks<CardDb>([...sessionToAppt.keys()], (chunk) =>
           supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studioId).eq("charge_reason", "session_payment").in("session_id", chunk),
         ),
+    // The same payments read BY APPOINTMENT (as readBilledVisits does): a soft-deleted chart still holds real money, so a live card on it and its refunds must not drop out of the statement.
+    readInChunks<CardDb>(ids, (chunk) =>
+      supabase.from("payment_charge_attempts").select(CARD_COLS).eq("studio_id", studioId).eq("charge_reason", "session_payment").in("appointment_id", chunk),
+    ),
     readInChunks<{ appointment_id: string; method: string; amount_cents: number | null; currency: string | null; quoted_amount_cents: number | null }>(ids, (chunk) =>
       supabase
         .from("appointment_settlements")
@@ -130,30 +161,70 @@ export async function readMoneyForAppointments(supabase: SupabaseClient, studioI
       supabase.from("manual_fee_charge_attempts").select("appointment_id, status, amount_cents, currency, stripe_livemode").eq("studio_id", studioId).in("appointment_id", chunk),
     ),
   ]);
-  if (!feeCards.ok || !sessionCards.ok || !settlements.ok || !legacy.ok) return { ok: false };
+  if (!feeCards.ok || !sessionCardsBySession.ok || !sessionCardsByAppt.ok || !settlements.ok || !legacy.ok) return { ok: false };
+  // Union by id: a payment read both ways is one payment (visits without a deleted chart are unchanged).
+  const sessionCards = { rows: [...new Map([...sessionCardsBySession.rows, ...sessionCardsByAppt.rows].map((r) => [r.id, r] as const)).values()] };
 
+  // Only a LIVE card payment is real money. A refund row that points at an attempt is real only when that attempt is live (cash and transfer refunds have no attempt).
+  const liveAttempt = new Set<string>([...feeCards.rows, ...sessionCards.rows].filter((r) => r.stripe_livemode === true).map((r) => r.id));
+  // Succeeded PRICE REDUCTIONS are already inside the bill total; a payment reversal is not (Sam, 27 Nov 2026: a reversal never reopens a balance, as visit_payment_position, 0394).
+  // A reduction on a TEST-mode (or unknown-mode) card payment is test money: that card is excluded from the statement, so the reduction must not lower the bill either (0394 studio_has_gone_live).
+  const reducedOf = (appointmentId: string) => refunds.rows.filter((r) => r.appointment_id === appointmentId && !r.legacy && !(r.attempt_id && !liveAttempt.has(r.attempt_id)) && r.kind === "price_reduction" && r.status === "succeeded").reduce((n, r) => n + (r.amount_cents ?? 0), 0);
+  for (const b of bills.rows) ledgerRows.push({ appointmentId: b.appointment_id, method: "bill_total", amountCents: null, currency: b.currency, quotedAmountCents: b.total_cents, reducedCents: reducedOf(b.appointment_id) });
+  // An attempt that has its own split refunds is shown through THOSE rows. When the split refunds add up to the whole charge the webhook also marks the attempt itself
+  // fully refunded (0240), and showing that full-refund line as well as each split refund would count the same money twice (two $50 refunds must read $100, not $200).
+  const splitRefundedAttempts = new Set<string>();
+  for (const r of refunds.rows) if (!r.legacy && r.attempt_id && r.status !== "failed") splitRefundedAttempts.add(r.attempt_id);
+  for (const r of refunds.rows) {
+    // Stripe TEST-mode money is never real money (the statement counts live card money only, so does this): a refund of a test or unknown-mode card payment adds nothing.
+    if (r.attempt_id && !liveAttempt.has(r.attempt_id)) continue;
+    // A legacy row mirrors a full refund the attempt itself already carries (the card line shows it), and a failed refund moved nothing.
+    if (r.legacy || r.status === "failed" || !r.appointment_id) continue;
+    ledgerRows.push({ appointmentId: r.appointment_id, method: r.status === "succeeded" ? "partial_refund" : "refund_in_flight", amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: null, ...(r.status === "succeeded" ? {} : { pendingCents: r.amount_cents ?? 0 }) });
+  }
+
+  for (const rv of reviews.rows) {
+    if (rv.attempt_id && !liveAttempt.has(rv.attempt_id)) continue; // a review of a test-mode payment is not real money
+    if (rv.appointment_id) ledgerRows.push({ appointmentId: rv.appointment_id, method: "refund_in_flight", amountCents: rv.amount_cents, currency: rv.currency, quotedAmountCents: null, pendingCents: rv.amount_cents ?? 0 });
+  }
   const cardRows: StatementCardRow[] = [];
-  for (const r of [...feeCards.rows, ...sessionCards.rows]) {
+  // One payment is one row, however many reads returned it.
+  for (const r of [...new Map([...feeCards.rows, ...sessionCards.rows].map((x) => [x.id, x] as const)).values()]) {
     const appointmentId = r.appointment_id ?? (r.session_id ? sessionToAppt.get(r.session_id) ?? null : null);
     if (!appointmentId) continue;
+    // The attempt's own refund columns are Stripe's CUMULATIVE statement of the whole payment (0078, 0240). Its split rows are shown through their own lines
+    // (above), but when the columns say MORE came back than those rows (the rest was refunded in the Stripe dashboard) the difference is one more line, so
+    // the statement reads the same money as payment_refund_money (0393): the greater of the two, never the sum.
+    if (liveAttempt.has(r.id) && splitRefundedAttempts.has(r.id) && r.status === "succeeded" && typeof r.amount_cents === "number") {
+      const mine = refunds.rows.filter((x) => x.attempt_id === r.id && !x.legacy);
+      const gap = aggregateRefundGaps(
+        { id: r.id, amountCents: r.amount_cents, refundStatus: r.refund_status, refundAmountCents: r.refund_amount_cents },
+        mine.filter((x) => x.status === "succeeded").reduce((n, x) => n + (x.amount_cents ?? 0), 0), mine.filter((x) => x.status === "pending_stripe").reduce((n, x) => n + (x.amount_cents ?? 0), 0),
+      );
+      if (gap.succeededGapCents > 0) ledgerRows.push({ appointmentId, method: "partial_refund", amountCents: gap.succeededGapCents, currency: r.currency, quotedAmountCents: null });
+      if (gap.pendingGapCents > 0) ledgerRows.push({ appointmentId, method: "refund_in_flight", amountCents: gap.pendingGapCents, currency: r.currency, quotedAmountCents: null, pendingCents: gap.pendingGapCents });
+    }
     cardRows.push({
       appointmentId,
       chargeReason: r.charge_reason,
       status: r.status,
       amountCents: r.amount_cents,
       currency: r.currency,
-      refundStatus: r.refund_status,
-      refundAmountCents: r.refund_amount_cents,
-      providerRefundStatus: r.stripe_refund_status,
-      stripeRefundId: r.stripe_refund_id,
-      cumulativeFullRefundVerified: typeof r.stripe_charge_refund_event_id === "string" && r.stripe_charge_refund_event_id.length > 0,
+      // The split refunds of this attempt are shown through their own rows (above): its full-refund mirror is not emitted a second time.
+      refundStatus: splitRefundedAttempts.has(r.id) ? null : r.refund_status,
+      refundAmountCents: splitRefundedAttempts.has(r.id) ? null : r.refund_amount_cents,
+      providerRefundStatus: splitRefundedAttempts.has(r.id) ? null : r.stripe_refund_status,
+      stripeRefundId: splitRefundedAttempts.has(r.id) ? null : r.stripe_refund_id,
+      cumulativeFullRefundVerified: !splitRefundedAttempts.has(r.id) && typeof r.stripe_charge_refund_event_id === "string" && r.stripe_charge_refund_event_id.length > 0,
       stripeLivemode: r.stripe_livemode,
+      // Membership of the visit's split bill: a payment made BEFORE the bill (no visit_bill_id) is not part of it, so the bill's coverage never adds its refund back.
+      inBill: typeof r.visit_bill_id === "string" && r.visit_bill_id.length > 0,
     });
   }
   return {
     ok: true,
     cardRows,
-    settlementRows: settlements.rows.map((r) => ({ appointmentId: r.appointment_id, method: r.method, amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: r.quoted_amount_cents })),
+    settlementRows: [...ledgerRows, ...settlements.rows.map((r) => ({ appointmentId: r.appointment_id, method: r.method, amountCents: r.amount_cents, currency: r.currency, quotedAmountCents: r.quoted_amount_cents }))],
     legacyFeeRows: legacy.rows.map((r) => ({ appointmentId: r.appointment_id, status: r.status, amountCents: r.amount_cents, currency: r.currency, stripeLivemode: r.stripe_livemode })),
   };
 }

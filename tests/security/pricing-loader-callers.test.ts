@@ -23,6 +23,7 @@ export const PINNED_CALLERS: Record<string, string[]> = {
   resolveAppointmentQuotedAmountCents: [
     "app/(app)/appointment-settlement-actions.ts", // staleSeenFee: COMPARES the fee the owner saw with the price now; decides nothing
     "app/(app)/quick-checkout-actions.ts",
+    "app/(app)/visit-payment-actions.ts", // startSplitBillAction: COMPARES the fee the owner reviewed with the price now before making the bill (owner gate, owner-derived viewer); decides nothing
     "lib/billing/quick-checkout.ts",
   ],
   getAppointmentPaymentStates: ["app/(app)/calendar/[id]/page.tsx", "app/(app)/dashboard/page.tsx"],

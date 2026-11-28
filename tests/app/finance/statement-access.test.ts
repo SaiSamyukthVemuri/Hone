@@ -55,6 +55,10 @@ describe("a non-owner is refused before any client or query exists", () => {
       payment_charge_attempts: ok([]),
       appointment_settlements: ok([]),
       manual_fee_charge_attempts: ok([]),
+      visit_bills: ok([]),
+      visit_external_payments: ok([]),
+      payment_refunds: ok([]),
+      payment_refund_reviews: ok([]),
       services: ok([]),
       practitioners: ok([]),
     };
@@ -63,7 +67,7 @@ describe("a non-owner is refused before any client or query exists", () => {
     // a failed NAME read never changes a figure and never fails the statement; the name is simply absent
     const noNames = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", fake({ ...healthy, practitioners: { data: null, error: { message: "boom" } } }));
     expect(noNames).toMatchObject({ access: "granted", ok: true, practitionerNames: {} });
-    for (const t of ["sessions", "payment_charge_attempts", "appointment_settlements", "manual_fee_charge_attempts"] as const) {
+    for (const t of ["sessions", "payment_charge_attempts", "appointment_settlements", "manual_fee_charge_attempts", "visit_bills", "visit_external_payments", "payment_refunds", "payment_refund_reviews"] as const) {
       const v = await loadStatementView({ role: "owner" }, { id: "s1", timezone: "America/Toronto" }, "2026-11", "cad", fake({ ...healthy, [t]: { data: null, error: { message: "boom" } } }));
       expect(v, t).toEqual({ access: "granted", ok: false, reason: "read_failed" });
     }
@@ -119,7 +123,12 @@ describe("source guards", () => {
   it("the money tables it reads are exactly the owner-readable ones, plus appointments, sessions and services", () => {
     const src = read("lib/finance/statement-read.ts");
     const tables = [...src.matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]).sort();
-    expect([...new Set(tables)]).toEqual(["appointment_settlements", "appointments", "manual_fee_charge_attempts", "payment_charge_attempts", "practitioners", "services", "sessions"]);
+    // The money tables are read through the ONE shared reader (statement-money-read.ts: card, settlements, legacy fees AND the split-payments ledger), so the studio statement cannot
+    // omit what the client statement and analytics show (HON-123, Codex P1). This file itself reads only appointments, practitioners and services.
+    expect([...new Set(tables)]).toEqual(["appointments", "practitioners", "services"]);
+    expect(src).toMatch(/readMoneyForAppointments\(supabase, studio\.id, ids\)/);
+    const shared = [...read("lib/finance/statement-money-read.ts").matchAll(/\.from\("([a-z_]+)"\)/g)].map((m) => m[1]);
+    expect([...new Set(shared)].sort()).toEqual(expect.arrayContaining(["appointment_settlements", "manual_fee_charge_attempts", "payment_charge_attempts", "payment_refund_reviews", "payment_refunds", "sessions", "visit_bills", "visit_external_payments"]));
   });
 });
 

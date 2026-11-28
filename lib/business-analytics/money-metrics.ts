@@ -116,6 +116,8 @@ export function headlineCollected(split: CollectedSplit, scope: CollectedScope =
 export type CollectedCaveats = {
   /** Card money fully refunded: on its own line, not in Collected. */
   refundedInFullCents: number;
+  /** Money returned from a payment through the split-payments refund ledger (HON-122): part or all of one payment, itemised. The payment stays in Collected at its full amount. */
+  refundedPartialCents: number;
   /** Rows that may or may not have moved money (a partial refund, an in-flight payment, a legacy fee): COUNT only. */
   unresolvedCount: number;
   /** Rows in another currency: COUNT only. */
@@ -128,6 +130,7 @@ export function collectedCaveats(statement: Statement): CollectedCaveats {
   const k = statement.all.kinds;
   return {
     refundedInFullCents: k.refunded_card_session.cents + k.refunded_card_fee.cents,
+    refundedPartialCents: k.refunded_partial.cents,
     unresolvedCount: k.unresolved.count,
     otherCurrencyCount: k.other_currency.count,
     excludedCount: k.excluded.count,

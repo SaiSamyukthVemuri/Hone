@@ -15,7 +15,7 @@ export const STATEMENT_ADJUSTMENTS_NOTE =
 export const STATEMENT_WRITE_OFFS_NOTE = "Write-offs are not recorded separately in Hone, so none are shown.";
 
 export const STATEMENT_PARTIAL_REFUND_NOTE =
-  "Partial refunds are not supported yet. A charge with a refund that cannot be proven in full is shown under Unresolved and is not counted as collected.";
+  "A refund recorded against a payment is listed as its own line and is never taken off the payment it came from. A charge with a refund that cannot be proven is shown under Unresolved and is not counted as collected.";
 
 export const STATEMENT_UNRESOLVED_NOTE =
   "Unresolved money may or may not have moved. It is counted and listed, and never added to Collected.";
@@ -28,7 +28,9 @@ export const STATEMENT_METHOD_LABELS = {
   collected_other_external: "Other method (recorded by the owner)",
   refunded_card_session: "Refunded in full: session payments",
   refunded_card_fee: "Refunded in full: fees",
+  refunded_partial: "Refunded from a payment (part or all; the payment stays listed in full)",
   waived: "Waived (owner-attested as forgiven)",
+  bill_note: "Visit bill recorded (a note, not an amount)",
   still_owes_note: "Marked still owing (a note, not an amount)",
   unresolved: "Unresolved",
   other_currency: "In another currency (not summed)",

@@ -1097,6 +1097,11 @@ describe("0171 — the financial census is complete", () => {
         // APPOINTMENT-BOUND MONEY THAT THIS GATE STRUCTURALLY CANNOT MEET
         // (PAY-SETTLE / 0187):
         "appointment_settlements", //      see the justification below
+        // 0393 split payments (HON-123): a bill and its cash/transfer payments are appointment-bound money. They are met by the SAME structural
+        // argument as the settlement above: ensure_visit_bill (0394) refuses anything that is not `completed`, and a payment can only be written
+        // onto a live bill, so neither can exist on a `confirmed` appointment, the only status the reschedule command acts on.
+        "visit_bills",
+        "visit_external_payments",
       ].sort(),
     );
   });
@@ -1133,6 +1138,14 @@ describe("0171 — the financial census is complete", () => {
     // record, waive. (supersede acts on an EXISTING settlement, which by
     // induction is already on a completed appointment.)
     expect(notCompleted.length).toBeGreaterThanOrEqual(2);
+
+    // 0393/0394: the same disjointness for the split-payment ledger. A bill is only ever created on a completed visit, and every payment
+    // is written onto a live bill (the table guard refuses one that does not match it), so no ledger row can exist on a confirmed appointment.
+    const commands394 = readFileSync(join(ROOT, "supabase/migrations/0394_visit_payment_commands.sql"), "utf8");
+    const ensureBill = commands394.slice(commands394.indexOf("create function public.ensure_visit_bill("), commands394.indexOf("create function public.record_visit_external_payment("));
+    expect(ensureBill).toMatch(/if v_status is distinct from 'completed' then[\s\S]{0,80}'not_completed'/);
+    const ledger393 = readFileSync(join(ROOT, "supabase/migrations/0393_visit_payment_ledger.sql"), "utf8");
+    expect(ledger393).toMatch(/not exists \(select 1 from public\.visit_bills b[\s\S]{0,200}b\.superseded_at is null\)/);
   });
 });
 

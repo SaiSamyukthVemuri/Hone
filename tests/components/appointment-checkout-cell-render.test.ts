@@ -302,3 +302,20 @@ describe("a completed, unpaid, chargeable visit reads Not paid yet", () => {
     expect(html).toBe("");
   });
 });
+
+describe("a BILLED visit keeps a payment-management entry point whatever its badge says (Codex P1 on #1827)", () => {
+  const renderBilled = (paymentState: string, billed: boolean) =>
+    renderToStaticMarkup(createElement(AppointmentCheckoutCell, { appointmentId: APPT, status: "completed", paymentState, billed } as never) as ReactNode);
+  it.each(["paid", "unavailable"])("a billed %s visit shows its truthful badge AND Manage payments through the shared checkout entry", (state) => {
+    const html = renderBilled(state, true);
+    expect(html).toContain(`appointment-payment-${state}`);
+    expect(hasCheckout(html)).toBe(true);
+    expect(html).toContain("Manage payments");
+    expect(html).toContain(`data-appointment="${APPT}"`);
+  });
+  it.each(["paid", "unavailable"])("a NON-billed %s visit is unchanged: no Manage payments", (state) => {
+    const html = renderBilled(state, false);
+    expect(hasCheckout(html)).toBe(false);
+    expect(html).not.toContain("Manage payments");
+  });
+});

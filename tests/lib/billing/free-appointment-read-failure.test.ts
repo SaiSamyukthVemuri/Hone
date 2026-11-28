@@ -31,6 +31,8 @@ const responses: Record<string, Rows> = {
   // attested", which leaves every existing case driven by the pricing path
   // exactly as before.
   appointment_settlements: { data: [], error: null },
+  // HON-123. The loader also asks which visits carry a split-payments bill. Empty = none, so every case below is driven exactly as before.
+  visit_bills: { data: [], error: null },
 };
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -81,6 +83,7 @@ function baseRows(servicePriceCents: number | null) {
   responses.sessions = { data: [], error: null };
   responses.payment_charge_attempts = { data: [], error: null };
   responses.appointment_settlements = { data: [], error: null };
+  responses.visit_bills = { data: [], error: null };
 }
 
 beforeEach(() => {
@@ -315,6 +318,14 @@ describe("read failure is UNAVAILABLE, never an affirmative payment fact", () =>
 // PAY-SETTLE / 0187. The SAME law, extended to the settlement read: a
 // disposition is a positive claim too, and an absence produced by a failed
 // query is not one.
+describe("a failed bill read is UNAVAILABLE, a billed visit is judged by its ledger (HON-123)", () => {
+  it("an unreadable bill lookup is unavailable, never 'no bill'", async () => {
+    responses.visit_bills = { data: null, error: { message: "boom" } };
+    const out = await getAppointmentPaymentStates("studio", ["a1"], "UTC", true);
+    expect(out.get("a1")).toBe("unavailable");
+  });
+});
+
 describe("a failed settlement read is UNAVAILABLE, never 'not settled'", () => {
   it("does not fall through to Checkout when the settlement read fails", async () => {
     baseRows(3000);

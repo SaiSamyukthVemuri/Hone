@@ -148,8 +148,11 @@ const RULES = [
       // this allowlist without an accompanying decision in
       // docs/13.
       "lib/billing/payment-refund.ts",
+      // HON-122: a partial refund of ONE payment_refunds row on a split visit. Owner, amount and balance are decided by
+      // request_payment_refund under the visit lock first; the Stripe key is the row id; the outcome is recorded once.
+      "lib/billing/payment-partial-refund.ts",
     ],
-    exactly: 1,
+    exactly: 2,
   },
   {
     name: "checkout.sessions",

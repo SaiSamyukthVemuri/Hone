@@ -310,6 +310,30 @@ export const SERVICE_ROLE_ALLOWLIST: ServiceRoleAllowlistEntry[] = [
     scopeGuard: "getCurrentPractitionerWithStudio",
   },
   {
+    path: "app/(app)/visit-payment-actions.ts",
+    purpose: "Authenticated OWNER server action (split payments, HON-123).",
+    why: "Service-role reads the visit's card attempts and writes the prepared attempt row (the card wall in 0394 caps its amount under the visit lock); the studio comes from getCurrentPractitionerWithStudio() and every query is scoped to that studio.id.",
+    scopeGuard: "getCurrentPractitionerWithStudio",
+  },
+  {
+    path: "lib/billing/visit-payments.ts",
+    purpose: "Split-payments read helper (HON-123).",
+    why: "Service-role reads the rollout switch and the visit's card attempts, which the owner session cannot read through RLS; invoked only by owner actions and always scoped to the caller-supplied studio_id and appointment_id.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/billing/payment-partial-refund.ts",
+    purpose: "Partial card refund runner (HON-122).",
+    why: "Service-role reads the refunded attempt and records Stripe's outcome through finish_payment_refund (service_role only); the refund row is read by the owner action under RLS first and every query is scoped to that row's studio_id.",
+    scopeGuard: '.eq("studio_id"',
+  },
+  {
+    path: "lib/billing/refund-review-flag.ts",
+    purpose: "Webhook refund-review flag for a split-payment card payment (HON-122).",
+    why: "Service-role calls flag_payment_refund_review (service_role only), called from the signed Stripe webhook after the event is bound to its attempt; the database derives the studio and currency from the ATTEMPT (never the caller) and decides under the visit lock.",
+    scopeGuard: "p_attempt_id",
+  },
+  {
     path: "app/(app)/settings/availability/actions.ts",
     purpose: "Authenticated practitioner server action/query.",
     why: "Service-role write/read-through after the caller's studio is resolved via getCurrentPractitionerWithStudio(); every query is scoped to that studio.id.",

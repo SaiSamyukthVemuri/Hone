@@ -1,7 +1,11 @@
 "use client";
 
+import type { HistoryLine } from "@/lib/billing/visit-payments-core";
+import { VisitMoneyBlock } from "@/components/visit-money-block";
+import type { VisitMoneySummary } from "@/lib/billing/visit-money";
+import type { PaymentCurrency } from "@/lib/billing/payment-jurisdiction";
 import { refundDisplayState } from "@/lib/billing/refund-display-state";
-import { useState, useTransition } from "react";
+import { createContext, useContext, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { checkoutDraftAmount, useCheckoutFeeDraft, waivedVisitData, type CheckoutFeeDraft } from "@/components/checkout-fee-fields";
 import { waiveAppointmentFeeAction } from "@/app/(app)/appointment-settlement-actions";
@@ -220,9 +224,15 @@ export function SessionPaymentPrepareCard({
   settledQuotedCents = null,
   settlementQuotedAmountCents = null,
   canRecordSettlement = true,
+  visitBilled = false,
+  billedMoney = null,
+  billedStillToCollectCents = null,
+  billedEntries,
+  billedCurrency = null,
   onSettlementRecorded,
   initialMethod,
   initialFeeDraft,
+  onDraftObserved,
   prepareAction,
   executeAction,
   sendReceiptAction,
@@ -252,6 +262,15 @@ export function SessionPaymentPrepareCard({
   // carry a disposition. Defaults true so the session page, which only renders
   // this card for a real session, is unchanged.
   canRecordSettlement?: boolean;
+  /** HON-123: the visit has a split-payments bill: the whole-payment refund control is withdrawn (refunds go through the split panel). */
+  visitBilled?: boolean;
+  /** A billed visit's Collected / Refunded / Net (owner only), shown in place of the single card payment's "Paid". */
+  billedMoney?: VisitMoneySummary | null;
+  /** A billed visit's "Still to collect" (same figure as checkout), shown under Net. */
+  billedStillToCollectCents?: number | null;
+  /** The visit's itemised payment entries (Stripe TEST-mode ones are labelled on the entry). */
+  billedEntries?: ReadonlyArray<HistoryLine>;
+  billedCurrency?: PaymentCurrency | null;
   // Pass-through to AppointmentSettlementControls, and the ONLY refresh-shaped
   // prop this card accepts.
   //
@@ -263,6 +282,8 @@ export function SessionPaymentPrepareCard({
   onSettlementRecorded?: () => void | Promise<void>;
   initialMethod?: CheckoutMethod;
   initialFeeDraft?: CheckoutFeeDraft;
+  /** Tells a parent (the quick checkout) the fee draft as it stands, so a split bill is made at the reviewed fee. Observation only. */
+  onDraftObserved?: (draft: CheckoutFeeDraft | undefined) => void;
   // PR #200: resolved booked-service / custom-pricing default for the
   // prepare form's amount field. Display default only; the field
   // stays editable and the prepare action re-validates the submitted
@@ -400,6 +421,7 @@ export function SessionPaymentPrepareCard({
   // price. Keep the latter as Stripe's expected reference for its stale check.
   const outstanding = settledMethod === "still_owes" && settledAmountCents !== null && settledAmountCents > 0
     ? settledAmountCents : null;
+  useEffect(() => { onDraftObserved?.(feeDraft); }); // after every render: observation only, the parent keeps it in a ref
   const confirmWaiver = Boolean(feeDraft && checkoutDraftAmount(feeDraft.finalFee) === 0);
   const needsSavedCard = !eligibility.eligible && eligibility.blockingReasons.includes(NO_CARD_ON_FILE_REASON);
   const stripeForm = presentation.prepareFormAmount !== null && eligibleDetails ? (
@@ -466,6 +488,7 @@ export function SessionPaymentPrepareCard({
       : "Stripe is unavailable for this visit.";
 
   return (
+    <VisitBilledContext.Provider value={visitBilled}>
     <section
       className="flex flex-col gap-3 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800"
       aria-label="Session payment"
@@ -487,6 +510,10 @@ export function SessionPaymentPrepareCard({
           PR #174 narrowed this to activeAttempt (ACTIVE_STATUSES)
           so a failed / cancelled / blocked row does NOT take over
           the main slot; the callout below picks up that case. */}
+      {visitBilled && billedMoney && <VisitMoneyBlock summary={billedMoney} currency={billedCurrency} stillToCollectCents={billedStillToCollectCents} entries={billedEntries} />}
+      {/* A billed visit shows Collected / Refunded / Net above instead of ONE succeeded card payment's "Paid". A ready or pending attempt keeps its controls (Run charge, the status
+          recheck): hiding them would strand a prepared payment that nothing else can run (Codex P2 on #1827). */}
+      {!(visitBilled && billedMoney && activeAttempt?.status === "succeeded") && (<>
       {activeAttempt && (
         <AttemptStatusPanel
           attempt={activeAttempt}
@@ -499,6 +526,7 @@ export function SessionPaymentPrepareCard({
           refundAction={refundAction}
         />
       )}
+      </>)}
 
       {/* PR #174 patch. Previous-terminal callout. When the latest
           historical attempt is failed / cancelled / blocked AND
@@ -615,6 +643,7 @@ export function SessionPaymentPrepareCard({
 
 
     </section>
+    </VisitBilledContext.Provider>
   );
 }
 
@@ -1060,7 +1089,7 @@ function SucceededPanel({
 
         {/* PR #178 refund sub-panel: owner-only Refund button; server refund
             authorization is unchanged (owner-only there too). */}
-        <RefundSubPanel
+        <RefundSubPanelGate
           attempt={attempt}
           sessionId={sessionId}
           clientId={clientId}
@@ -1223,6 +1252,25 @@ function ReceiptSubPanel({
 //   "Live refund" / "Refund complete" / "Money returned" /
 //   "Official refund receipt"
 // ---------------------------------------------------------------------------
+/** A visit with a split-payments bill refunds a card payment from the split panel (HON-123), so the older whole-payment refund control is withdrawn for it. */
+const VisitBilledContext = createContext(false);
+
+function RefundSubPanelGate(props: RefundSubPanelProps) {
+  const billed = useContext(VisitBilledContext);
+  if (billed) {
+    return <p className="text-sm text-neutral-700 dark:text-neutral-300" data-testid="refund-moved-to-split">This visit is paid through the visit bill. Refund a payment from Payments for this visit (open Quick checkout from the calendar or dashboard).</p>;
+  }
+  return <RefundSubPanel {...props} />;
+}
+
+type RefundSubPanelProps = {
+  attempt: SessionPaymentExistingAttemptSummary;
+  sessionId: string;
+  clientId: string;
+  isOwner: boolean;
+  refundAction: RefundAction;
+};
+
 function RefundSubPanel({
   attempt,
   sessionId,

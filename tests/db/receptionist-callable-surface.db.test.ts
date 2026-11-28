@@ -228,6 +228,14 @@ beforeAll(async () => {
      values ($1,$2,$3,$4, now() + interval '3 days', now() + interval '3 days 1 hour', 60, 'confirmed', encode(sha256(gen_random_uuid()::text::bytea), 'hex'))`,
     [apptId, A.studioId, A.practitionerId, A.clientId],
   );
+  // 0393 split-payments ledger: one real row in each table, so a receptionist's read, update and delete refusal is SHOWN on them (not pinned as "no row"). Written directly as postgres.
+  const billId = (await adminQuery(`insert into public.visit_bills (studio_id, appointment_id, currency, total_cents, created_by_practitioner_id) values ($1,$2,'cad',22500,$3) returning id`, [A.studioId, apptId, A.practitionerId])).rows[0].id as string;
+  const extId = (await adminQuery(
+    `insert into public.visit_external_payments (studio_id, appointment_id, bill_id, method, amount_cents, currency, state, submission_id, recorded_by_practitioner_id, confirmed_by_practitioner_id)
+     values ($1,$2,$3,'paid_cash',5000,'cad','confirmed',$4,$5,$5) returning id`, [A.studioId, apptId, billId, randomUUID(), A.practitionerId])).rows[0].id as string;
+  await adminQuery(
+    `insert into public.payment_refunds (studio_id, appointment_id, external_payment_id, amount_cents, currency, kind, reason, status, submission_id, confirmed_at, confirmed_by_practitioner_id, requested_by_practitioner_id)
+     values ($1,$2,$3,1000,'cad','payment_reversal','synthetic','succeeded',$4,now(),$5,$5)`, [A.studioId, apptId, extId, randomUUID(), A.practitionerId]);
   imageId = randomUUID();
   await adminQuery(`insert into public.treatment_images (id, studio_id, client_id, session_id, session_block_id, storage_path, content_type, size_bytes) values ($1,$2,$3,$4,$5,$6,'image/jpeg',1024)`, [imageId, A.studioId, A.clientId, sessionId, blockId, `${A.studioId}/${A.clientId}/${imageId}.jpg`]);
   ids.recA = await authUser("surf-rec-a");

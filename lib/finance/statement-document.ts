@@ -320,7 +320,7 @@ function sumKinds(lines: readonly StatementMoneyLine[], kinds: readonly Statemen
   for (const l of lines) if (kinds.includes(l.kind) && AMOUNT_KINDS.includes(l.kind) && isCents(l.cents)) n += l.cents;
   return n;
 }
-const REFUNDED_KINDS: readonly StatementKind[] = ["refunded_card_session", "refunded_card_fee"];
+const REFUNDED_KINDS: readonly StatementKind[] = ["refunded_card_session", "refunded_card_fee", "refunded_partial"];
 
 /** ONE visit -> its state, reasons, flags and amounts. Pure. */
 export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
@@ -350,9 +350,20 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
     // What the fee leaves unsettled is measured against RETAINED money and waivers ONLY. A refund is never treated as a service credit: nothing here says
     // the returned money bought anything, so refunded cents never reduce the amount owed. With a refund on record and a recorded fee still uncovered, the
     // amount owed is established only when the owner attested it against a recorded quote; otherwise the balance is not established.
-    const shortfall = feeCents === null ? 0 : feeCents - paid - waived;
+    // A split-payments visit (HON-123 / HON-122) has a BILL, the owner-recorded amount owed, so no separate attestation is needed for it. A refund does not by itself reopen a
+    // balance (Sam, 27 Nov 2026): $225 received on a $225 bill, then $40 handed back, is still paid. Only a succeeded PRICE REDUCTION is added back, because its bill already
+    // dropped: $60 cash on a bill reduced to $60, then $40 returned for a reduction, leaves the received $60 less the reduced $40 against $60, so $40 is due; a bill paid in full
+    // at $100 and reduced to $60 with $40 returned owes nothing. An older visit with no bill keeps the rule above unchanged.
+    const billed = has("bill_note");
+    // PRODUCT RULE (Sam, 27 Nov 2026), the same as visit_payment_position (0394): refunding a paid visit does not by itself reopen a balance. What was RECEIVED counts in full
+    // (a payment reversal, even a legacy full card refund, leaves it counted), and only a succeeded price reduction, whose bill already dropped, is added back.
+    const reduced = billed ? lines.reduce((n, l) => n + (l.kind === "bill_note" && typeof l.reducedCents === "number" ? l.reducedCents : 0), 0) : 0;
+    // Only a card payment that BELONGS to the split bill is added back: a payment fully refunded BEFORE the bill was made is not part of it (Codex P2), so $100 refunded then a $100 bill with $40 cash is $60 due.
+    const refundedInBill = sumKinds(lines.filter((l) => l.preBill !== true), ["refunded_card_session"]);
+    const retained = billed ? Math.max(0, paid + refundedInBill - reduced) : paid;
+    const shortfall = feeCents === null ? 0 : feeCents - retained - waived;
     if (feeCents !== null && shortfall > 0) {
-      if (attestedOwes && quoteRecorded) {
+      if ((attestedOwes || billed) && quoteRecorded) {
         state = "confirmed_unpaid";
         owed = shortfall;
       } else {
@@ -362,7 +373,9 @@ export function classifyVisit(v: DocumentVisitInput): DocumentVisit {
     } else {
       state = paid > 0 ? "paid" : "adjusted";
     }
-  } else if (attestedOwes) {
+  } else if (attestedOwes || (has("bill_note") && feeCents !== 0)) {
+    // A split-payments bill with NOTHING received (no payment recorded, or only failed or cancelled attempts, which emit no money line) is still the owner's recorded
+    // amount owed: $100 billed and nothing received is $100 due, not "no payment record".
     state = "confirmed_unpaid";
     owed = quoteRecorded && feeCents !== null && feeCents > 0 ? feeCents : null;
   } else if (feeCents === 0) {
@@ -568,7 +581,8 @@ export function buildStatementDocument(input: BuildDocumentInput): BuildDocument
         feePaidCents: feePaid,
         refundedCents: refunded,
         waivedCents: waived,
-        originalPaidCents: paid + refunded,
+        // A split-payments part refund leaves its payment in `paid` in FULL, so it is not added to it a second time: $100 paid then $40 returned is $100 originally paid, not $140.
+        originalPaidCents: paid + refunded - visits.reduce((n, v) => n + sumKinds(v.lines, ["refunded_partial"]), 0) - feeItems.reduce((n, f) => n + sumKinds(f.lines, ["refunded_partial"]), 0), // payment-only items (an uncompleted booking) carry split refunds too
         recordedFeeCents: recordedFee,
         feeTotalComplete: feeComplete,
         byState,
@@ -704,4 +718,21 @@ export function toCsvRows(doc: StatementDocument): Cell[][] {
   }
   for (const r of doc.notCompleted) rows.push(["not_completed", r.localDate, r.localTime, r.serviceName, r.practitionerName, null, null, "not_completed", "", null, null, null, null]);
   return rows;
+}
+
+/** Cents refunded against ONE payment in the split-payments ledger (kind refunded_partial). Those payments stay listed in full in `paidCents`; a legacy full card refund is taken OUT of it. */
+export function partialRefundedCents(doc: Pick<StatementDocument, "visits"> & Partial<Pick<StatementDocument, "feeItems">>): number {
+  let n = 0;
+  // Payment-only items (a payment on an uncompleted booking, or a fee) carry split refunds too: their payment stays in `paidCents` in full, exactly like a treatment visit's.
+  for (const v of doc.visits) n += sumKinds(v.lines, ["refunded_partial"]);
+  for (const f of doc.feeItems ?? []) n += sumKinds(f.lines, ["refunded_partial"]);
+  return n;
+}
+
+/** Cents of refunds still awaiting confirmation (a refund with Stripe, a gap the card's own columns report, an open review): never in Refunded or Net, shown as "Refund pending". */
+export function refundPendingCents(doc: Pick<StatementDocument, "visits"> & Partial<Pick<StatementDocument, "feeItems">>): number {
+  let n = 0;
+  for (const v of doc.visits) for (const l of v.lines) if (l.kind === "unresolved" && typeof l.pendingCents === "number") n += l.pendingCents;
+  for (const f of doc.feeItems ?? []) for (const l of f.lines) if (l.kind === "unresolved" && typeof l.pendingCents === "number") n += l.pendingCents;
+  return n;
 }

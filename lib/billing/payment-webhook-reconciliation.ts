@@ -1,5 +1,6 @@
 import "server-only";
 import type Stripe from "stripe";
+import { billedForRefusal, flagChargeRefunds, flagStandaloneRefund, noRow, recordBilledRefundOperatorAlert } from "@/lib/billing/refund-review-flag";
 import { createAdminClient } from "@/lib/supabase/admin-server";
 import { inferStripeLivemode } from "@/lib/stripe/server";
 import { recordOpsAlert, recordOpsAlertDurably } from "@/lib/ops/alerts";
@@ -592,7 +593,18 @@ async function reconcileBoundEvent(event: Stripe.Event, ctx: WebhookCtx, attempt
     // A refund event's refusal stays retryable until its alert is kept. Other
     // event types keep the best-effort writer (#1081's scope, not widened).
     if (isRefund || isStandaloneRefund) {
-      if ((await recordOpsAlertDurably(alert)) !== true) throw new PaymentRefundRefusalUnrecordedError();
+      if (outcome?.result !== "refund_evidence_refused") {
+        // identity_mismatch, invalid_input, terminal_refund_mismatch: the event was refused, nothing is placed or flagged. A billed payment keeps a durable OPERATOR alert
+        // (no studio, client or visit); a legacy visit keeps the studio alert as before.
+        if ((await billedForRefusal(attempt.id, event)) === "billed") await recordBilledRefundOperatorAlert(attempt.id, event, "unplaceable_refund");
+        else if ((await recordOpsAlertDurably(alert)) !== true) throw new PaymentRefundRefusalUnrecordedError();
+      } else {
+      // A refund on a BILLED payment is placed (or flagged) in the database and the studio-attributed alert is NOT written; only a legacy visit keeps it.
+      const billed = isStandaloneRefund ? await flagStandaloneRefund(attempt.id, event, event.data.object as Stripe.Refund) : await flagChargeRefunds(attempt.id, event, event.data.object as Stripe.Charge);
+      if (billed.kind === "billed") {
+        if (billed.failClosed) await recordBilledRefundOperatorAlert(attempt.id, event, billed.failClosed);
+      } else if ((await recordOpsAlertDurably(alert)) !== true) throw new PaymentRefundRefusalUnrecordedError();
+      }
     } else {
       await recordOpsAlert(alert);
     }
@@ -1315,6 +1327,13 @@ export async function handleChargeRefunded(
     charge.refunded === true && amountRefunded === amountCaptured;
 
   if (!isFullRefund) {
+    // A BILLED (split-payment) card payment: every refund in the list is flagged for review in the database, under the visit lock, and nothing
+    // studio-attributed is emitted for it. A legacy visit ('not_billed') keeps the older path and its alert below, unchanged.
+    const billedPartial = await flagChargeRefunds(attempt.id, event, charge);
+    if (billedPartial.kind === "billed") {
+      if (billedPartial.failClosed) await recordBilledRefundOperatorAlert(attempt.id, event, billedPartial.failClosed);
+      return { eventType: event.type, attemptId: attempt.id, partialRefundReviewed: true, amountRefunded, amountCaptured };
+    }
     // Partial refund. v1 schema does not have a column to
     // truthfully represent "Stripe refunded X but only Y of Z".
     // Record a critical ops_alert; do NOT touch the row. The
@@ -1347,6 +1366,13 @@ export async function handleChargeRefunded(
 
   const cumulative = isCumulativeChargeRefund(charge);
   if (cumulative && !cumulativeChargeRefundEvidence(event, ctx, attempt)) {
+    // A full-amount charge.refunded whose list is incomplete (has_more) or conflicting, on a BILLED payment: fail closed with ONE durable operator alert
+    // and no studio, client or visit on it. No review is opened and nothing is frozen (accepted residual: the books stay un-refunded until an operator acts).
+    const billedFull = await noRow(attempt.id, event, "list_incomplete");
+    if (billedFull.kind === "billed") {
+      await recordBilledRefundOperatorAlert(attempt.id, event, billedFull.failClosed ?? "list_incomplete");
+      return { eventType: event.type, attemptId: attempt.id, cumulativeRefundEvidenceRefused: true };
+    }
     const recorded = await recordOpsAlertDurably({ severity: "critical", event: "charge_refunded_cumulative_evidence_refused",
       message: "Charge-level full refund lacks complete, distinct, bound successful refund evidence. No payment row was mutated.",
       studioId: attempt.studio_id, clientId: attempt.client_id, stripeEventId: event.id, route: ROUTE,
@@ -1504,7 +1530,11 @@ export async function handleRefundStatusEvent(event: Stripe.Event, ctx: WebhookC
   if (!(await verifyMetadataAgainstRow({ attempt, metadata, stripeEventId: event.id, targetEvent: event.type }))) {
     return { eventType: event.type, attemptId: attempt.id, metadataMismatch: true };
   }
-  if (!(await verifyProviderMoneyAgainstRow({ attempt, provider: { amount: refund.amount, currency: refund.currency },
+  // A refund may be PART of the payment (a $40 dashboard refund of a $100 card payment): its amount is checked to lie within the payment (0 < refund <= payment) and its currency
+  // must equal the payment's, instead of equalling the whole charge, so a partial refund's status event reaches the locked command that updates or closes its review (Codex P1 on
+  // #1827). An amount above the payment, a zero or non-integer amount, or another currency is still a mismatch and mutates nothing.
+  const withinPayment = Number.isInteger(refund.amount) && refund.amount > 0 && refund.amount <= attempt.amount_cents;
+  if (!(await verifyProviderMoneyAgainstRow({ attempt, provider: { amount: withinPayment ? attempt.amount_cents : refund.amount, currency: refund.currency },
     stripeEventId: event.id, targetEvent: event.type }))) {
     return { eventType: event.type, attemptId: attempt.id, moneyMismatch: true };
   }

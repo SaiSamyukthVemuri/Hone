@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 // 0214 pins the universe of money-shaped tables that
 // initialize_studio_payment_jurisdiction_from_history checks. 0214 is applied
 // and frozen, so a later migration that adds a money-shaped table makes G2
-// fail until a new migration extends the universe. G3 holds the EXEMPT list
+// fail until a new migration extends the universe: that migration redefines the command with the larger universe
+// (0393 did, for the visit payment ledger), and the universe is read from the LATEST migration that defines it. G3 holds the EXEMPT list
 // that tests/migrations/exemption-db-pairing.test.ts uses as its discovery anchor.
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -14,14 +15,23 @@ const SOURCE = process.env.T0214_SQL_SOURCE
   ?? path.join(MIGRATIONS, "0214_studio_payment_jurisdiction.sql");
 const SQL = readFileSync(SOURCE, "utf8");
 const CODE = SQL.replace(/--[^\n]*/g, "");
+// The live definition of the command is the latest migration that (re)defines it, not 0214 itself.
+const INIT_SOURCE = process.env.T0214_SQL_SOURCE
+  ?? path.join(
+    MIGRATIONS,
+    readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort().filter((n) =>
+      readFileSync(path.join(MIGRATIONS, n), "utf8").includes("create or replace function public.initialize_studio_payment_jurisdiction_from_history(\n"),
+    ).pop()!,
+  );
+const INIT_CODE = readFileSync(INIT_SOURCE, "utf8").replace(/--[^\n]*/g, "");
 
 // exemption-db-pair: tests/db/studio-payment-jurisdiction-history-init.db.test.ts | initialize_studio_payment_jurisdiction_from_history | stripe_events
 const EXEMPT = ["stripe_events"];
-const body = (fn: string) => {
-  const at = CODE.indexOf(`create or replace function public.${fn}(`);
+const body = (fn: string, code = CODE) => {
+  const at = code.indexOf(`create or replace function public.${fn}(`);
   expect(at, fn).toBeGreaterThanOrEqual(0);
-  const start = CODE.indexOf("$$", at);
-  return CODE.slice(start, CODE.indexOf("$$", start + 2));
+  const start = code.indexOf("$$", at);
+  return code.slice(start, code.indexOf("$$", start + 2));
 };
 
 describe("G2/G3 the money-table universe is pinned (F5)", () => {
@@ -43,7 +53,7 @@ describe("G2/G3 the money-table universe is pinned (F5)", () => {
       .map(([t]) => t).sort();
   }
   const pinned = () => {
-    const m = /c_money_universe constant text\[\] := array\[([\s\S]*?)\];/.exec(CODE);
+    const m = /c_money_universe constant text\[\] := array\[([\s\S]*?)\];/.exec(INIT_CODE);
     expect(m, "c_money_universe").not.toBeNull();
     return [...m![1].matchAll(/'(\w+)'/g)].map((x) => x[1]).sort();
   };
@@ -53,7 +63,7 @@ describe("G2/G3 the money-table universe is pinned (F5)", () => {
   });
 
   it("G3 every pinned table is checked by the command or its helper, or is a named exemption", () => {
-    const checked = body("initialize_studio_payment_jurisdiction_from_history") + body("studio_named_stripe_accounts");
+    const checked = body("initialize_studio_payment_jurisdiction_from_history", INIT_CODE) + body("studio_named_stripe_accounts");
     for (const t of pinned()) {
       if (EXEMPT.includes(t)) continue;
       expect(checked, t).toMatch(new RegExp(`public\\.${t}\\b`));

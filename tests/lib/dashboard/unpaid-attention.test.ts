@@ -4,13 +4,15 @@ vi.mock("server-only", () => ({}));
 
 type Rows = Record<string, unknown[]>;
 const db = vi.hoisted(() => ({ rows: {} as Rows, errors: new Set<string>(), queried: [] as string[], ins: [] as Array<{ table: string; col: string; n: number; chars: number }> }));
+// The studio-live probe runs on the service role: serve it the same fixture client the user client uses.
+vi.mock("@/lib/supabase/admin-server", () => ({ createAdminClient: () => (globalThis as { __uaClient?: unknown }).__uaClient }));
 vi.mock("@/lib/supabase/server", () => ({
-  createClient: vi.fn(async () => ({
+  createClient: vi.fn(async () => (((globalThis as { __uaClient?: unknown }).__uaClient = {
     from(table: string) {
       db.queried.push(table);
       const b: Record<string, unknown> = {};
       const done = () => ({ data: db.errors.has(table) ? null : (db.rows[table] ?? []), error: db.errors.has(table) ? { code: "XX000" } : null });
-      for (const m of ["select", "eq", "is", "lte", "gte", "order", "limit"]) b[m] = () => b;
+      for (const m of ["select", "eq", "is", "not", "lte", "gte", "order", "limit"]) b[m] = () => b;
       // Records every id list a request carries, to prove no request URL grows past the gateway budget.
       b.in = (col: string, vals: unknown[]) => {
         db.ins.push({ table, col, n: vals.length, chars: vals.map((v) => encodeURIComponent(String(v))).join("%2C").length });
@@ -19,7 +21,7 @@ vi.mock("@/lib/supabase/server", () => ({
       b.then = (res: (v: unknown) => unknown) => Promise.resolve(done()).then(res);
       return b;
     },
-  })),
+  }))),
 }));
 vi.mock("@/lib/stripe/server", () => ({ inferStripeLivemode: () => false }));
 const juris = vi.hoisted(() => ({ value: { ok: true, jurisdiction: { country: "CA", currency: "cad" } } as unknown }));
@@ -253,6 +255,21 @@ describe("AO2 / U2: every other money form either counts or forces 'Amount unava
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
     db.rows.payment_charge_attempts = [card({ amount_cents: 10000 })];
     expect(await balanceOf()).toEqual([]);
+  });
+  it("a BILLED visit whose card payment sits on a soft-deleted chart is never reported as owing the money it already collected (Codex P2)", async () => {
+    db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000, appointment_id: "a1", charge_reason: "session_payment", visit_bill_id: "bill-1" })];
+    db.rows.visit_bills = [{ appointment_id: "a1", total_cents: 10000, currency: "cad" }];
+    const out = await balanceOf();
+    expect(out.some((b) => (b as { kind: string }).kind === "owed")).toBe(false);
+  });
+  it("a PAID billed visit whose chart was soft-deleted is not on the attention list at all (parity with the roster: paid, not 'Amount unavailable')", async () => {
+    db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];
+    db.rows.payment_charge_attempts = [card({ amount_cents: 10000, appointment_id: "a1", charge_reason: "session_payment", visit_bill_id: "bill-1", stripe_livemode: true })];
+    db.rows.visit_bills = [{ appointment_id: "a1", total_cents: 10000, currency: "cad" }];
+    const r = await loadUnpaidAttention(base);
+    expect(r.ok && r.items.length).toBe(0);
+    expect(r.ok && r.unlisted).toBe(0);                 // paid: not "Amount unavailable" either
   });
   it("a failed charge on a deleted session is nothing", async () => {
     db.rows.sessions = [{ id: "ss1", appointment_id: "a1", deleted_at: "2026-11-02T00:00:00Z", price_paid_cents: null }];

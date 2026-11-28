@@ -50,6 +50,15 @@ export const CLASSIFICATION: Record<string, { cls: Cls; anon?: boolean; reason: 
   "public.receptionist_studio_timezone/1": { cls: "desk", reason: "Desk function: gated by receptionist_actor_id for the studio; answers only this studio's active receptionist." },
   "public.reconcile_my_pending_invitation/0": { cls: "invite", reason: "Identity-only by design (F1): acts on the caller's own verified email and pending invitation; ruled leave-as-is by Privacy." },
   "public.record_adjusted_appointment_settlement/9": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
+  "public.cancel_split_card_attempt/3": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
+  "public.confirm_visit_external_payment/2": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
+  "public.ensure_visit_bill/5": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
+  "public.get_visit_payment_position/2": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
+  "public.get_visit_payment_positions/2": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
+  "public.resolve_payment_refund_review/1": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
+  "public.record_visit_external_payment/6": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
+  "public.request_payment_refund/8": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
+  "public.void_visit_external_payment/3": { cls: "gated", reason: "Owner-only (0394, HON-123): decided on is_studio_owner before any data access, so a receptionist, a colleague, a stranger and anon get 'not_owner' (or no rows) and nothing is read or written." },
   "public.record_appointment_settlement/6": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
   "public.record_block_machine_identity/8": { cls: "gated", reason: "Gated on an active practitioner row or ownership of the studio the data belongs to, before any data access; refuses a receptionist." },
   "public.record_client_id_photo_consent/5": { cls: "gated", reason: "Gated on the studio's ACTIVE owner or practitioner (client_id_photo_actor: role owner or practitioner, active), before any data access; refuses a receptionist." },
@@ -137,6 +146,15 @@ export const PINS: Record<string, string> = {
   "public.ensure_unspecified_machine/1": "error:42501|Machine not available.",
   "public.record_adjusted_appointment_settlement/9": "error:23514|Inactive practitioners cannot edit sessions.",
   "public.record_appointment_settlement/6": "error:23514|Inactive practitioners cannot edit sessions.",
+  "public.cancel_split_card_attempt/3": "error:23514|Inactive practitioners cannot edit sessions.",
+  "public.confirm_visit_external_payment/2": "error:23514|Inactive practitioners cannot edit sessions.",
+  "public.ensure_visit_bill/5": "error:23514|Inactive practitioners cannot edit sessions.",
+  "public.record_visit_external_payment/6": "error:23514|Inactive practitioners cannot edit sessions.",
+  "public.request_payment_refund/8": "error:23514|Inactive practitioners cannot edit sessions.",
+  "public.void_visit_external_payment/3": "error:23514|Inactive practitioners cannot edit sessions.",
+  "public.get_visit_payment_position/2": "empty",
+  "public.get_visit_payment_positions/2": "empty",
+  "public.resolve_payment_refund_review/1": "status:not_found",
   "public.record_block_machine_identity/8": "error:23514|Session not found or not writable by this practitioner.",
   "public.record_client_id_photo_consent/5": "error:23514|ID photos are not available for this client.",
   "public.record_clinical_records_audit/4": "error:42501|only the studio owner can record a clinical-records export",
@@ -186,6 +204,8 @@ export const PINS: Record<string, string> = {
 };
 // Commands whose real-id call returns the same outcome for the owner as for a receptionist, so the call does not prove which check refused. Each needs a reason; the goal is an empty list.
 export const UNPROVEN: Record<string, string> = {
+  "public.get_visit_payment_positions/2": "The probe passes an empty id list, so the owner also gets no rows. The owner-positive batch and the receptionist refusal are proved with real visits in tests/db/payment-refund-reviews.db.test.ts.",
+  "public.resolve_payment_refund_review/1": "The probe passes a random id, so the owner gets the same not_found as a receptionist (a missing review and a stranger look identical by design). The owner path and every refusal are proved with a real review in tests/db/payment-refund-reviews.db.test.ts.",
   "public.client_id_photo_can_read/2": "Boolean or reference helper; the feature switch is off on a fresh stack, so an owner also gets false or nothing. The receptionist's false or nothing comes from the actor check; the owner-positive path is covered by the ID-photo round-trip DB suite, not proven apart here.",
   "public.client_id_photo_enabled/1": "Boolean or reference helper; the feature switch is off on a fresh stack, so an owner also gets false or nothing. The receptionist's false or nothing comes from the actor check; the owner-positive path is covered by the ID-photo round-trip DB suite, not proven apart here.",
   "public.create_block_with_initial_setup/30": "The call needs a full machine-setup payload, so the owner is stopped by argument validation too. Gate order proven statically (assert_session_writable first); the machine-setup DB suites cover the owner path.",
@@ -219,6 +239,7 @@ export const GLOBAL_REFERENCE: Record<string, string> = {
 
 // Tables with no row on a fresh stack: their zero-read, update and delete checks are vacuous. Kept as small as possible; each needs a reason. Separate from INSERT_UNPROVEN.
 export const NO_ROW: Record<string, string> = {
+  payment_refund_reviews: "No row here: a review needs a settled card payment with its consent and card rows. Owner-only RLS is proven with a real review in tests/db/payment-refund-reviews.db.test.ts (receptionist, colleague, stranger and anon read zero rows).",
   admin_action_events: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   appointment_audit: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",
   appointment_payments: "No row on a fresh stack; closure is shown from the catalog (row-level security on, no unconditional policy).",

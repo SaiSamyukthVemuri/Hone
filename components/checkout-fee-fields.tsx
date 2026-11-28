@@ -17,6 +17,26 @@ export function createCheckoutFeeDraft(referenceCents: number): CheckoutFeeDraft
   return { referenceCents, finalFee: centsToAmountInputValue(referenceCents), received: null, reason: "" };
 }
 
+/**
+ * The fee the owner REVIEWED, carried into the split bill. A bill made without it would charge the booked price, not the adjusted one. The server re-validates with the
+ * same rules as the normal completion (a changed total needs a reason, the range, the current quote); this only refuses what could never be valid and a draft that was
+ * made against a different booked fee, so nothing is recorded blind.
+ */
+export function splitBillFeeFields(draft: CheckoutFeeDraft | undefined, quoteCents: number):
+  | { ok: true; fields: { reference_fee_cents: string; final_amount_dollars?: string; adjustment_reason?: string } }
+  | { ok: false; message: string } {
+  // The fee the owner SAW always travels, even when unchanged: it is a claim about the current price, and the server refuses the split if the price moved since (fee_changed).
+  const seen = { reference_fee_cents: String(quoteCents) };
+  if (!draft) return { ok: true, fields: seen };
+  if (draft.referenceCents !== quoteCents) return { ok: false, message: "The booked fee changed. Review the current fee before splitting." };
+  const finalCents = checkoutDraftAmount(draft.finalFee);
+  if (finalCents === null) return { ok: false, message: "Enter a valid fee before splitting this payment." };
+  if (finalCents === quoteCents) return { ok: true, fields: seen };
+  const reason = draft.reason.trim();
+  if (!reason) return { ok: false, message: "Add a reason for the changed fee before splitting this payment." };
+  return { ok: true, fields: { ...seen, final_amount_dollars: (finalCents / 100).toFixed(2), adjustment_reason: reason } };
+}
+
 export function checkoutDraftAmount(raw: string): number | null {
   const value = parseCadAmountToCents(raw, SESSION_PAYMENT_AMOUNT_CEILING_CENTS);
   return value.ok ? value.cents : null;

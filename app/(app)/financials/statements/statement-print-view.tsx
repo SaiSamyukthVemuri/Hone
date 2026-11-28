@@ -5,6 +5,8 @@ import {
   awaitingVisitLine,
   formatLocalDate,
   paidSummaryLine,
+  partialRefundedCents,
+  refundPendingCents,
   type DocumentVisit,
   type StatementDocument,
 } from "@/lib/finance/statement-document";
@@ -17,6 +19,7 @@ import { formatClock12h, splitCurrency } from "@/lib/finance/statement-money";
 import { latestFirst } from "@/lib/finance/statement-paging";
 import { FEE_ITEM_STATE_LABEL, VISIT_STATE_LABEL, balanceText, moneyLineTexts, visitFeeWithBasis } from "@/lib/finance/statement-screen";
 
+import { MONEY_LABELS, REFUND_PENDING_LABEL, moneyRows, refundStatusLabel, statementMoneySummary } from "@/lib/billing/visit-money";
 import { PrintButton } from "./print-button";
 
 // The printable statement. The same document as the screen, in one plain table that prints cleanly. The app's header, navigation and footer are
@@ -71,7 +74,8 @@ export function StatementPrintView({ document: doc, offDocumentWithMoney, backHr
   const visits = [...doc.visits].sort(latestFirst);
   const meta = [`${doc.totals.visitCount} ${doc.totals.visitCount === 1 ? "visit" : "visits"}`, cityTime(timezone), currency ? currency.toUpperCase() : null].filter(Boolean).join(" · ");
   const scope = monthLabel && doc.scope.kind === "month" ? monthLabel : scopeLabel(doc.scope);
-  const totalPaid = splitCurrency(format(doc.totals.paidCents)).amount;
+  const money = statementMoneySummary(doc.totals, partialRefundedCents(doc), doc.awaiting.length, refundPendingCents(doc));
+  const amt = (cents: number) => splitCurrency(format(cents)).amount; // the currency is stated once, in the header line
 
   return (
     <div className="space-y-5 text-fg">
@@ -91,7 +95,11 @@ export function StatementPrintView({ document: doc, offDocumentWithMoney, backHr
       </header>
 
       <section aria-label="Summary" className="space-y-2">
-        <p className="text-xl font-semibold">Total paid {totalPaid}</p>
+        <p className="text-xl font-semibold">{`${MONEY_LABELS.collected} ${amt(money.collectedCents)}`}</p>
+        <p className="text-sm">{`${MONEY_LABELS.refunded} ${amt(money.refundedCents)} · ${MONEY_LABELS.net} ${amt(money.netCents)}`}</p>
+        {refundStatusLabel(money) ? <p className="text-sm">{refundStatusLabel(money)}</p> : null}
+        {money.refundPendingCents > 0 ? <p className="text-sm">{`${REFUND_PENDING_LABEL} ${amt(money.refundPendingCents)}`}</p> : null}
+        {moneyRows(money, { statement: true }).notFinalNote ? <p className="text-sm">{moneyRows(money, { statement: true }).notFinalNote}</p> : null}
         <p className="text-sm">{paidSummaryLine(doc, format)}</p>
         <p className="text-sm">{balance.text}{balance.hint ? ` ${balance.hint}` : ""}</p>
         {awaiting.length > 0 ? <ul className="space-y-1 text-sm">{awaiting.map((v) => <li key={v.appointmentId}>{awaitingVisitLine(v, format)}</li>)}</ul> : null}

@@ -1,4 +1,5 @@
 import { DashboardCheckoutEntry } from "@/components/dashboard-checkout-entry";
+import { BilledPaymentEntry, billedEntryState } from "@/components/billed-payment-entry";
 import { CheckoutButton } from "@/components/checkout-button";
 import type { CardOnFileStatus } from "@/lib/payment-methods/card-on-file";
 import type { AppointmentPaymentState } from "@/lib/billing/appointment-payment-state";
@@ -34,6 +35,8 @@ type AppointmentCheckoutProps = {
   dashboardCardOnFile?: CardOnFileStatus | null;
   /** The Dashboard action row passes one button look so Checkout / Mark completed match the other actions. */
   buttonClassName?: string;
+  /** The visit has a split-payments bill: a paid or unavailable badge then also offers "Manage payments" (refund, pending-payment recheck). */
+  billed?: boolean;
 };
 
 export function AppointmentCheckoutCell({ dashboardStartsAt, dashboardVisitLabel, dashboardCardOnFile, buttonClassName, ...visit }: AppointmentCheckoutProps) {
@@ -56,7 +59,11 @@ export function AppointmentCheckoutCell({ dashboardStartsAt, dashboardVisitLabel
   return visit.status === "completed" ? outcome : null;
 }
 
-function AppointmentCheckoutOutcome({ appointmentId, status, paymentState, buttonClassName }: AppointmentCheckoutProps) {
+function AppointmentCheckoutOutcome({ appointmentId, status, paymentState, buttonClassName, billed }: AppointmentCheckoutProps) {
+  // A BILLED visit that is paid, or whose payment/refund is still with Stripe, keeps a way back into the payment panel (see BilledPaymentEntry, below).
+  if (billed && billedEntryState(paymentState)) {
+    return <BilledPaymentEntry appointmentId={appointmentId} status={status} state={paymentState} buttonClassName={buttonClassName} />;
+  }
   if (
     paymentState === "paid" ||
     paymentState === "refunded" ||

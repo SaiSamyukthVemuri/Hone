@@ -1,0 +1,264 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+import {
+  canStartCharge, cardReduce, commandNote, historyLines, parseDollarsToCents, showCheckingStatus, unresolvedCardAttempt, visitBalance,
+  type CardPhase, type VisitLedger,
+} from "@/lib/billing/visit-payments-core";
+
+const bill = { id: "b1", totalCents: 22500, currency: "cad" as const, referenceFeeCents: null, feeAdjustmentReason: null, createdAt: "2026-11-27T10:00:00Z" };
+const ledger = (over: Partial<VisitLedger> = {}): VisitLedger => ({ bill, cards: [], externals: [], refunds: [], ...over });
+
+describe("parseDollarsToCents", () => {
+  it("accepts plain dollars and cents and nothing else", () => {
+    expect(parseDollarsToCents("75")).toBe(7500);
+    expect(parseDollarsToCents("75.5")).toBe(7550);
+    expect(parseDollarsToCents(" 75.05 ")).toBe(7505);
+    for (const bad of ["", "0", "0.00", "-5", "5.", ".5", "1,000", "1.234", "$5", "5e2", "abc", "2001"]) expect(parseDollarsToCents(bad), bad).toBeNull();
+    expect(parseDollarsToCents("2000")).toBe(200000);
+    expect(parseDollarsToCents(75 as unknown)).toBeNull();
+  });
+});
+
+describe("visitBalance mirrors the database position", () => {
+  it("$100 card + $50 cash + $75 pending transfer on $225: nothing collectable, $75 still owed", () => {
+    const b = visitBalance(ledger({
+      cards: [{ kind: "card", id: "c", amountCents: 10000, status: "succeeded", at: "1", platformFeeCents: null }],
+      externals: [
+        { kind: "external", id: "e1", method: "paid_cash", amountCents: 5000, state: "confirmed", at: "2", note: null },
+        { kind: "external", id: "e2", method: "paid_e_transfer", amountCents: 7500, state: "pending_confirmation", at: "3", note: null },
+      ],
+    }))!;
+    expect(b).toMatchObject({ confirmedCents: 5000, pendingCents: 7500, cardCents: 10000, collectableCents: 0, owedCents: 7500 });
+  });
+  it("a void releases the reservation; failed and ready card rows and failed refunds count for nothing", () => {
+    const b = visitBalance(ledger({
+      cards: [{ kind: "card", id: "c", amountCents: 10000, status: "failed", at: "1", platformFeeCents: null }],
+      externals: [{ kind: "external", id: "e2", method: "paid_e_transfer", amountCents: 7500, state: "voided", at: "3", note: null }],
+      refunds: [{ id: "r", amountCents: 100, kind: "payment_reversal", status: "failed", attemptId: "c", externalPaymentId: null, reason: "x", at: "4", platformFeeReturnedCents: null }],
+    }))!;
+    expect(b.collectableCents).toBe(22500);
+  });
+  it("a payment_reversal does NOT reopen a balance (Sam, 27 Nov 2026); a price_reduction (bill already lowered) leaves it unchanged", () => {
+    const paid = { kind: "external" as const, id: "e", method: "paid_cash" as const, amountCents: 10000, state: "confirmed" as const, at: "1", note: null };
+    const rev = visitBalance(ledger({ externals: [paid], refunds: [{ id: "r", amountCents: 4000, kind: "payment_reversal", status: "succeeded", attemptId: null, externalPaymentId: "e", reason: "x", at: "2", platformFeeReturnedCents: null }] }))!;
+    expect(rev.collectableCents).toBe(22500 - 10000); // unchanged by the reversal
+    expect(rev.refundedCents).toBe(4000); // the money returned is still reported
+    const red = visitBalance({ bill: { ...bill, totalCents: 19500 }, cards: [], externals: [paid], refunds: [{ id: "r", amountCents: 3000, kind: "price_reduction", status: "succeeded", attemptId: null, externalPaymentId: "e", reason: "x", at: "2", platformFeeReturnedCents: null }] })!;
+    expect(red.collectableCents).toBe(22500 - 10000);
+  });
+  it("the $225 case: fully paid, then a $40 reversal: nothing is collectable; $185 received on a $225 bill: $40 is", () => {
+    const card = { kind: "card" as const, id: "c", amountCents: 10000, status: "succeeded", at: "1", platformFeeCents: null };
+    const cash = { kind: "external" as const, id: "e1", method: "paid_cash" as const, amountCents: 5000, state: "confirmed" as const, at: "2", note: null };
+    const xfer = { kind: "external" as const, id: "e2", method: "paid_e_transfer" as const, amountCents: 7500, state: "confirmed" as const, at: "3", note: null };
+    const rev = { id: "r", amountCents: 4000, kind: "payment_reversal" as const, status: "succeeded" as const, attemptId: "c", externalPaymentId: null, reason: "x", at: "4", platformFeeReturnedCents: null };
+    expect(visitBalance(ledger({ cards: [card], externals: [cash, xfer], refunds: [rev] }))!.collectableCents).toBe(0);
+    const short = visitBalance(ledger({ cards: [{ ...card, amountCents: 6000 }], externals: [cash, xfer] }))!; // 60 + 50 + 75 = 185 received
+    expect(short.collectableCents).toBe(4000);
+    expect(visitBalance(ledger({ cards: [{ ...card, amountCents: 6000 }], externals: [cash, xfer], refunds: [rev] }))!.collectableCents).toBe(4000); // a reversal leaves an unpaid balance as it was
+  });
+  it("no bill, no balance (a legacy visit is read the old way)", () => expect(visitBalance({ bill: null, cards: [], externals: [], refunds: [] })).toBeNull());
+});
+
+describe("visitBalance: only a SUCCEEDED price reduction frees capacity (0394)", () => {
+  const bill = { id: "b", totalCents: 22500, currency: "cad", referenceFeeCents: null, feeAdjustmentReason: null, at: "2026-11-27T10:00" } as never;
+  const card = { kind: "card", id: "c1", amountCents: 22500, status: "succeeded", at: "2026-11-27T10:01", platformFeeCents: null } as const;
+  const refund = (status: "pending_stripe" | "succeeded" | "failed", kind: "payment_reversal" | "price_reduction" = "price_reduction") => ({ id: "r", amountCents: 5000, kind, status, attemptId: "c1", externalPaymentId: null, reason: "x", at: "2026-11-27T10:02", platformFeeReturnedCents: null }) as const;
+  it("pending and failed price reductions free nothing, a succeeded one frees its amount, and a succeeded payment_reversal frees nothing", () => {
+    expect(visitBalance({ bill, cards: [card], externals: [], refunds: [refund("succeeded", "payment_reversal")] } as never)!.collectableCents).toBe(0);
+    const at = (status: "pending_stripe" | "succeeded" | "failed") => visitBalance({ bill, cards: [card], externals: [], refunds: [refund(status)] } as never)!.collectableCents;
+    expect(at("pending_stripe")).toBe(0);
+    expect(at("failed")).toBe(0);
+    expect(at("succeeded")).toBe(5000);
+  });
+});
+
+describe("historyLines", () => {
+  it("lists everything in order, keeps voided and failed visible, and lists a prepared-but-never-run card as not sent (it holds its amount)", () => {
+    const lines = historyLines(ledger({
+      cards: [
+        { kind: "card", id: "c1", amountCents: 10000, status: "succeeded", at: "2026-11-27T10:01", platformFeeCents: null },
+        { kind: "card", id: "c2", amountCents: 7500, status: "ready", at: "2026-11-27T10:02", platformFeeCents: null },
+      ],
+      externals: [{ kind: "external", id: "e", method: "paid_e_transfer", amountCents: 7500, state: "voided", at: "2026-11-27T10:03", note: null }],
+      refunds: [{ id: "r", amountCents: 4000, kind: "price_reduction", status: "pending_stripe", attemptId: "c1", externalPaymentId: null, reason: "x", at: "2026-11-27T10:04", platformFeeReturnedCents: null }],
+    }));
+    expect(lines.map((l) => [l.label, l.status, l.direction])).toEqual([
+      ["Card", "received", "in"], ["Card", "not_sent", "in"], ["E-transfer", "voided", "in"], ["Price reduced, money returned (card)", "refund_in_progress", "out"],
+    ]);
+  });
+});
+
+describe("commandNote", () => {
+  it("the reserved refusal says what to do, and never exposes a code", () => {
+    for (const code of ["PY001", "reserved_for_pending_transfer"]) {
+      const n = commandNote(code);
+      expect(n.tone).toBe("blocked");
+      expect(n.message).toMatch(/^This amount is reserved for a pending transfer\./);
+      expect(n.message).toMatch(/Confirm the transfer.*cancel it/);
+    }
+  });
+  it("every refusal code has its own sentence; an unknown code is generic and says nothing changed", () => {
+    const codes = ["exceeds_balance", "PY002", "exceeds_refundable", "exceeds_bill", "confirmed_is_final", "payment_not_refundable", "method_unavailable", "not_completed", "already_settled", "card_payment_exists", "price_missing", "no_bill", "split_payments_off", "not_owner", "not_found", "submission_reused", "invalid_input"];
+    const seen = new Set(codes.map((c) => commandNote(c).message));
+    expect(seen.size).toBe(codes.length - 1); // exceeds_balance and PY002 are the same sentence
+    expect(commandNote("zzz").message).toMatch(/nothing was changed/);
+    expect(codes.every((c) => !/[a-z]+_[a-z_]+/.test(commandNote(c).message))).toBe(true);
+  });
+  it("shows how much is still collectable when it knows", () => {
+    expect(commandNote("exceeds_balance", { collectableCents: 7500, currency: "cad" }).message).toContain("$75.00");
+  });
+});
+
+describe("the card phase never offers a second charge while the outcome is unknown", () => {
+  it("a lost response leaves 'Checking payment status' and no charge control until Stripe's answer is known", () => {
+    let s: CardPhase = { phase: "idle" };
+    expect(canStartCharge(s)).toBe(true);
+    s = cardReduce(s, { type: "submit" });
+    s = cardReduce(s, { type: "prepared", attemptId: "a1" });
+    s = cardReduce(s, { type: "lost_response" });
+    expect(showCheckingStatus(s)).toBe(true);
+    expect(canStartCharge(s)).toBe(false);
+    expect(cardReduce(s, { type: "submit" })).toBe(s);                      // a second click does nothing
+    s = cardReduce(s, { type: "status", outcome: "unknown" });
+    expect(showCheckingStatus(s)).toBe(true);
+    s = cardReduce(s, { type: "status", outcome: "succeeded" });
+    expect(s).toEqual({ phase: "succeeded", attemptId: "a1" });
+    // A payment that SUCCEEDED does not block the next one: a split visit still has a balance. (Whether more may be charged is the database's call.)
+    expect(canStartCharge(s)).toBe(true);
+    expect(cardReduce(s, { type: "submit" })).toEqual({ phase: "preparing" });
+  });
+  it("only a definite failure re-enables the charge", () => {
+    let s: CardPhase = cardReduce(cardReduce(cardReduce({ phase: "idle" }, { type: "submit" }), { type: "prepared", attemptId: "a1" }), { type: "result", outcome: "failed", text: "Declined" });
+    expect(s).toMatchObject({ phase: "failed", message: "Declined" });
+    expect(canStartCharge(s)).toBe(true);
+    s = cardReduce(cardReduce({ phase: "idle" }, { type: "submit" }), { type: "prepare_refused", text: "reserved" });
+    expect(canStartCharge(s)).toBe(true);
+  });
+  it("events out of order change nothing", () => {
+    const idle: CardPhase = { phase: "idle" };
+    expect(cardReduce(idle, { type: "lost_response" })).toBe(idle);
+    expect(cardReduce(idle, { type: "status", outcome: "succeeded" })).toBe(idle);
+  });
+});
+
+import { billedOutstanding } from "@/lib/billing/visit-payments-core";
+describe("billedOutstanding (dashboard outstanding view)", () => {
+  const bill = { totalCents: 22500, currency: "cad", externals: [] as { amountCents: number; state: string }[], refunds: [] as { amountCents: number; status: string }[] };
+  it("the $225 example: $100 card + $50 cash leaves $75; a pending $75 transfer is still owed until confirmed, then it is paid", () => {
+    const cards = [{ status: "succeeded", amountCents: 10000, currency: "cad" }];
+    const withCash = { ...bill, externals: [{ amountCents: 5000, state: "confirmed" }, { amountCents: 7500, state: "pending_confirmation" }] };
+    expect(billedOutstanding(withCash, cards)).toMatchObject({ kind: "owed", outstandingCents: 7500 });
+    const confirmed = { ...bill, externals: [{ amountCents: 5000, state: "confirmed" }, { amountCents: 7500, state: "confirmed" }] };
+    expect(billedOutstanding(confirmed, cards)).toEqual({ kind: "paid" });
+    const voided = { ...bill, externals: [{ amountCents: 5000, state: "confirmed" }, { amountCents: 7500, state: "voided" }] };
+    expect(billedOutstanding(voided, cards)).toMatchObject({ kind: "owed", outstandingCents: 7500 });
+  });
+  it("a $40 payment reversal does NOT make $40 due again (product rule, 27 Nov 2026); only a price reduction frees capacity; unknown money is unavailable, never zero", () => {
+    const cards = [{ status: "succeeded", amountCents: 22500, currency: "cad" }];
+    expect(billedOutstanding({ ...bill, refunds: [{ amountCents: 4000, status: "succeeded", kind: "payment_reversal" }] }, cards)).toEqual({ kind: "paid" });
+    // a refund with no recorded kind is a reversal too: it never reopens a balance
+    expect(billedOutstanding({ ...bill, refunds: [{ amountCents: 4000, status: "succeeded" }] }, cards)).toEqual({ kind: "paid" });
+    // a price reduction lowers the bill, so what is owed follows the reduced bill
+    expect(billedOutstanding({ ...bill, totalCents: 18500, refunds: [{ amountCents: 4000, status: "succeeded", kind: "price_reduction" }] }, cards)).toEqual({ kind: "paid" }); // the card stays gross at $225; the bill dropped to $185 and the $40 returned frees that capacity
+    expect(billedOutstanding(bill, [{ status: "pending_stripe", amountCents: 100, currency: "cad" }])).toEqual({ kind: "amount_unavailable" });
+    expect(billedOutstanding({ ...bill, refunds: [{ amountCents: 4000, status: "pending_stripe" }] }, cards)).toEqual({ kind: "amount_unavailable" });
+    expect(billedOutstanding({ ...bill, currency: "eur" }, [])).toEqual({ kind: "amount_unavailable" });
+  });
+});
+
+import { proportionalFeeReturn } from "@/lib/billing/visit-payments-core";
+describe("proportionalFeeReturn (fee returned with a partial card refund)", () => {
+  const base = { feeCents: 50, chargeCents: 10000, alreadyRefundedCents: 0, alreadyReturnedCents: 0 };
+  it("a $40 refund of a $100 charge with a $0.50 fee returns $0.20", () => {
+    expect(proportionalFeeReturn({ ...base, refundCents: 4000 })).toBe(20);
+  });
+  it("the last refund returns exactly what is left, so the total never exceeds the fee and a full refund returns it all", () => {
+    expect(proportionalFeeReturn({ ...base, refundCents: 6000, alreadyRefundedCents: 4000, alreadyReturnedCents: 20 })).toBe(30);
+    expect(proportionalFeeReturn({ ...base, refundCents: 10000 })).toBe(50);
+    // three equal thirds of a $0.50 fee on a $100 charge: rounding down never over-returns, the remainder lands on the last one
+    const a = proportionalFeeReturn({ ...base, refundCents: 3333 })!;
+    const b = proportionalFeeReturn({ ...base, refundCents: 3333, alreadyRefundedCents: 3333, alreadyReturnedCents: a })!;
+    const c = proportionalFeeReturn({ ...base, refundCents: 3334, alreadyRefundedCents: 6666, alreadyReturnedCents: a + b })!;
+    expect(a + b + c).toBe(50);
+  });
+  it("no fee, no return", () => {
+    expect(proportionalFeeReturn({ ...base, feeCents: null, refundCents: 4000 })).toBeNull();
+    expect(proportionalFeeReturn({ ...base, feeCents: 0, refundCents: 4000 })).toBeNull();
+  });
+});
+
+describe("a partial card payment is not 'Paid' on the roster", () => {
+  it("$100 card on a $225 bill stays chargeable (Checkout stays open); fully paid is paid; unknown is unavailable", async () => {
+    const { billedPaymentState } = await import("@/lib/billing/billed-visits");
+    const bill = { totalCents: 22500, currency: "cad", externals: [], refunds: [] };
+    expect(billedPaymentState(bill, [{ status: "succeeded", amount_cents: 10000 }])).toBe("chargeable");
+    expect(billedPaymentState(bill, [{ status: "succeeded", amount_cents: 22500 }])).toBe("paid");
+    expect(billedPaymentState(bill, [{ status: "pending_stripe", amount_cents: 10000 }])).toBe("unavailable");
+    expect(billedPaymentState({ ...bill, externals: [{ amountCents: 22500, state: "pending_confirmation" }] }, [])).toBe("chargeable");
+  });
+});
+
+describe("a reload while a card payment is unresolved (Codex P1)", () => {
+  const pending = ledger({ cards: [{ kind: "card", id: "a-pending", amountCents: 5000, status: "pending_stripe", at: "t1", platformFeeCents: null }] });
+  it("finds the unresolved attempt and starts the panel in Checking payment status with NO charge control", () => {
+    expect(unresolvedCardAttempt(pending)).toBe("a-pending");
+    const s = cardReduce({ phase: "idle" }, { type: "restore", attemptId: "a-pending" });
+    expect(s).toEqual({ phase: "unknown", attemptId: "a-pending" });
+    expect(showCheckingStatus(s)).toBe(true);
+    expect(canStartCharge(s)).toBe(false);
+  });
+  it("nothing unresolved means nothing to restore; a settled or merely prepared attempt is not unresolved", () => {
+    expect(unresolvedCardAttempt(ledger())).toBeNull();
+    expect(unresolvedCardAttempt(ledger({ cards: [{ kind: "card", id: "x", amountCents: 1, status: "succeeded", at: "t", platformFeeCents: null }, { kind: "card", id: "y", amountCents: 1, status: "ready", at: "t", platformFeeCents: null }] }))).toBeNull();
+  });
+  it("restoring never overrides a phase that is already running", () => {
+    const charging: CardPhase = { phase: "charging", attemptId: "a1" };
+    expect(cardReduce(charging, { type: "restore", attemptId: "a2" })).toBe(charging);
+  });
+  it("a pending card refund is listed as Checking refund status so the recheck control can be offered after a reload", () => {
+    const l = historyLines(ledger({ refunds: [{ id: "r1", amountCents: 4000, kind: "payment_reversal", status: "pending_stripe", attemptId: "a1", externalPaymentId: null, reason: "r", at: "t", platformFeeReturnedCents: null }] }));
+    expect(l[0]).toMatchObject({ key: "refund:r1", status: "refund_in_progress" });
+  });
+});
+
+// Sam, 28 Nov 2026: REAL money only. Still to collect (`collectableCents`) counts cash, transfers and LIVE card payments; a Stripe TEST payment never counts, in ANY studio (live, connected with no
+// card, never connected), and a price reduction on a test card adds back nothing. The ONE use of the live distinction is the room for a new TEST card (`cardCollectableCents` in a test deployment).
+// (These replace the earlier "a test card counts until the studio is live" assertions, deliberately: that behaviour was dropped.)
+describe("visitBalance counts REAL money only, in every studio", () => {
+  const testCard = { kind: "card" as const, id: "t", amountCents: 22500, status: "succeeded", at: "t", platformFeeCents: null, test: true };
+  const liveCard = { kind: "card" as const, id: "l", amountCents: 10000, status: "succeeded", at: "t", platformFeeCents: null };
+  it("a test card never reduces Still to collect, whether or not the studio is live", () => {
+    for (const studioLive of [undefined, false, true]) {
+      expect(visitBalance(ledger({ studioLive, cards: [testCard] }))).toMatchObject({ cardCents: 0, collectableCents: 22500 });
+    }
+  });
+  it("a mixed visit counts only the live card: $225 bill, $225 test charge + $100 live card leaves $125", () => {
+    for (const studioLive of [false, true]) expect(visitBalance(ledger({ studioLive, cards: [testCard, liveCard] }))).toMatchObject({ cardCents: 10000, collectableCents: 12500 });
+  });
+  it("a price reduction on a test card adds nothing back; on a live card it still does", () => {
+    const red = (attemptId: string, test?: boolean) => ({ id: "r", amountCents: 3000, kind: "price_reduction" as const, status: "succeeded" as const, attemptId, externalPaymentId: null, reason: "x", at: "t", platformFeeReturnedCents: null, ...(test ? { test: true } : {}) });
+    expect(visitBalance(ledger({ cards: [testCard], refunds: [red("t", true)] }))?.collectableCents).toBe(22500);
+    expect(visitBalance(ledger({ cards: [liveCard], refunds: [red("l")] }))?.collectableCents).toBe(12500 + 3000);
+  });
+  it("real cash and transfers (confirmed or pending) and live cards reduce it; the $225 acceptance case: $225 test charge then $225 cash leaves $0, and a second tender gets nothing", () => {
+    const cash = { id: "e", method: "paid_cash", amountCents: 22500, state: "confirmed", at: "t" } as never;
+    expect(visitBalance(ledger({ cards: [testCard], externals: [cash] }))).toMatchObject({ confirmedCents: 22500, collectableCents: 0 });
+    const pend = { id: "p", method: "paid_e_transfer", amountCents: 1000, state: "pending_confirmation", at: "t" } as never;
+    expect(visitBalance(ledger({ cards: [testCard, liveCard], externals: [{ ...(cash as object), amountCents: 2000 } as never, pend] }))).toMatchObject({ collectableCents: 22500 - 10000 - 2000 - 1000 });
+  });
+});
+
+describe("visitBalance: the room for a new card by tender mode ($100 bill, a $100 test charge on it)", () => {
+  const b100 = { ...bill, totalCents: 10000 };
+  const testCard = { kind: "card" as const, id: "t", amountCents: 10000, status: "succeeded", at: "t", platformFeeCents: null, test: true };
+  it("a live deployment (a live card): the full $100, because real money is judged only", () => {
+    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: false, cardAssumesLive: true })).toMatchObject({ collectableCents: 10000, cardCollectableCents: 10000 });
+  });
+  it("a test deployment in a TRIAL studio: a second TEST card has no room (a test card counts against another test card), while cash still has the full $100", () => {
+    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: false, cardAssumesLive: false })).toMatchObject({ collectableCents: 10000, cardCollectableCents: 0 });
+  });
+  it("a test deployment in a LIVE studio: the test charge no longer counts against a new test card either", () => {
+    expect(visitBalance({ bill: b100, cards: [testCard], externals: [], refunds: [], studioLive: true, cardAssumesLive: false })).toMatchObject({ collectableCents: 10000, cardCollectableCents: 10000 });
+  });
+});

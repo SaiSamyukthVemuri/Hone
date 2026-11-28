@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useDialogKeyboard } from "@/components/use-dialog-keyboard";
 import Link from "next/link";
 import { FormattedDateTime } from "@/components/formatted-date-time";
-import type { CheckoutFeeDraft } from "@/components/checkout-fee-fields";
+import { splitBillFeeFields, type CheckoutFeeDraft } from "@/components/checkout-fee-fields";
 import type { CheckoutMethod } from "@/components/checkout-method-picker";
 import { SessionPaymentPrepareCard } from "@/components/session-payment-prepare-card";
 import { AppointmentSettlementControls } from "@/components/appointment-settlement-controls";
@@ -18,6 +18,10 @@ import {
   getQuickCheckoutContextAction,
   type QuickCheckoutContextResult,
 } from "@/app/(app)/quick-checkout-actions";
+import { SplitVisitPayments } from "@/components/split-visit-payments";
+import {
+  getSplitStateAction, startSplitBillAction, type SplitState,
+} from "@/app/(app)/visit-payment-actions";
 
 // Quick checkout modal (Chloe: complete payment while the client is standing
 // there, without navigating client → sessions → charting → payment). It is a
@@ -55,6 +59,9 @@ export function QuickCheckoutModal({
   const [ctx, setCtx] = useState<QuickCheckoutContextResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // HON-123. Only a studio with split_payments switched on (the server decides) ever sees the split panel; everyone else is unchanged.
+  const [split, setSplit] = useState<{ enabled: boolean; state: SplitState | null } | null>(null);
+  const [splitNote, setSplitNote] = useState<string | null>(null);
   const titleId = useId();
   const descId = useId();
   const { panelRef, initialFocusRef: closeRef } = useDialogKeyboard<HTMLDivElement, HTMLButtonElement>({
@@ -70,6 +77,8 @@ export function QuickCheckoutModal({
     openRef.current = open;
   }, [open]);
   const requestSeq = useRef(0);
+  // The fee draft as the two checkout children hold it right now (they report it; this never re-renders).
+  const feeDraftRef = useRef<CheckoutFeeDraft | undefined>(undefined);
 
   // Resolve trusted server context. `silent` re-resolves WITHOUT tearing down
   // the visible card (no spinner, no ctx reset) so an in-place state advance
@@ -84,11 +93,15 @@ export function QuickCheckoutModal({
         setLoadError(null);
         setCtx(null);
       }
-      return getQuickCheckoutContextAction(appointmentId)
-        .then((result) => {
+      return Promise.all([
+        getQuickCheckoutContextAction(appointmentId),
+        getSplitStateAction(appointmentId).catch(() => ({ enabled: false, state: null as SplitState | null })),
+      ])
+        .then(([result, splitResult]) => {
           // Drop stale / post-close responses.
           if (seq !== requestSeq.current || !openRef.current) return;
           setCtx(result);
+          setSplit(splitResult);
           if (!silent) setLoadError(null);
         })
         .catch(() => {
@@ -149,6 +162,13 @@ export function QuickCheckoutModal({
 
   if (!open) return null;
 
+  const splitBill = split?.enabled ? split.state?.ledger.bill ?? null : null;
+  const splitActive = !loading && !!splitBill && !!split?.state;
+  // Offered only where splitting is possible: switched on, a finished visit, and nothing recorded or charged yet.
+  const canOfferSplit =
+    !loading && !!ctx && !!split?.enabled && !splitBill && !!ctx.settlement?.canRecord && !ctx.settlement.settledMethod &&
+    (ctx.settlement.quotedAmountCents ?? 0) > 0 &&
+    !("eligibility" in ctx && ctx.eligibility.existingAttempts.some((a) => ["ready", "pending_stripe", "succeeded"].includes(a.status)));
   const chartHref = ctx?.ok === false && ctx.clientId && ctx.settlement?.canRecord
     && ctx.settlement.quotedAmountCents !== null && ctx.settlement.quotedAmountCents > 0
     && (!ctx.settlement.settledMethod || ctx.settlement.settledMethod === "still_owes")
@@ -210,7 +230,7 @@ export function QuickCheckoutModal({
           </p>
         )}
 
-        {!loading && ctx && ctx.ok === false && (
+        {!loading && !splitActive && ctx && ctx.ok === false && (
           <div className="mt-4 flex flex-col gap-3" data-testid="quick-checkout-ineligible">
             {/* PAY-SETTLE / 0187 — THE CARD PATH BEING UNAVAILABLE IS THE MAIN
                 REASON TO OFFER THIS, NOT A REASON TO WITHHOLD IT.
@@ -229,6 +249,7 @@ export function QuickCheckoutModal({
             {ctx.settlement?.canRecord && (ctx.settlement.quotedAmountCents !== 0 || ctx.settlement.settledMethod) && (
               <AppointmentSettlementControls
                 initialFeeDraft={initialFeeDraft}
+                onDraftObserved={(d) => { feeDraftRef.current = d; }}
                 initialMethod={initialMethod ?? (ctx.isOwner ? "paid_e_transfer" : undefined)}
                 currency={ctx.settlement.currency ?? null}
                 stripeUnavailable={ctx.settlement.quotedAmountCents === 0 ? undefined : "A linked treatment session is needed to charge with Stripe."}
@@ -266,7 +287,7 @@ export function QuickCheckoutModal({
         {!loading && ctx?.settlement && initialFeeDraft && ctx.settlement.quotedAmountCents !== initialFeeDraft.referenceCents && (
           <p role="status" className="mt-3 text-sm">The booked fee changed. Review the current fee before confirming.</p>
         )}
-        {!loading && ctx && ctx.ok === true && (
+        {!loading && !splitActive && ctx && ctx.ok === true && (
           <div className="mt-3 flex flex-col gap-3">
             <div className="text-xs text-neutral-500 dark:text-neutral-400">
               <span className="font-medium text-neutral-700 dark:text-neutral-200">
@@ -288,6 +309,7 @@ export function QuickCheckoutModal({
                 the persisted next state without a close/reopen. */}
             <SessionPaymentPrepareCard
               initialFeeDraft={initialFeeDraft}
+              onDraftObserved={(d) => { feeDraftRef.current = d; }}
               initialMethod={initialMethod}
               sessionId={ctx.sessionId}
               clientId={ctx.clientId}
@@ -312,6 +334,43 @@ export function QuickCheckoutModal({
               Taking payment here does not finish charting. You can close this and
               finish charting later.
             </p>
+          </div>
+        )}
+
+        {canOfferSplit && (
+          <div className="mt-3 border-t border-neutral-200 pt-3 dark:border-neutral-800" data-testid="split-offer">
+            <p className="text-sm text-neutral-700 dark:text-neutral-300">Taking part of the payment now and the rest later?</p>
+            <button
+              type="button"
+              className="mt-2 inline-flex min-h-[44px] items-center justify-center rounded-md border border-neutral-300 px-4 text-sm font-medium hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              onClick={() => {
+                // The fee the owner reviewed (the dashboard draft, or what they edited since) travels with the bill: never the booked price by default.
+                const fee = splitBillFeeFields(feeDraftRef.current ?? initialFeeDraft, ctx?.settlement?.quotedAmountCents ?? 0);
+                if (!fee.ok) { setSplitNote(fee.message); return; }
+                const f = new FormData();
+                f.set("appointment_id", appointmentId);
+                for (const [k, v] of Object.entries(fee.fields)) f.set(k, v);
+                void startSplitBillAction(f).then((r) => {
+                  setSplitNote(r.ok ? null : r.note.message);
+                  if (r.state) setSplit({ enabled: true, state: r.state });
+                }).catch(() => setSplitNote("That did not go through. Reload the page and try again."));
+              }}
+            >
+              Split this payment
+            </button>
+            {splitNote && <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-400">{splitNote}</p>}
+          </div>
+        )}
+
+        {splitActive && split?.state && splitBill && (
+          <div className="mt-3">
+            <SplitVisitPayments
+              appointmentId={appointmentId}
+              currency={splitBill.currency}
+              country={splitBill.currency === "usd" ? "US" : "CA"}
+              state={split.state}
+              onChanged={(next) => setSplit((prev) => ({ enabled: prev?.enabled ?? true, state: next ?? prev?.state ?? null }))}
+            />
           </div>
         )}
       </div>

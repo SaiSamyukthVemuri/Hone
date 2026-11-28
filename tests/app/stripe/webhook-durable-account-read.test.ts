@@ -106,6 +106,8 @@ function makeAdmin(reads: Record<string, ReadResult[]>, rpcs: Record<string, Rea
       const result = rpcs[name];
       if (result instanceof Error) throw result;
       if (result) return result;
+      // A legacy visit: the billed-payment review flag answers not_billed and the older path runs unchanged.
+      if (name === "flag_payment_refund_review") return { data: [{ result: "not_billed" }], error: null };
       // Like the real 0214 RPC for a bound account: the observation persists.
       // A reply that stored nothing now fails the event (#1035 P2), so a
       // healthy-path test must not inherit a null reply by default.
@@ -437,6 +439,19 @@ describe("PAY-002 signed refund status wiring", () => {
         currency: "cad", refund_status: "pending_stripe", stripe_refund_id: "re_1", ...attemptOverride }, error: null }],
     }, { claim_stripe_event: CLAIM_OK, reconcile_bound_payment_event: { data: [{ result: "refund_pending" }], error: null } });
   }
+  // Codex P1 on #1827: a PARTIAL refund's status event ($40 of a $50 payment) must reach the locked command (it updates or closes the review), not be refused as a money mismatch.
+  it.each(["succeeded", "failed", "canceled", "pending"])("a partial refund (%s) of the payment reaches the ordered command with its own amount", async (status) => {
+    prepareRefund(status, {}, { amount: 4000 });
+    const response = await callRoute();
+    expect(response.status).toBe(200);
+    const command = ADMIN.current!.rpcCalls.find((call) => call.name === "reconcile_bound_payment_event");
+    expect(command?.args).toMatchObject({ p_object: { refund_status: status, refund_amount_cents: 4000, refund_currency: "cad" } });
+  });
+  it.each([["above the payment", { amount: 5001 }], ["zero", { amount: 0 }], ["another currency", { currency: "usd" }]] as const)("a refund amount or currency that does not fit the payment (%s) is still refused: nothing is reconciled", async (_n, override) => {
+    prepareRefund("succeeded", {}, override as Record<string, unknown>);
+    await callRoute();
+    expect(names(ADMIN.current!.rpcCalls)).not.toContain("reconcile_bound_payment_event");
+  });
   it.each(["pending", "requires_action", "succeeded", "failed", "canceled"])("passes actual %s and immutable original identity to the ordered command", async (status) => {
     prepareRefund(status);
     const response = await callRoute();
@@ -1525,6 +1540,48 @@ describe("W-O1 governed refund refusal through the route, real alert writer", ()
     expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
   });
 
+  // Insurance F1: only refund_evidence_refused goes to the flag call as the evidence reason. The other three refusals keep their durable alert (legacy: studio alert as before;
+  // billed: operator-only alert with no studio, client or visit), and nothing is flagged or placed.
+  describe.each(["identity_mismatch", "invalid_input", "terminal_refund_mismatch"])("a standalone refund refused by the bound command with %s", (code) => {
+    const prepareRefused = (flag: "not_billed" | "billed") => {
+      CONSTRUCT_EVENT.mockReturnValue({ id: "evt_refund_refused_" + code, created: 1770000000, type: "refund.updated",
+        account: "acct_test_1", livemode: false, data: { object: { id: "re_1", charge: "ch_1", payment_intent: "pi_1",
+          amount: 5000, currency: "cad", status: "succeeded", metadata: { hone_payment_charge_attempt_id: "attempt-1" } } } });
+      ADMIN.current = makeAdmin({
+        studio_payment_settings: [{ data: { studio_id: "studio-1" }, error: null }],
+        payment_charge_attempts: [{ data: { id: "attempt-1", studio_id: "studio-1", client_id: "client-1",
+          charge_reason: "session_payment", status: "succeeded", stripe_livemode: false, stripe_account_id: "acct_test_1",
+          stripe_customer_id: "cus_1", stripe_payment_intent_id: "pi_1", stripe_charge_id: "ch_1", amount_cents: 5000,
+          currency: "cad", refund_status: "pending_stripe", stripe_refund_id: "re_1" }, error: null }],
+      }, { claim_stripe_event: CLAIM_OK, reconcile_bound_payment_event: { data: [{ result: code }], error: null },
+           flag_payment_refund_review: { data: [{ result: flag }], error: null } });
+    };
+    it("a legacy visit keeps the studio alert, and the flag call only learned 'not billed'", async () => {
+      prepareRefused("not_billed");
+      expect((await callRoute()).status).toBe(200);
+      expect(ADMIN.current!.opsRows).toEqual([expect.objectContaining({ event: "stripe_webhook_bound_command_refused", severity: "critical" })]);
+      // The legacy alert is the SAME alert the writer always produced for this event (the webhook passes the studio); whether the stored row is studio-attributed or operator-only is
+      // the writer's own rule (HON-125, routeOperatorOnly), so this test does not pin the row's studio_id.
+      const flags = ADMIN.current!.rpcCalls.filter((c) => c.name === "flag_payment_refund_review");
+      expect(flags.map((c) => c.args.p_reason_code)).toEqual(["refund_evidence_refused"]);
+      expect(flags[0].args.p_stripe_refund_id ?? null).toBeNull();
+    });
+    it("a billed payment keeps a DURABLE operator alert with no studio and no client, and the claim is released when it cannot be kept", async () => {
+      prepareRefused("billed");
+      expect((await callRoute()).status).toBe(200);
+      const rows = ADMIN.current!.opsRows;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ event: "billed_refund_unplaceable", severity: "critical" });
+      expect(rows[0].studio_id ?? rows[0].studioId ?? null).toBeNull();
+      expect(JSON.stringify(rows[0])).not.toMatch(/client-1|studio-1/);
+      prepareRefused("billed");
+      failInsert();
+      expect((await callRoute()).status).toBe(500);
+      expect(names(ADMIN.current!.rpcCalls)).toContain("release_stripe_event_claim_with_error");
+      expect(names(ADMIN.current!.rpcCalls)).not.toContain("mark_stripe_event_processed");
+    });
+  });
+
   it("alert insert FAILS for a refused standalone refund.updated: 500 and the claim is released", async () => {
     CONSTRUCT_EVENT.mockReturnValue({ id: "evt_refund_status_refused", created: 1770000000, type: "refund.updated",
       account: "acct_test_1", livemode: false, data: { object: { id: "re_1", charge: "ch_1", payment_intent: "pi_1",
@@ -1644,9 +1701,10 @@ describe("PINNED TODAY (HON-49): a partial refund recorded in Stripe is not reco
     return post(payload, webhooks.generateTestHeaderString({ payload, secret: "whsec_test" }));
   }
   const alerts = () => ADMIN.current!.opsRows.filter((r) => r.event === "charge_refunded_partial_out_of_band");
-  // The only database commands a partial refund may run: claim the event, then mark it processed. Any other command (a different
+  // The only database commands a partial refund may run: claim the event, ask the billed-payment review flag whether this is a split-payment visit
+  // (a READ of the visit's billing state that answers not_billed here and writes nothing), then mark it processed. Any other command (a different
   // one that writes the row, for example) fails the exact-list checks below.
-  const ONLY_CLAIM_AND_MARK = ["claim_stripe_event", "mark_stripe_event_processed"];
+  const ONLY_CLAIM_AND_MARK = ["claim_stripe_event", "flag_payment_refund_review", "mark_stripe_event_processed"];
 
   it("one signed partial refund (2000 of 5000): critical alert, no row change, only claim and mark commands, acknowledged", async () => {
     startDatabase(1);

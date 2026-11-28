@@ -824,6 +824,10 @@ const PINNED: string[] = [
   "fn public.client_id_photo_wording_current(p_studio_id uuid)",
   "fn public.dismiss_attention_item(p_studio uuid, p_item_key text, p_instance_token text)",
   "fn public.edit_client_pinned_note(p_studio_id uuid, p_client_id uuid, p_note_id uuid, p_original_text text, p_text text)",
+  // 0394 (HON-123): returns ZERO rows for anyone who is not the studio owner (proved in visit-payment-hardening F1), so a no-studio user reaches an empty read, nothing more.
+  "fn public.get_visit_payment_position(p_studio_id uuid, p_appointment_id uuid)",
+  // 0394 (r4): the batch read and the review acknowledgement are owner-only inside the database: a no-studio user gets zero rows / not_found (proved in payment-refund-reviews).
+  "fn public.get_visit_payment_positions(p_studio_id uuid, p_appointment_ids uuid[])",
   "fn public.is_studio_member(target_studio_id uuid)",
   "fn public.is_studio_owner(target_studio_id uuid)",
   "fn public.latest_setup_for_client(p_studio_id uuid, p_client_id uuid, p_exclude_session_id uuid)",
@@ -839,6 +843,7 @@ const PINNED: string[] = [
   // never complete for a no-studio user. record_appointment_settlement (below) validates first and returns an
   // invalid_input row to anyone, which is why that one counts as reachable. S4 pins the adjusted command's refusal.
   "fn public.record_appointment_settlement(p_studio_id uuid, p_appointment_id uuid, p_method text, p_amount_cents integer, p_note text, p_livemode",
+  "fn public.resolve_payment_refund_review(p_review_id uuid)",
   "fn public.restore_attention_item(p_studio uuid, p_item_key text)",
   "fn public.restore_attention_item_if_latest(p_studio uuid, p_item_key text, p_observed_seq bigint)",
   "fn public.session_is_visible(target_session_id uuid)",

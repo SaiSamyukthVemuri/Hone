@@ -11,6 +11,8 @@ import { deriveAppointmentPaymentState } from "@/lib/billing/appointment-payment
 import type { UnpaidAttention } from "./needs-attention-model";
 import { readInChunks } from "./in-chunks";
 import { readOtherMoneyForms } from "./other-money-forms";
+import { billedOutstanding } from "@/lib/billing/visit-payments-core";
+import { readBilledVisits } from "@/lib/billing/billed-visits";
 
 // ===========================================================================
 // Finished appointments with money still owed: the OWNER-ONLY loader.
@@ -159,6 +161,11 @@ export async function loadUnpaidAttention(opts: {
     settlements.set(r.appointment_id, b);
   }
 
+  // HON-123. A visit with a live BILL (split payments) is owed what its ledger says; a failed read is a failed check, never "nothing owed".
+  const billedLoad = await readBilledVisits(supabase, studioId, ids);
+  if (!billedLoad.ok) return { ok: false };
+  const billed = billedLoad.billed;
+
   // The quote. A failed read leaves every quote unknown (-> "Amount unavailable"), never a guessed or zero price.
   const serviceIds = [...new Set(appts.map((a) => a.service_id).filter(Boolean))] as string[];
   const clientIds = [...new Set(appts.map((a) => a.client_id).filter(Boolean))] as string[];
@@ -190,6 +197,16 @@ export async function loadUnpaidAttention(opts: {
   const today = todayInTz(opts.studioTimezone);
 
   const evaluate = (a: ApptRow) => {
+    const bill = billed.get(a.id);
+    if (bill && a.status === "completed" && Date.parse(a.ends_at) <= Date.parse(nowIso)) {
+      // Money that may exist but is not provable here (a charge on a deleted chart) makes the balance UNAVAILABLE, never owed: the card rows of that chart are deliberately not in
+      // cardsByAppt, so subtracting them would report a fully paid bill as owing (Codex P2 on #1827).
+      // The bill carries the visit's card payments read BY APPOINTMENT (readBilledVisits), so a charge on a deleted chart IS proven and counted there (the same set the roster uses);
+      // every other unproven form still makes the amount unavailable.
+      const unprovenForms = [...(unproven.get(a.id) ?? [])].filter((f) => !(bill.cards && f === "deleted_session_charge"));
+      if (unprovenForms.length > 0) return { kind: "amount_unavailable" as const };
+      return billedOutstanding(bill, bill.cards ?? cardsByAppt.get(a.id) ?? []);
+    }
     let quoteCents: number | null = null;
     // Same priority as the settlement coverage logic (lib/billing/settlement-coverage.ts): the settlement's recorded quote first; today's
     // price only when none was recorded. There is no booked-price snapshot on appointments, so nothing sits between the two.
@@ -238,7 +255,7 @@ export async function loadUnpaidAttention(opts: {
     // HON-65: never contradict the appointment page. When it reads this visit as "Paid" (a Hone-verified card charge that was not refunded,
     // the same reducer the page uses), the dashboard neither lists it NOR counts it as unknown, whatever today's price or any other money form says.
     const cards = cardsByAppt.get(a.id) ?? [];
-    if (cards.length > 0 && deriveAppointmentPaymentState(true, cards.map((c) => ({ status: c.status, refund_status: c.refundStatus, amount_cents: c.amountCents, refund_amount_cents: c.refundAmountCents }))) === "paid") continue;
+    if (!billed.has(a.id) && cards.length > 0 && deriveAppointmentPaymentState(true, cards.map((c) => ({ status: c.status, refund_status: c.refundStatus, amount_cents: c.amountCents, refund_amount_cents: c.refundAmountCents }))) === "paid") continue;
     // List a visit only when Hone can ESTABLISH that money is still owed. An amount Hone cannot determine is not a reason to nag, but it is counted.
     if (result.kind === "amount_unavailable") {
       unlisted += 1;

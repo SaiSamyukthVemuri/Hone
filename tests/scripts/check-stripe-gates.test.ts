@@ -119,13 +119,13 @@ describe("check-stripe-gates: money-movement gate stays 1/1/0/0 (PR #309)", () =
     });
     expect(result.status, result.stderr ?? result.stdout).toBe(0);
     const stdout = result.stdout ?? "";
-    // 1 / 1 / 0 / 0, byte-compatible with the pre-#309 output.
+    // 1 / 2 / 0 / 0: the second refund call site is the HON-122 partial refund (reviewed; see the gate's allowlist comment).
     expect(stdout).toMatch(
       /^PASS paymentIntents\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/billing\/session-payment-charge\.ts:1$/m,
     );
     expect(stdout).toMatch(/^PASS charges\.create: zero runtime source occurrences$/m);
     expect(stdout).toMatch(
-      /^PASS refunds\.create: 1 occurrence\(s\), all in allowlisted file\(s\): lib\/billing\/payment-refund\.ts:1$/m,
+      /^PASS refunds\.create: 2 occurrence\(s\), all in allowlisted file\(s\): lib\/billing\/payment-partial-refund\.ts:1, lib\/billing\/payment-refund\.ts:1$/m,
     );
     expect(stdout).toMatch(/^PASS checkout\.sessions: zero runtime source occurrences$/m);
   });

@@ -27,7 +27,9 @@ function read(rel: string): string {
 // splits every count by the ROW's own stripe_livemode — mode-correct by
 // construction, so it is exempt from the per-block current-mode filter rule
 // below (its platform-summary read IS current-mode scoped).
-const BOTH_MODE_READERS = ["lib/payments/admin-payment-status.ts"];
+// Also lib/billing/studio-live.ts: it asks ONLY whether a LIVE-mode row with an account id EXISTS (the app's copy of 0394 studio_has_gone_live), a row-existence probe that is
+// deliberately about the live mode regardless of the deployment's own mode; it never reads an account id out.
+const BOTH_MODE_READERS = ["lib/payments/admin-payment-status.ts", "lib/billing/studio-live.ts"];
 
 const TABLE_READERS = [
   "app/portal/payment-method-actions.ts",

@@ -116,7 +116,8 @@ for (const [sheetName, sheet] of Object.entries(SHEETS)) {
           expect(a.chrome, `${label}: no app chrome prints`).toEqual([]);
           expect(a.tooLight, `${label}: text is dark enough for white paper`).toEqual([]);
           if (doc === "statement") {
-            expect(a.text, `${label}: the total is printed`).toMatch(/Total paid \$[\d,]+\.\d{2}/);
+            // Sam, 27 Nov 2026: the statement says "Collected" (not "Total paid"); the purpose is unchanged: the headline total is printed, not clipped.
+            expect(a.text, `${label}: the total is printed`).toMatch(/Collected \$[\d,]+\.\d{2}/);
             expect(a.text, `${label}: the balance is printed`).toMatch(/Balance due \$[\d,]+\.\d{2}/);
           }
           if (theme === "light") {

@@ -768,6 +768,9 @@ export async function sendPaymentChargeReceiptAction(
 // status='succeeded', but the same action refunds future
 // late_cancellation_fee and no_show_fee rows without code change.
 
+const BILLED_REFUND_ERROR =
+  "This visit is paid through the visit bill. Refund a payment from Payments for this visit (open Quick checkout from the calendar or dashboard).";
+
 export type RefundPaymentActionResult =
   | {
       ok: true;
@@ -782,6 +785,7 @@ export type RefundPaymentActionResult =
         | "live_mode_blocked"
         | "not_found"
         | "not_authorized"
+        | "visit_billed"
         | "not_succeeded"
         | "missing_charge_id"
         | "missing_payment_intent_id"
@@ -856,12 +860,21 @@ export async function refundPaymentChargeAttemptAction(
   // Same rule as execute: the refund confirmation printed the persisted attempt
   // currency; refuse if it is unknown or differs from what the person saw.
   {
-    const { data: refundRow } = await createAdminClient()
+    const { data: refundRow, error: refundReadErr } = await createAdminClient()
       .from("payment_charge_attempts")
-      .select("currency")
+      .select("currency, visit_bill_id")
       .eq("id", attemptId)
       .eq("studio_id", studioId)
       .maybeSingle();
+    // A failed read cannot show whether this attempt is billed, so it refuses (fail closed) rather than skipping the billed check.
+    if (refundReadErr) {
+      return { ok: false, outcome: "amount_invalid", error: CURRENCY_UNVERIFIED_ERROR };
+    }
+    // HON-123: a card payment on a split bill is refunded through the split refund command (it records the kind, the reason and the amount against that payment and
+    // the visit's balance). This older whole-payment refund writes only the attempt's own columns, so it is refused here for a billed attempt.
+    if (refundRow && (refundRow as { visit_bill_id?: unknown }).visit_bill_id) {
+      return { ok: false, outcome: "visit_billed", error: BILLED_REFUND_ERROR };
+    }
     if (refundRow) {
       const persisted = parsePaymentCurrency(
         (refundRow as { currency?: unknown }).currency,

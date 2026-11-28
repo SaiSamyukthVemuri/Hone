@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { CheckoutMethodPicker, type CheckoutMethod } from "@/components/checkout-method-picker";
 import {
   CheckoutFeeFields, checkoutDraftAmount, isReceivedMethod, useCheckoutFeeDraft,
@@ -42,6 +42,8 @@ type Props = {
   initialMethod?: CheckoutMethod;
   initialFeeDraft?: CheckoutFeeDraft;
   feeDraft?: CheckoutFeeDraft;
+  /** Tells a parent (the quick checkout) the fee draft as it stands, so a split bill is made at the reviewed fee. Observation only. */
+  onDraftObserved?: (draft: CheckoutFeeDraft | undefined) => void;
   onFeeChange?: (draft: CheckoutFeeDraft) => void;
   stripeForm?: ReactNode;
   stripeUnavailable?: string;
@@ -82,6 +84,7 @@ export function AppointmentSettlementControls({
   initialMethod,
   initialFeeDraft,
   feeDraft,
+  onDraftObserved,
   onFeeChange,
   stripeForm,
   stripeUnavailable,
@@ -108,6 +111,7 @@ export function AppointmentSettlementControls({
   const [note, setNote] = useState("");
   const [localDraft, setLocalDraft] = useCheckoutFeeDraft(isOwner ? defaultAmountCents : null, initialFeeDraft);
   const draft = feeDraft ?? localDraft;
+  useEffect(() => { onDraftObserved?.(draft); }); // after every render: observation only, the parent keeps it in a ref
   const changeDraft = onFeeChange ?? setLocalDraft;
   const finalCents = draft ? checkoutDraftAmount(draft.finalFee) : null;
   const zeroWaiver = Boolean(draft && finalCents === 0);

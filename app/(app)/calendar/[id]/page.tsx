@@ -42,7 +42,7 @@ import type {
   AppointmentRepairState,
 } from "../appointment-repair-contract";
 import { AppointmentCheckoutCell } from "@/components/appointment-checkout-cell";
-import { getAppointmentPaymentStates } from "@/lib/billing/appointment-payment-state";
+import { getAppointmentPaymentStates, isBilledVisit } from "@/lib/billing/appointment-payment-state";
 import { calendarReturnHref } from "../calendar-return";
 import { PractitionerCancelForm } from "../PractitionerCancelForm";
 import { PostcareSendButton } from "../PostcareSendButton";
@@ -291,13 +291,13 @@ export default async function AppointmentDetailPage({
   // bounded loader + cell the dashboard uses (one flow, not two).
   // Owner-only (HON-44): a non-owner never queries payment state and sees no
   // payment section.
-  const checkoutPaymentState =
+  const checkoutStates =
     isOwner && typedStatus === "completed"
-      ? (await getAppointmentPaymentStates(studio.id, [id], studio.timezone, isOwner)).get(id) ??
-        // A missing entry means the loader could not speak for this
-        // appointment; that is not the same as "no session".
-        "unavailable"
-      : "no_session";
+      ? await getAppointmentPaymentStates(studio.id, [id], studio.timezone, isOwner)
+      : null;
+  // A missing entry means the loader could not speak for this appointment; that is not the same as "no session".
+  const checkoutPaymentState = checkoutStates ? (checkoutStates.get(id) ?? "unavailable") : "no_session";
+  const checkoutBilled = checkoutStates ? isBilledVisit(checkoutStates, id) : false;
 
   // Workflow fix 3 (preserved): cancel surface only for confirmed +
   // future. Past/in-progress confirmed appointments expose Mark
@@ -594,6 +594,7 @@ export default async function AppointmentDetailPage({
             appointmentId={id}
             status={typedStatus}
             paymentState={checkoutPaymentState}
+            billed={checkoutBilled}
           />
         </section>
       )}

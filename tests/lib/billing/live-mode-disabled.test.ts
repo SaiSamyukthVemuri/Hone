@@ -167,8 +167,8 @@ describe("static Stripe gates remain 1/1/0/0", () => {
   it("paymentIntents.create exactly 1", () => {
     expect(STRIPE_GATE_SCRIPT.match(rule("paymentIntents.create"))?.[1]).toBe("1");
   });
-  it("refunds.create exactly 1", () => {
-    expect(STRIPE_GATE_SCRIPT.match(rule("refunds.create"))?.[1]).toBe("1");
+  it("refunds.create exactly 2 (full refund + HON-122 partial refund)", () => {
+    expect(STRIPE_GATE_SCRIPT.match(rule("refunds.create"))?.[1]).toBe("2");
   });
   it("charges.create exactly 0", () => {
     expect(STRIPE_GATE_SCRIPT.match(rule("charges.create"))?.[1]).toBe("0");

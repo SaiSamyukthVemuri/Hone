@@ -78,10 +78,10 @@ describe("the visits and the card", () => {
     expect(out).not.toMatch(/>09:00<|>13:30<|>11:00</);
     expect(out).toContain(">Nov 17<"); // within one month the year is left off
   });
-  it("the card: the client's name, '<month> · Total paid', the total with CAD once beside it, '3 visits · <studio>'; short method words, the bar ABOVE them, no currency suffix", () => {
+  it("the card: the client's name, '<month> · Collected', the total with CAD once beside it, '3 visits · <studio>'; short method words, the bar ABOVE them, no currency suffix", () => {
     const out = html(three(), { studioName: "Studio One" });
     const card = out.slice(out.indexOf('aria-labelledby="cs-summary"'), out.indexOf("</section>", out.indexOf('aria-labelledby="cs-summary"')));
-    expect(card).toMatch(/<p class="font-semibold text-fg">Ada Lovelace<\/p><p[^>]*>November 2026 · Total paid<\/p>/);
+    expect(card).toMatch(/<p class="font-semibold text-fg">Ada Lovelace<\/p><p[^>]*>November 2026 · Collected<\/p>/);
     expect(card).toMatch(/<small[^>]*>CAD<\/small>/);
     expect(card).toContain("3 visits · Studio One");
     expect(card).toMatch(/<span>Card<\/span><span[^>]*>\$120\.00<\/span>/);
@@ -207,10 +207,10 @@ describe("the display order is a COPY, and the page loads the finder only after 
 
 describe("the print paper follows the approved hierarchy and keeps what must stay", () => {
   const paper = (d = three(), over = {}) => renderToStaticMarkup(createElement(StatementPrintView as never, { document: d, offDocumentWithMoney: 0, backHref: "/x", format: fmt, timezone: "America/Toronto", currency: "cad", monthLabel: "November 2026", ...over }));
-  it("title 'Client statement', then the client, the month, 'N visits · Toronto time · CAD', and 'Total paid $X' with the currency only in the header line", () => {
+  it("title 'Client statement', then the client, the month, 'N visits · Toronto time · CAD', and 'Collected $X, Refunded and Net' with the currency only in the header line", () => {
     const out = paper();
     expect(out).toMatch(/<h1[^>]*>Client statement<\/h1><h2[^>]*>Ada Lovelace<\/h2><p[^>]*>November 2026<\/p><p[^>]*>3 visits · Toronto time · CAD<\/p>/);
-    expect(out).toMatch(/Total paid \$180\.00</);
+    expect(out).toMatch(/Collected \$180\.00</);
     const table = out.slice(out.indexOf("<table"), out.indexOf("</table>"));
     expect(table).not.toContain("CAD");
   });
@@ -273,5 +273,76 @@ describe("the print paper follows the approved hierarchy and keeps what must sta
   it("the CSV is untouched: its route and builder are not part of this change (source guard on the fixed header and the document order)", () => {
     const csv = readFileSync("lib/finance/statement-csv.ts", "utf8");
     expect(csv).not.toMatch(/latestFirst|formatClock12h/);
+  });
+});
+
+
+// Sam's acceptance (HON-123 / HON-122): the $225 split ($100 card, $50 cash, $75 transfer, then a $40 partial card refund) reads Collected $225.00, Refunded $40.00, Net $185.00
+// on the statement and its print paper, with the same labels checkout and the visit page use.
+describe("Collected / Refunded / Net on the statement and its print paper", () => {
+  const split = () => docFor([visit("s1", "2026-11-17", "11:00", {
+    feeCandidates: [{ source: "settlement_quote", cents: 22500 }],
+    lines: [
+      { kind: "collected_card_session", cents: 10000, source: "card" }, { kind: "collected_cash", cents: 5000, source: "settlement" },
+      { kind: "collected_e_transfer", cents: 7500, source: "settlement" }, { kind: "refunded_partial", cents: 4000, source: "ledger" },
+    ],
+  })]);
+  const printed = (d: ReturnType<typeof docFor>) => renderToStaticMarkup(createElement(StatementPrintView as never, { document: d, offDocumentWithMoney: 0, backHref: "/x", format: fmt, timezone: "America/Toronto", currency: "cad", monthLabel: "November 2026" } as never));
+  it("the screen: Collected $225.00 large, then Refunded $40.00 and Net $185.00, never 'Total paid'", () => {
+    const out = html(split());
+    expect(out).toMatch(/November 2026 · Collected</);
+    expect(out).toMatch(/data-testid="statement-money-refunded">\$40\.00</);
+    expect(out).toMatch(/data-testid="statement-money-net">\$185\.00</);
+    expect(out).toMatch(/>\$225\.00</);
+    expect(out).not.toContain("Total paid");
+  });
+  it("the print paper says the same three figures", () => {
+    const out = printed(split());
+    expect(out).toContain("Collected $225.00");
+    expect(out).toContain("Refunded $40.00 · Net $185.00");
+  });
+  it("a legacy fully refunded card payment: Collected is what was received, Net is zero", () => {
+    const out = html(docFor([visit("l1", "2026-11-17", "11:00", { lines: [{ kind: "refunded_card_session", cents: 6000, source: "card" }] })]));
+    expect(out).toMatch(/data-testid="statement-money-refunded">\$60\.00</);
+    expect(out).toMatch(/data-testid="statement-money-net">\$0\.00</);
+    expect(out).toMatch(/>\$60\.00</);
+  });
+  // Item 4 (Sam, 27 Nov 2026): while a refund awaits confirmation it is "Refund pending $X", never in Refunded or Net, and the not-final note is shown on the screen AND the print paper.
+  const pending = () => docFor([visit("p1", "2026-11-17", "11:00", {
+    feeCandidates: [{ source: "settlement_quote", cents: 22500 }],
+    lines: [
+      { kind: "collected_card_session", cents: 10000, source: "card" }, { kind: "collected_cash", cents: 12500, source: "settlement" },
+      { kind: "unresolved", cents: null, source: "settlement", pendingCents: 4000 },
+    ],
+  })]);
+  it("pending refund, screen: Refund pending $40.00, Refunded $0.00, Net $225.00, and the not-final note", () => {
+    const out = html(pending());
+    expect(out).toMatch(/data-testid="statement-money-refund_pending">\$40\.00</);
+    expect(out).toMatch(/data-testid="statement-money-refunded">\$0\.00</);
+    expect(out).toMatch(/data-testid="statement-money-net">\$225\.00</);
+    expect(out).toContain("Refund pending");
+    expect(out).toMatch(/data-testid="statement-money-not-final"[^>]*>Not counted in Refunded or Net until Stripe confirms it\./);
+  });
+  it("pending refund, print paper: the same line and the same note", () => {
+    const out = printed(pending());
+    expect(out).toContain("Collected $225.00");
+    expect(out).toContain("Refunded $0.00 · Net $225.00");
+    expect(out).toContain("Refund pending $40.00");
+    expect(out).toContain("Not counted in Refunded or Net until Stripe confirms it.");
+  });
+  it("once the refund is confirmed: Refunded $40.00, Net $185.00, no pending line and no not-final note, on both", () => {
+    const confirmed = docFor([visit("p1", "2026-11-17", "11:00", {
+      feeCandidates: [{ source: "settlement_quote", cents: 22500 }],
+      lines: [{ kind: "collected_card_session", cents: 10000, source: "card" }, { kind: "collected_cash", cents: 12500, source: "settlement" }, { kind: "refunded_partial", cents: 4000, source: "settlement" }],
+    })]);
+    for (const out of [html(confirmed), printed(confirmed)]) {
+      expect(out).not.toContain("Refund pending");
+      expect(out).not.toContain("Not counted in Refunded or Net");
+    }
+    // Codex P2 on #1827: a part refund leaves its payment in "paid" in full, so "originally paid" is $225.00, never $265.00.
+    expect(confirmed.totals.originalPaidCents).toBe(22500);
+    expect(confirmed.totals.paidCents).toBe(22500);
+    expect(html(confirmed)).toMatch(/data-testid="statement-money-net">\$185\.00</);
+    expect(printed(confirmed)).toContain("Refunded $40.00 · Net $185.00");
   });
 });
