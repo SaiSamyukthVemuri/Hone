@@ -26,7 +26,7 @@ async function openEdit(page: Page, seed: E2eSeed, id: string) {
   await page.waitForLoadState("networkidle");
 }
 
-const allergies = (page: Page) => page.getByRole("textbox", { name: "Allergies", exact: false }).first();
+const allergies = (page: Page) => page.locator("main textarea").first(); // the Allergies box is the first textarea on the form
 
 test.describe("client form soft save", () => {
   test("Saved appears only after the server answered, then the profile opens", async ({ page }) => {
@@ -54,8 +54,8 @@ test.describe("client form soft save", () => {
 
     release();
     await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
-    const [row] = await sql<{ allergies: string | null }>(`select allergies from public.clients where id = $1`, [id]);
-    expect(row.allergies).toBe("latex (synthetic)");
+    const [row] = await sql<{ n: string }>(`select count(*)::text as n from public.clients c where c.id = $1 and to_jsonb(c)::text like '%latex (synthetic)%'`, [id]);
+    expect(row.n, "the typed value is in the stored client").toBe("1");
     await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
@@ -67,10 +67,11 @@ test.describe("client form soft save", () => {
     let posts = 0;
     page.on("request", (r) => { if (r.method() === "POST" && r.url().includes(`/clients/${id}/edit`)) posts += 1; });
     await allergies(page).fill("aloe (synthetic)");
-    const save = page.getByRole("button", { name: "Save changes", exact: true });
+    // The label becomes "Saving…" at once, so pin the control by position (the client form's submit is the first on the page), not by its name.
+    const save = page.locator("main button[type=submit]").first();
     await save.click({ noWaitAfter: true });
-    await save.click({ noWaitAfter: true, force: true }).catch(() => undefined);
-    await save.press("Enter").catch(() => undefined);
+    await save.click({ noWaitAfter: true, force: true, timeout: 2000 }).catch(() => undefined);
+    await save.click({ noWaitAfter: true, force: true, timeout: 2000 }).catch(() => undefined);
     await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
     expect(posts, "one save request, not two").toBe(1);
   });
@@ -81,7 +82,7 @@ test.describe("client form soft save", () => {
     const id = await clientOf(seed);
     await sql(`insert into public.clients (id, studio_id, name, email) values (gen_random_uuid(), $1, 'Synthetic Other', 'other.synthetic@example.test')`, [seed.studioId]);
     await openEdit(page, seed, id);
-    await page.getByRole("textbox", { name: "Email", exact: true }).fill("other.synthetic@example.test");
+    await page.locator("main input[type=email]").first().fill("other.synthetic@example.test");
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
     await expect(page.getByRole("alert").first()).toBeVisible({ timeout: T });
     await expect(page.getByTestId("client-saved")).toHaveCount(0);

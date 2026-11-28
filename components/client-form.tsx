@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { flushSync } from "react-dom";
 import {
   COMMON_ALLERGIES,
   FITZPATRICK_TYPES,
@@ -293,7 +294,9 @@ export function ClientForm({
       if (outcome.kind === "saved" && outcome.redirectTo && SAVED_REDIRECT.test(outcome.redirectTo)) {
         // Confirmed by the server: say so now, then move on. The push stays inside the transition, so the button stays pending (and the
         // form stays closed to a second submit) until the profile has been applied.
-        setSaved(true);
+        // flushSync: an update made after an await inside a transition is otherwise held until the navigation below commits (measured: Saved
+        // appeared with the profile, ~0.9 s, although the server had answered at ~0.4 s).
+        flushSync(() => setSaved(true));
         router.push(outcome.redirectTo);
         return;
       }

@@ -28,7 +28,8 @@ const db = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => { throw new Error(`NEXT_REDIRECT:${to}`); },
 }));
-vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+const revalidated = vi.hoisted(() => [] as string[]);
+vi.mock("next/cache", () => ({ revalidatePath: (p: string) => { revalidated.push(p); } }));
 vi.mock("@/lib/supabase/queries", () => ({
   getCurrentPractitionerWithStudio: async () => ({ practitioner: { id: "prac-1", role: db.role }, studio: { id: "studio-A" } }),
 }));
@@ -118,7 +119,7 @@ async function run(fields: Record<string, string>, inline: boolean, baseline: un
 }
 
 beforeEach(() => {
-  db.rows = [JANE, BOB]; db.updates = []; db.failMatcher = false; db.failStored = false; db.selects = []; db.role = "owner"; db.rpcNoRow = false;
+  db.rows = [JANE, BOB]; db.updates = []; db.failMatcher = false; db.failStored = false; db.selects = []; db.role = "owner"; db.rpcNoRow = false; revalidated.length = 0;
 });
 
 // Every REFUSAL must render exactly as today: the same object, with or without the flag, and nothing written.
@@ -160,6 +161,13 @@ describe("HON-109: a SAVED edit", () => {
     const out = await run({ allergies: "latex" }, true);
     expect(out).toEqual({ result: { ok: true, redirectTo: "/clients/client-bob" }, redirected: null });
     expect(db.updates).toHaveLength(1);
+  });
+  it("the redirect path revalidates the profile and the list; the inline path revalidates nothing (the soft navigation fetches fresh)", async () => {
+    await run({ allergies: "latex" }, false);
+    expect(revalidated).toEqual(["/clients/client-bob", "/clients"]);
+    revalidated.length = 0;
+    await run({ allergies: "aloe" }, true);
+    expect(revalidated).toEqual([]);
   });
   it("nothing changed: flag returns ok too, plain redirects, neither writes", async () => {
     expect(await run({}, false)).toEqual({ result: undefined, redirected: "/clients/client-bob" });

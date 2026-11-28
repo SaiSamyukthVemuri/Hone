@@ -99,7 +99,10 @@ function dollarsToCents(value: FormDataEntryValue | null): number | null {
 // client anyway" resubmits with one confirm_possible_duplicate per client.
 // HON-109: a form that navigates itself (the edit page) sends `saved_inline=1`. A SAVED edit then RETURNS this and the form shows "Saved" at
 // once and soft-navigates to the profile, instead of waiting for the redirected profile render inside the same response. The address is built
-// HERE from the validated client id, never taken from the request. A call without the flag (any other caller) still ends in redirect().
+// HERE from the validated client id, never taken from the request. A call without the flag (any other caller) still ends in redirect() AFTER revalidating.
+// The inline path does not revalidate: a revalidatePath in an action makes the response wait for a re-render of the page being left, and these pages are
+// dynamic (no data cache, no router-cache staleness), so the soft navigation that follows fetches the profile fresh. Checked in a browser: after Back the edit
+// form shows the saved value and a second save does not conflict.
 export type ClientSavedResult = { ok: true; redirectTo: string };
 
 export type ClientSaveResult = {
@@ -246,8 +249,8 @@ export async function updateClientAction(
 
   // Nothing changed: nothing to write, and nothing to claim was saved beyond what is already stored.
   if (Object.keys(plan.patch).length === 0) {
-    revalidatePath(`/clients/${clientId}`);
     if (savedInline) return { ok: true, redirectTo: `/clients/${clientId}` };
+    revalidatePath(`/clients/${clientId}`);
     redirect(`/clients/${clientId}`);
   }
 
@@ -373,9 +376,9 @@ export async function updateClientAction(
     return { ok: false, error: CHANGED_BY_SOMEONE_ELSE_ERROR, conflicts };
   }
 
+  if (savedInline) return { ok: true, redirectTo: `/clients/${clientId}` };
   revalidatePath(`/clients/${clientId}`);
   revalidatePath("/clients");
-  if (savedInline) return { ok: true, redirectTo: `/clients/${clientId}` };
   redirect(`/clients/${clientId}`);
 }
 

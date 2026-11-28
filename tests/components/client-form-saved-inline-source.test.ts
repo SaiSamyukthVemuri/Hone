@@ -10,15 +10,16 @@ const create = readFileSync("app/(app)/clients/new/page.tsx", "utf8");
 describe("the client form's soft save", () => {
   it('sets "Saved." in exactly one place: after runClientSave returned a saved outcome carrying an in-app profile address', () => {
     expect((form.match(/setSaved\(true\)/g) ?? []).length).toBe(1);
+    expect(form).toContain("flushSync(() => setSaved(true))");
     const i = form.indexOf("setSaved(true)");
-    const before = form.slice(Math.max(0, i - 420), i);
+    const before = form.slice(Math.max(0, i - 900), i);
     expect(before).toContain("await runClientSave(action, fd)");
     expect(before).toContain('outcome.kind === "saved"');
     expect(before).toContain("SAVED_REDIRECT.test(outcome.redirectTo)");
   });
   it("navigates inside the same transition, so the button stays pending until the profile is applied", () => {
     const i = form.indexOf("setSaved(true)");
-    const next = form.slice(i, i + 200);
+    const next = form.slice(i, i + 300);
     expect(next).toContain("router.push(outcome.redirectTo)");
     expect(form.slice(0, i)).toContain("startTransition(async () => {");
   });
