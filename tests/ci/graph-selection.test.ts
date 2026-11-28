@@ -10,6 +10,27 @@ import { buildImportGraph, reachingEntries, isEntry } from "../../scripts/import
 // CI-SELECT-02. An application file that no path rule names is attributed from the ENTRY POINTS that can execute it (page, route, layout,
 // middleware...), when every one of those entries is itself attributed. This file pins the behaviour, every fail-safe, and re-proves the
 // derivation against the real import graph with a SECOND, independent walk, so the mapping cannot narrow coverage as the code grows.
+// Declared before any suite reads them: describe callbacks run during collection, and a const read before its declaration is a TDZ error
+// under strict ESM (this toolchain's transform happens to hoist it, which is why it did not fail; do not rely on that).
+const ROOT = process.cwd();
+const SOURCE_ROOTS = ["app", "components", "lib", "hooks"];
+const walk = (dir: string, out: string[] = []): string[] => {
+  if (!existsSync(dir)) return out;
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === "node_modules" || e.name === ".next") continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walk(p, out);
+    else if (/\.(ts|tsx)$/.test(e.name)) out.push(path.relative(ROOT, p).split(path.sep).join("/"));
+  }
+  return out;
+};
+const resolveImport = (from: string, spec: string): string | null => {
+  const base = spec.startsWith("@/") ? path.join(ROOT, spec.slice(2)) : spec.startsWith(".") ? path.resolve(path.dirname(path.join(ROOT, from)), spec) : null;
+  if (!base) return null;
+  for (const c of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) if (existsSync(c) && statSync(c).isFile()) return path.relative(ROOT, c).split(path.sep).join("/");
+  return null;
+};
+
 type Sel = { groups: string[]; extended: boolean; reason: string };
 const sel = (...files: string[]) => selectBrowserGroups(files) as Sel;
 
@@ -149,25 +170,6 @@ describe("VERIFIED_ROUTES: every spec that visits an audited route is in a group
 });
 
 // -- the independent proof against the real tree -----------------------------------------------------------------------------------------
-const ROOT = process.cwd();
-const SOURCE_ROOTS = ["app", "components", "lib", "hooks"];
-const walk = (dir: string, out: string[] = []): string[] => {
-  if (!existsSync(dir)) return out;
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    if (e.name === "node_modules" || e.name === ".next") continue;
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) walk(p, out);
-    else if (/\.(ts|tsx)$/.test(e.name)) out.push(path.relative(ROOT, p).split(path.sep).join("/"));
-  }
-  return out;
-};
-const resolveImport = (from: string, spec: string): string | null => {
-  const base = spec.startsWith("@/") ? path.join(ROOT, spec.slice(2)) : spec.startsWith(".") ? path.resolve(path.dirname(path.join(ROOT, from)), spec) : null;
-  if (!base) return null;
-  for (const c of [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`]) if (existsSync(c) && statSync(c).isFile()) return path.relative(ROOT, c).split(path.sep).join("/");
-  return null;
-};
-
 describe("the derivation is proved against the real import graph (second, independent walk)", () => {
   const files = SOURCE_ROOTS.flatMap((d) => walk(path.join(ROOT, d)));
   const importers = new Map<string, Set<string>>();
