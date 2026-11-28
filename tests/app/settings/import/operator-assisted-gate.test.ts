@@ -276,7 +276,7 @@ describe("the operator check is additional to ownership, never instead of it", (
     // unconfigured prod deploy denies everyone rather than defaulting open.
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("ADMIN_EMAILS", "");
-    for (const email of [OPERATOR, ORDINARY_OWNER, "samyukth.ssv@gmail.com"]) {
+    for (const email of [OPERATOR, ORDINARY_OWNER, "former-dev-fallback@example.com"]) {
       ops.length = 0;
       authUser.email = email;
       const res = await confirmImportAction(TSV, "paper_card");

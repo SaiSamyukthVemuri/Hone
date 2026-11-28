@@ -200,6 +200,7 @@ export const BROWSER_GROUPS = {
       // PATH_TO_GROUP maps /portal/i here, so a diff to the rebooking action,
       // the card or the portal page actually runs it.
       "portal-rebook.spec.ts",
+      "portal-rollout.spec.ts",
       "personal-notes-bullets-mobile.spec.ts",
       "pinned-note-edit-mobile.spec.ts",
     ],
@@ -287,6 +288,8 @@ export const BROWSER_GROUPS = {
       // boundary drives the data range: a grid that starts Sunday while the
       // query starts Monday loses the Sunday appointment silently.
       "calendar-week-starts-sunday.spec.ts",
+      // HON-131: Find time's 7-day window is stated and checked beside the field; weeks two to six are searchable; selections kept; nothing booked.
+      "calendar-find-time-window.spec.ts",
       "desk-calendar.spec.ts",
       "desk-finder-and-isolation.spec.ts",
       // Owner review of practitioner assignments (#1330): reached from the Calendar toolbar and Team settings, real status
@@ -459,6 +462,7 @@ export const BROWSER_GROUPS = {
       // stale-conflict refusal, the legal-name save and its conflict) at 1280 and 390. Same group and reasoning:
       // /clients/** has no PATH_TO_GROUP pattern.
       "client-profile-save.spec.ts",
+      "client-form-saved-inline.spec.ts",
       // FETT photos (#892): the photo surface's mounted 44px floor at phone width
       // and the deactivated-practitioner denial. Filed here for the same two
       // reasons as UI-04 above: /clients/** has no PATH_TO_GROUP pattern, so a
@@ -622,6 +626,7 @@ export const PUBLIC_BOOKING_SPECS = [
   "new-studio-wizard.spec.ts",
   "onboarding.spec.ts",
   "perceived-speed.spec.ts",
+  "portal-rollout.spec.ts",
   "public-booking-after-staff-change.spec.ts",
   "public-booking-error-containment.spec.ts",
   "public-booking-slot-read-failure.spec.ts",

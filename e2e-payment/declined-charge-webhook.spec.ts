@@ -74,7 +74,7 @@ async function declineScenario(timing: "after" | "before_return", label: string,
         [seed.sessionId],
       );
       const alerts = await adminQuery(
-        `select event, severity from public.ops_alerts where studio_id = $1 order by created_at`,
+        `select event, severity from public.ops_alerts where (studio_id = $1 or safe_details->>'studio_id' = $1::text) order by created_at`,
         [seed.studioId],
       );
       console.log(

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { defaultPortalPresentation } from "@/lib/portal/presentation";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { adminQuery, asRole, asUser, closePool, seedMember, seedSession, seedStudio, type SeededStudio } from "./helpers/harness";
 import { refused, shapeOf, vacuityPlan } from "./receptionist-callable-surface.classify";
-import { ANON_INSERT_BY_DESIGN, CLASSIFICATION, GLOBAL_REFERENCE, NO_ROW, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
+import { CLASSIFICATION, GLOBAL_REFERENCE, NO_ROW, PINS, UNPROVEN, INSERT_UNPROVEN } from "./receptionist-callable-surface.map";
 
 // D9 (Privacy): the database surface a receptionist session can reach, built from the CATALOG, not from the app's call list.
 // A receptionist is a signed-in user with no practitioners row in the studio. This proves, on a real migrated database and by DIRECT calls
@@ -136,6 +137,7 @@ function callSql(f: FnRow): string | null {
   return `select to_jsonb(t) as j from ${fn} as t`;
 }
 function paramsFor(f: FnRow, studio: SeededStudio): unknown[] {
+  if (f.name === "edit_studio_portal_presentation") return [studio.studioId, 1, "publish", null];
   if (f.name === "receptionist_find_openings_v2") {
     const date = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     return [studio.studioId, serviceId, [studio.practitionerId], date, date, "00:00", null];
@@ -213,6 +215,11 @@ let before: Record<string, number> = {};
 beforeAll(async () => {
   A = await seedStudio("surf-a");
   B = await seedStudio("surf-b");
+  // Use the owner's normal save path so table probes have a private draft and the publish probe has a valid revision.
+  await asUser(A.userId, (q) => q(
+    "select public.edit_studio_portal_presentation($1, 0, 'save', $2::jsonb)",
+    [A.studioId, JSON.stringify({ ...defaultPortalPresentation(), welcomeHeading: "Unpublished studio draft" })],
+  ));
   ({ sessionId, blockId } = await seedSession(A));
   apptId = randomUUID();
   serviceId = (await adminQuery(`insert into public.services (studio_id, name, default_duration_minutes, active, modality) values ($1,'Probe service',30,true,'electrolysis') returning id`, [A.studioId])).rows[0].id as string;
@@ -331,6 +338,9 @@ describe("C2 + C4: the actor matrix with real ids", () => {
       if (!c || c.cls === "pure" || c.cls === "platform" || c.cls === "invite") continue;
       const o = await probe(owner, f, A);
       const r = await probe(actors.recA, f, A);
+      if (f.name === "edit_studio_portal_presentation") {
+        expect(o, "the owner publishes the seeded draft inside the rolled-back probe").toMatchObject({ kind: "data", writes: 1 });
+      }
       compared++;
       if (c.cls === "desk" && /create|cancel|move/.test(f.name)) continue; // the desk's writes are proven by their own refusal status below
       if (sig(o) === sig(r)) undistinguished.push(`${f.schema}.${f.key}: ${sig(r)}`);
@@ -415,12 +425,6 @@ describe("F3: tables that hold a row are tried for read, update and delete; empt
     for (const t of plan.staticTargets) {
       const rls = (await adminQuery(`select relrowsecurity as on from pg_class where oid = ('public."' || $1 || '"')::regclass`, [t])).rows[0] as { on: boolean };
       const open = Number((await adminQuery(`select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = $1 and permissive = 'PERMISSIVE' and (case when cmd = 'INSERT' then with_check else qual end is null or btrim(case when cmd = 'INSERT' then with_check else qual end) in ('true','(true)')) and (roles && array['authenticated','anon','public']::name[])`, [t])).rows[0].n);
-      if (t in ANON_INSERT_BY_DESIGN) {
-        // Public form: an unconditional INSERT policy is intended; nothing may let anyone read, update or delete.
-        const readable = Number((await adminQuery(`select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = $1 and cmd <> 'INSERT'`, [t])).rows[0].n);
-        if (!rls.on || readable > 0) staticOpen.push(t);
-        continue;
-      }
       if (!rls.on || open > 0) staticOpen.push(t);
     }
     expect(staticOpen, "empty tables where row-level security is off or a policy is unconditional").toEqual([]);
@@ -432,10 +436,7 @@ describe("F3: tables that hold a row are tried for read, update and delete; empt
         if (weak) weakInserts.add(t);
         const allowSel = k === "recA" && t === "studio_receptionists" ? 1 : 0;
         if (!(v.sel.kind === "error:42501" || (v.sel.kind === "ok" && v.sel.rows === allowSel) || (t in GLOBAL_REFERENCE && k !== "anon" && v.sel.kind === "ok"))) findings.push(`select ${t} as ${k}: ${v.sel.kind} ${v.sel.rows ?? ""}`);
-        // A table whose unconditional INSERT policy is intended (a public form) is allowed to accept this insert; once ANOTHER suite has left a row
-        // in it, the template insert reaches the policy and fails only on a unique key (or succeeds), which is that same by-design policy. Its reads,
-        // updates and deletes below stay required closed.
-        if (!weak && v.ins.kind !== "error:42501" && !(t in ANON_INSERT_BY_DESIGN)) findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
+        if (!weak && v.ins.kind !== "error:42501") findings.push(`insert ${t} as ${k}: ${v.ins.kind}`);
         if (!(v.upd.kind === "error:42501" || (v.upd.kind === "ok" && v.upd.rows === 0))) findings.push(`update ${t} as ${k}: ${v.upd.kind} ${v.upd.rows ?? ""}`);
         if (!(v.del.kind === "error:42501" || (v.del.kind === "ok" && v.del.rows === 0))) findings.push(`delete ${t} as ${k}: ${v.del.kind} ${v.del.rows ?? ""}`);
       }

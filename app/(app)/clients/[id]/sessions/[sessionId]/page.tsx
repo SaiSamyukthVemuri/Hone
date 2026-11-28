@@ -157,6 +157,87 @@ export default async function SessionDetailPage({
   const linkedAppointmentId = session.appointment_id ?? null;
   const isOwner = practitioner.role === "owner";
 
+  // HON-109 (Records): the reads that used to follow the wave, as closures so they can join it. Moved verbatim, comments included.
+  const readLinkedAppointment = async () => {
+    const supabaseForDefault = await createClient();
+    // BARE-TABLE embed, not a column hint. Migration 0151 replaced the
+    // single-column appointments.service_id FK with a composite
+    // (service_id, studio_id) FK, and PostgREST resolves an
+    // `alias:<fk_column>(...)` hint only against a SINGLE-column FK. The old
+    // column-hint form therefore returned PGRST200 ("Could not
+    // find a relationship between 'appointments' and 'service_id'") on every
+    // request, the error was discarded, and the booked-service default amount
+    // was silently null on this page while quick checkout, which already used
+    // the bare-table form: kept working. Same class of breakage migration 0094
+    // caused and commit 8f0517e swept; 0151 was not swept.
+    // ONE appointment context read. It already existed for the booked-service
+    // payment default; it is WIDENED here to also supply the Finish appointment
+    // workflow (status, end time, postcare send-state, practitioner, modality)
+    // rather than issuing a second read of the same row. Still bounded,
+    // studio-scoped and appointment-id-scoped, still read-only.
+    const result = await supabaseForDefault
+      .from("appointments")
+      .select(
+        "duration_minutes, status, starts_at, ends_at, postcare_email_sent_at, postcare_email_failed_at, postcare_email_claimed_at, postcare_email_send_attempts, service:services(name, price_cents, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
+      )
+      .eq("id", linkedAppointmentId)
+      .eq("studio_id", studio.id)
+      // Lineage: the appointment must belong to THIS client too. A session
+      // pointing at another client's appointment yields no row, so the Finish
+      // workflow renders no completion or postcare controls for it.
+      .eq("client_id", id)
+      .maybeSingle();
+    return result;
+  };
+  const readBlockChain = async () => {
+    const blockData = await getSessionWithBlocks(sessionId);
+    // WHAT A NATIVE (xCell Pur MultiPlex ...) AREA RECORDED, for the area card. The legacy entry under such a block carries only the database
+    // default (pulse_count 1), so the card must show the recorded readings instead of it. One read per native block, bound to this session.
+    const nativeReadings: Record<string, { readings: RecordedReading[]; unavailable: boolean }> = {};
+    const nativeUnitNames: Record<string, string> = {};
+    if (blockData) {
+      const nativeBlocks = blockData.blocks.filter((b) => b.deleted_at == null && isNativeMachineBlock(b));
+      if (nativeBlocks.length > 0) {
+        const db = (await createClient()) as unknown as MachineDb;
+        await Promise.all(
+          nativeBlocks.map(async (b) => {
+            const got = await readingsForBlock(db, b.id, session.id);
+            nativeReadings[b.id] = got.ok ? { readings: got.value, unavailable: false } : { readings: [], unavailable: true };
+          }),
+        );
+        const ids = [...new Set(Object.values(nativeReadings).flatMap((n) => n.readings.map((r) => r.deviceId)))];
+        if (ids.length > 0) {
+          const named = await machinesByIds(db, studio.id, ids);
+          if (named.ok) for (const m of named.value) nativeUnitNames[m.deviceId] = m.displayName;
+        }
+      }
+    }
+    return { blockData, nativeReadings, nativeUnitNames };
+  };
+  const readPreviousVisit = () =>
+    loadPreviousVisitNote({
+      studioId: studio.id,
+      clientId: id,
+      before: session.started_at,
+    });
+  const readCopyDescriptor = async () =>
+    await (await createClient()).rpc("whole_session_copy_source_descriptor", {
+      p_studio_id: studio.id,
+      p_target_session_id: session.id,
+    });
+  // Electrolysis only: the block-grouped view and everything around it, which used to be seven reads in a row. The native-readings chain inside readBlockChain keeps its own order.
+  const readElectrolysisContext = () =>
+    Promise.all([
+      readBlockChain(),
+      createClient().then((db) => loadMultiplexOffer(db as unknown as MachineDb, studio.id)),
+      getProbeLotSuggestions(studio.id),
+      getProbeLotInventory(studio.id),
+      getSessionNumberForClient(studio.id, id, session.id),
+      getPriorLaserSessionCount(studio.id, id, session.started_at),
+    ]).then(([blockChain, multiplexOffer, probeLotSuggestions, probeLotInventory, runningTotal, priorLaserCount]) => ({
+      blockChain, multiplexOffer, probeLotSuggestions, probeLotInventory, runningTotal, priorLaserCount,
+    }));
+
   const [
     sessionPhotos,
     lastEntry,
@@ -167,6 +248,12 @@ export default async function SessionDetailPage({
     sessionPaymentEligibility,
     pricedForPage,
     settlementLoad,
+    apptResult,
+    electrolysisContext,
+    [activePlansForClient, attachedPlan],
+    previousVisit,
+    lastTreatment,
+    copyDescriptorResult,
   ] = await Promise.all([
     // FETT photos: this visit's photos, signed for 60 s under the Photos tab's
     // trust boundary. Depends only on (studio, client, session).
@@ -209,6 +296,34 @@ export default async function SessionDetailPage({
           getAppointmentSettlements(studio.id, [linkedAppointmentId], isOwner),
         )
       : Promise.resolve(null),
+    // HON-109 (Records): the reads below used to run ONE AFTER ANOTHER after this wave: about 300 ms of serial round trips, while the payment
+    // loaders above (the longest, owner only) were the only thing the page was really waiting for. Each depends ONLY on `core`'s outputs, as the
+    // wave above does; none consumes another's result except the native-readings chain inside readBlockChain, which keeps its own order. What is
+    // read, who may read it, every failure shape and the order the results are CONSUMED in are unchanged; each read keeps its own span.
+    linkedAppointmentId
+      ? timed("session-chart.appointment", readLinkedAppointment)
+      : Promise.resolve(null),
+    session.modality === "electrolysis"
+      ? timed("session-chart.electrolysis-context", readElectrolysisContext)
+      : Promise.resolve(null),
+    timed("session-chart.plans", () =>
+      Promise.all([
+        getActiveTreatmentPlansForClient(studio.id, id),
+        session.treatment_plan_id
+          ? getTreatmentPlanWithCount(studio.id, session.treatment_plan_id)
+          : Promise.resolve(null),
+      ]),
+    ),
+    timed("session-chart.previous-note", readPreviousVisit),
+    timed("session-chart.last-treatment", () =>
+      loadLastChartedTreatment({
+        studioId: studio.id,
+        sessions: clientData.sessions,
+        before: session.started_at,
+        excludeSessionId: session.id,
+      }),
+    ),
+    timed("session-chart.copy-descriptor", readCopyDescriptor),
   ]);
 
   // Pure derivations of the wave's results. Unchanged, and still in the order
@@ -263,36 +378,7 @@ export default async function SessionDetailPage({
       : null;
 
   if (linkedAppointmentId) {
-    const supabaseForDefault = await createClient();
-    // BARE-TABLE embed, not a column hint. Migration 0151 replaced the
-    // single-column appointments.service_id FK with a composite
-    // (service_id, studio_id) FK, and PostgREST resolves an
-    // `alias:<fk_column>(...)` hint only against a SINGLE-column FK. The old
-    // column-hint form therefore returned PGRST200 ("Could not
-    // find a relationship between 'appointments' and 'service_id'") on every
-    // request, the error was discarded, and the booked-service default amount
-    // was silently null on this page while quick checkout, which already used
-    // the bare-table form: kept working. Same class of breakage migration 0094
-    // caused and commit 8f0517e swept; 0151 was not swept.
-    // ONE appointment context read. It already existed for the booked-service
-    // payment default; it is WIDENED here to also supply the Finish appointment
-    // workflow (status, end time, postcare send-state, practitioner, modality)
-    // rather than issuing a second read of the same row. Still bounded,
-    // studio-scoped and appointment-id-scoped, still read-only.
-    const apptSpan = startPerfSpan("session-chart.appointment");
-    const { data: apptRow, error: apptErr } = await supabaseForDefault
-      .from("appointments")
-      .select(
-        "duration_minutes, status, starts_at, ends_at, postcare_email_sent_at, postcare_email_failed_at, postcare_email_claimed_at, postcare_email_send_attempts, service:services(name, price_cents, modality), practitioner:practitioners!appointments_practitioner_same_studio_fk(display_name)",
-      )
-      .eq("id", linkedAppointmentId)
-      .eq("studio_id", studio.id)
-      // Lineage: the appointment must belong to THIS client too. A session
-      // pointing at another client's appointment yields no row, so the Finish
-      // workflow renders no completion or postcare controls for it.
-      .eq("client_id", id)
-      .maybeSingle();
-    apptSpan.end();
+    const { data: apptRow, error: apptErr } = apptResult as NonNullable<typeof apptResult>;
     if (apptErr) {
       // Never throw: a failed default-amount read must not block charting. But
       // it must be OBSERVABLE: swallowing it is what let this regress for a
@@ -341,37 +427,17 @@ export default async function SessionDetailPage({
 
   // Electrolysis sessions render through the block-grouped view. We fetch
   // the with-blocks shape only when needed.
-  const blockData =
-    session.modality === "electrolysis"
-      ? await getSessionWithBlocks(sessionId)
-      : null;
-
-  // WHAT A NATIVE (xCell Pur MultiPlex ...) AREA RECORDED, for the area card. The legacy entry under such a block carries only the database
-  // default (pulse_count 1), so the card must show the recorded readings instead of it. One read per native block, bound to this session.
-  const nativeReadings: Record<string, { readings: RecordedReading[]; unavailable: boolean }> = {};
-  const nativeUnitNames: Record<string, string> = {};
-  if (blockData) {
-    const nativeBlocks = blockData.blocks.filter((b) => b.deleted_at == null && isNativeMachineBlock(b));
-    if (nativeBlocks.length > 0) {
-      const db = (await createClient()) as unknown as MachineDb;
-      await Promise.all(
-        nativeBlocks.map(async (b) => {
-          const got = await readingsForBlock(db, b.id, session.id);
-          nativeReadings[b.id] = got.ok ? { readings: got.value, unavailable: false } : { readings: [], unavailable: true };
-        }),
-      );
-      const ids = [...new Set(Object.values(nativeReadings).flatMap((n) => n.readings.map((r) => r.deviceId)))];
-      if (ids.length > 0) {
-        const named = await machinesByIds(db, studio.id, ids);
-        if (named.ok) for (const m of named.value) nativeUnitNames[m.deviceId] = m.displayName;
-      }
-    }
-  }
+  const blockData = electrolysisContext?.blockChain.blockData ?? null;
+  const nativeReadings: Record<string, { readings: RecordedReading[]; unavailable: boolean }> = electrolysisContext?.blockChain.nativeReadings ?? {};
+  const nativeUnitNames: Record<string, string> = electrolysisContext?.blockChain.nativeUnitNames ?? {};
+  const multiplexOffer = electrolysisContext?.multiplexOffer ?? null;
+  const probeLotSuggestions = electrolysisContext?.probeLotSuggestions ?? { byKey: {}, byLabel: {} };
+  const probeLotInventory = electrolysisContext?.probeLotInventory ?? [];
+  const runningTotal = electrolysisContext?.runningTotal ?? null;
+  const priorLaserCount = electrolysisContext?.priorLaserCount ?? 0;
 
 
-  // MULTIPLEX IS OFFERED TO EVERY STUDIO: read here with the page, so the pill is present from the first visit with no extra request.
-  const multiplexOffer =
-    session.modality === "electrolysis" ? await loadMultiplexOffer((await createClient()) as unknown as MachineDb, studio.id) : null;
+
 
   // FINISH APPOINTMENT workflow context, derived from what is already loaded:
   // the widened appointment read above, the session, the client, and the studio
@@ -424,32 +490,14 @@ export default async function SessionDetailPage({
   // practitioner selects (never auto-confirmed; studio-scoped). Electrolysis
   // only; read-only. Replaces the pre-Feature-A studio-wide sterile-item
   // suggestion on this field (which was not probe-specific).
-  const probeLotSuggestions =
-    session.modality === "electrolysis"
-      ? await getProbeLotSuggestions(studio.id)
-      : { byKey: {}, byLabel: {} };
 
   // Migration 0128 charting release: the studio's ACTIVE probe-lot inventory
   // (record_keeping_sterile_items probe rows) for the searchable lot selector.
   // Electrolysis only; studio-scoped. Manual entry always stays available.
-  const probeLotInventory =
-    session.modality === "electrolysis"
-      ? await getProbeLotInventory(studio.id)
-      : [];
 
   // Treatment plan attachment context: the active plans the practitioner
   // can attach to (excludes closed), plus the resolved attached plan + its
   // count if this session is already attached.
-  const [activePlansForClient, attachedPlan] = await timed(
-    "session-chart.plans",
-    () =>
-      Promise.all([
-        getActiveTreatmentPlansForClient(studio.id, id),
-        session.treatment_plan_id
-          ? getTreatmentPlanWithCount(studio.id, session.treatment_plan_id)
-          : Promise.resolve(null),
-      ]),
-  );
 
   // UI defaulting (NOT attachment): the new-treatment-area picker is seeded
   // from a plan's first structured area. Prefer the attached plan; if the
@@ -483,28 +531,12 @@ export default async function SessionDetailPage({
 
   // Running total: only shown for electrolysis sessions (the modality the
   // treatment-time system tracks). Laser sessions skip the line.
-  const runningTotal =
-    session.modality === "electrolysis"
-      ? await getSessionNumberForClient(studio.id, id, session.id)
-      : null;
   // Modality context: how many laser sessions the client had before this
   // electrolysis session. Read-only count; never counts the current
   // session. Only fetched for electrolysis sessions.
-  const priorLaserCount =
-    session.modality === "electrolysis"
-      ? await getPriorLaserSessionCount(studio.id, id, session.started_at)
-      : 0;
   // PR #190 (clinical memory). The note the practitioner left FOR
   // this visit while charting the previous one. Narrow select; only
   // rendered when a note exists, so historical clients see nothing.
-  const supabaseForNote = await createClient();
-  const prevNoteSpan = startPerfSpan("session-chart.previous-note");
-  const previousVisit = await loadPreviousVisitNote({
-    studioId: studio.id,
-    clientId: id,
-    before: session.started_at,
-  });
-  prevNoteSpan.end();
   const fromLastVisit = previousVisit.note;
 
   // POINT-OF-CARE TREATMENT MEMORY (Chloe). Everything she needs to reproduce
@@ -521,14 +553,6 @@ export default async function SessionDetailPage({
   // The candidate is the newest CHARTED session, not the newest session ROW,
   // tapping a modality on /sessions/new creates an empty session immediately,
   // and an abandoned one used to win every "previous session" lookup.
-  const lastTreatment = await timed("session-chart.last-treatment", () =>
-    loadLastChartedTreatment({
-      studioId: studio.id,
-      sessions: clientData.sessions,
-      before: session.started_at,
-      excludeSessionId: session.id,
-    }),
-  );
   // Latest non-superseded entry per note kind, from the sections ALREADY
   // loaded above. No extra query, no note body in any log line.
   const noteHead = (kind: "consultation" | "skin_hair_analysis") => {
@@ -572,15 +596,7 @@ export default async function SessionDetailPage({
   // the SAME function the commit RPC derives its source from. We gate the panel
   // on it (not a separate "latest previous session" query), so page gating and
   // commit can never disagree about which session is the source.
-  const { data: copyDescriptor } = await timed(
-    "session-chart.copy-descriptor",
-    // async + await: a PostgREST builder is a thenable, not a Promise.
-    async () =>
-      await supabaseForNote.rpc("whole_session_copy_source_descriptor", {
-        p_studio_id: studio.id,
-        p_target_session_id: session.id,
-      }),
-  );
+  const { data: copyDescriptor } = copyDescriptorResult;
   const canCopyFromPrevious = Boolean(
     (copyDescriptor as { eligible?: boolean } | null)?.eligible,
   );

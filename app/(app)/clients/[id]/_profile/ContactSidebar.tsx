@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { PendingLink } from "@/components/pending-link";
 import { SectionLabel } from "@/components/ui/section-label";
 
 // The profile's contact column: how to reach this client, always on screen next to every tab.
@@ -49,12 +49,12 @@ export function ContactSidebar({
         )}
         {address && <p className="whitespace-pre-line text-sm text-neutral-500">{address}</p>}
         {!phone && !email && !address && <p className="text-sm text-neutral-500">Not recorded</p>}
-        <Link
+        <PendingLink
           href={`/clients/${clientId}/edit`}
           className="mt-1 inline-flex min-h-[44px] w-fit items-center text-xs text-neutral-500 underline hover:text-neutral-900 dark:hover:text-neutral-100 md:min-h-0"
         >
           Edit contact
-        </Link>
+        </PendingLink>
       </section>
     </aside>
   );

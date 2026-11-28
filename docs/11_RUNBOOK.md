@@ -52,9 +52,16 @@ Manual (cannot be done from the harness).
 6. Sign out (or wait for cookie expiry) and confirm `/portal/messages` redirects to `/login` (the global app login surface) when anonymous.
 
 If a client reports a magic link that "stopped working":
-- Confirm the link was clicked within 60 minutes of the email being sent. If the email arrived more than 60 minutes ago, the link is expired by design; the remediation is "request a new link from `/portal/login`."
-- If the email arrived within 60 minutes but the link still shows "this secure link can't be used right now," check (a) whether the token was already consumed by a prior click (the row's `consumed_at` is non-null) and (b) whether the client's row is still `status='active'` (archived clients see the same generic surface). Both are visible in `client_portal_magic_links` (look up by SHA-256 hash of the token from the URL) and `clients`.
+- Open the original email. An active session for the same studio and client goes directly to the portal. Otherwise a valid proof offers Continue. For an old link, select **Email me a new link** and check the registered mailbox. Reopening the URL alone sends no mail.
+- If mail does not arrive, check the studio portal policy, whether the client is active, the transactional email provider and rate-limit events. Keep the raw token and mailbox out of support logs.
 - A NEW magic link request invalidates nothing: prior unconsumed rows remain valid until their `expires_at`. Issuing a fresh link is always safe.
+
+## Client portal pilot and rollback
+
+1. Verify the deployment’s server-side database connection resolves to an isolated project or the loopback test stack. Use synthetic studio owners and clients, a captured mail inbox, and test payment data. Run the [portal smoke](./12_SMOKE_TESTS.md#2-portal-smoke) against the proposed release.
+2. Apply the reviewed presentation-settings migration through the normal migration release process. Leave `HONE_PORTAL_REDESIGN_STUDIO_IDS` empty for deployment with the classic layout. Old sessions and emailed links keep their existing URLs.
+3. For the approved Willow pilot, configure only Willow’s verified studio UUID in that server variable and deploy the configuration. An owner can open Settings → Client portal, save a draft, inspect the client preview and publish. Confirm the new overview with the same signed-in client, then confirm a second, unenrolled studio still shows the classic layout.
+4. To roll back Willow at once, use the owner setting to return to the classic portal and reload `/portal` in the same session. The saved draft, signatures, bookings, messages and card references persist. Removing the UUID from deployment configuration and redeploying also disables the redesigned layout. If the appointment query fails in either layout, verify Retry recovers before interpreting an empty calendar.
 
 ## Live payments ARE enabled for approved studios — and real money is moving
 
@@ -326,7 +333,7 @@ If the test-mode manual fee charge action needs to be quickly disabled:
 
 **Operator surface: `/admin/ops-alerts` + critical-alert email + SQL/logs.** Durable `ops_alerts` rows are the source of truth, surfaced on the admin dashboard (PR #193) and via the SQL recipes below. The alerts helper avoids importing `lib/email/send-appointment.ts` to keep a clean separation from the email subsystem it observes. **Critical** alerts additionally email the recipients in **`OPS_ALERT_EMAILS`** via the standalone `lib/ops/alert-email.ts` (bare Resend client, after the durable row, never throws). Since #828 G-24 it carries **no record ids**: just the event slug, the redacted message with any UUID or Stripe id replaced, the time, the environment and the link. **Open `/admin/ops-alerts` for the studio, appointment, client and Stripe ids**. **`OPS_ALERT_EMAILS` is REQUIRED in production (PR #291):** the production env gate (`scripts/check-production-env-gates.mjs`, wired into `npm run build`) fails the production build if it does not list ≥1 recipient, so a deploy cannot silently ship with critical-alert email disabled. If it is unset/empty at runtime the email is a no-op (once-per-instance warning) and the row + dashboard still work. **Operator action: set `OPS_ALERT_EMAILS` in the Vercel Production environment.**
 
-The `ops_alerts` table (migration 0067) is the durable record of silent-failure states. Recent alerts:
+The `ops_alerts` table (migration 0067) is the durable record of silent-failure states. **Operator-only rows (HON-125):** `ops_alerts_member_read` lets any member of a studio read every column of a row whose `studio_id` is set, so an alert that carries money (amounts, a charge, attempt, refund or payment-intent id) or a client id is written with `studio_id` and `client_id` NULL (`lib/ops/operator-only.ts`, applied in `lib/ops/alerts.ts`); the studio and client ids are kept in `safe_details.studio_id` / `safe_details.client_id`. Filter or join on `safe_details->>'studio_id'` for those rows, not on the `studio_id` column. Recent alerts:
 
 ```sql
 select id, created_at, severity, event, message,

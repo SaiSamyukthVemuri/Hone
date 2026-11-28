@@ -33,13 +33,13 @@ export default async function PortalLoginPage({
   searchParams?: Promise<{ studio?: string }>;
 }) {
   const session = await getCurrentPortalSession();
-  if (session) {
-    redirect("/portal");
-  }
 
   const params = (await searchParams) ?? {};
   const slug = (params.studio ?? "").trim();
   const studio = slug.length > 0 ? await getStudioBySlug(slug) : null;
+  if (session && (!slug || studio?.id === session.studioId)) {
+    redirect("/portal");
+  }
   const studioName = studio?.name ?? null;
   // HON-47. A resolved studio with client portal access off gets the explanation
   // instead of a form that could only promise an email that will not come.

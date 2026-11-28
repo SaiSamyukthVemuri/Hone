@@ -17,7 +17,7 @@ Provider: Resend. From-address pattern: `<Studio name> via hone <hello@hone.care
 | Reschedule confirmation | Client | Public reschedule action |
 | No-show follow-up | Client | Practitioner Mark no-show action |
 | Postcare | Client | Manual practitioner click on session detail |
-| Portal magic link | Client | `requestPortalMagicLinkAction` |
+| Portal magic link | Client | Studio login request or explicit recovery from an old portal email. Recovery gets the recipient from the client record bound to the token. |
 | Portal message notification | Client | Practitioner sends portal message |
 | Portal reply notification | Studio owner | Client replies in portal (PR #129) |
 | Intake update request | Client | Practitioner re-issues an intake |

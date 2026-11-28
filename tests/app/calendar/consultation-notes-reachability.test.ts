@@ -156,9 +156,11 @@ describe("G3 — the tab says what it holds, without changing its URL", () => {
 // second call site drifting back out of the wave.
 describe("the clinical-note read stays inside the page's parallel wave (source structure)", () => {
   // The `] = await Promise.all([ … ]);` array, sliced out of the page source.
+  // HON-109: the wave is STARTED early (`const wave = Promise.all([`) and awaited where it used to run (`] = await clientWave`), so it is found by
+  // its own array, not by the old `] = await Promise.all([` spelling.
   function parallelBlock(): string {
-    const open = APPT.indexOf("] = await Promise.all([");
-    const close = APPT.indexOf("\n    ]);", open);
+    const open = APPT.indexOf("const wave = Promise.all([");
+    const close = APPT.indexOf("\n        ]);", open);
     return open > -1 && close > open ? APPT.slice(open, close) : "";
   }
 
@@ -184,6 +186,36 @@ describe("the clinical-note read stays inside the page's parallel wave (source s
   it("its result is consumed from the wave's destructuring, not re-fetched", () => {
     expect(APPT).toMatch(/clinicalNotesRes,/);
     expect(APPT).toMatch(/clinicalNotesSummary = clinicalNotesRes;/);
+  });
+});
+
+// HON-109 (Open appointment): ORDER, not just membership. The client-scoped wave includes the clinical-notes read, so it may start only after the
+// appointment join has returned and passed notFound() and its studio scope, and it must start BEFORE the payment-adjacent reads are awaited (it used to
+// queue behind them). It is awaited where the wave used to run, so a failure surfaces at the same place.
+describe("the client wave starts after the join's checks and before the payment reads", () => {
+  const at = (needle: string) => {
+    const i = APPT.indexOf(needle);
+    expect(i, `${needle} must be present`).toBeGreaterThan(-1);
+    return i;
+  };
+  it("starts after the join, its notFound() and its studio scope", () => {
+    expect(at("const clientWave")).toBeGreaterThan(at('.eq("studio_id", studio.id)'));
+    expect(at("const clientWave")).toBeGreaterThan(at("if (!data) notFound();"));
+  });
+  it("starts before the owner-only payment and repair reads are awaited", () => {
+    for (const read of ["getManualFeeChargeEligibility(", "getAppointmentPaymentStates(", "loadAppointmentRepairStateAction("]) {
+      expect(at("const clientWave"), `${read} must come after the wave starts`).toBeLessThan(at(read));
+    }
+  });
+  it("is awaited exactly once, where the wave used to run, and a rejection is never left unhandled", () => {
+    expect(APPT.match(/await clientWave/g) ?? []).toHaveLength(1);
+    expect(at("await clientWave")).toBeGreaterThan(at("loadAppointmentRepairStateAction("));
+    expect(APPT).toMatch(/wave\.catch\(\(\) => undefined\);/);
+  });
+  it("only the CLIENT's id is used to start it", () => {
+    const start = at("const clientWave");
+    const end = at("wave.catch");
+    expect(APPT.slice(start, end)).toMatch(/const clientId = data\.client\.id;/);
   });
 });
 

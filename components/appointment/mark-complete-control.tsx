@@ -59,6 +59,7 @@ export type MarkAppointmentCompleteControlProps = {
   /** Dashboard checkout continues to payment only after confirmed completion. */
   checkout?: {
     visitLabel?: string;
+    confirmLabel?: string;
     onCompleted: () => void;
     onOpen: () => void;
     choices?: (busy: boolean) => ReactNode;
@@ -174,9 +175,9 @@ export function MarkAppointmentCompleteControl({
         open={confirming}
         title={checkout ? ["Checkout", checkout.visitLabel].filter(Boolean).join(" · ") : "Mark appointment completed?"}
         description={checkout?.choices
-          ? "Finish the visit to enable payment confirmation."
+          ? "Finish the visit to review payment. You’ll confirm the amount before the client is charged."
           : COMPLETE_CONFIRM_MESSAGE}
-        confirmLabel={checkout ? "Finish visit" : "Mark completed"}
+        confirmLabel={checkout ? checkout.confirmLabel ?? "Finish visit" : "Mark completed"}
         busyLabel="Marking completed…"
         pending={pending}
         error={confirming ? error : null}

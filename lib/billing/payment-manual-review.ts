@@ -140,6 +140,8 @@ export type ReviewAlertRow = {
   appointment_id: string | null;
   stripe_payment_intent_id: string | null;
   route: string | null;
+  // HON-125: an alert carrying money or a client id is written operator-only (studio_id and client_id NULL), with both ids kept here.
+  safe_details?: Record<string, unknown> | null;
   // Present only when the caller selected it; absent === treated as unresolved
   // (the page query already filters resolved_at IS NULL).
   resolved_at?: string | null;
@@ -166,12 +168,17 @@ export function toReviewAlertView(row: ReviewAlertRow): ReviewAlertView {
     severity: row.severity,
     event: row.event,
     message: row.message,
-    studioId: row.studio_id ?? null,
-    clientId: row.client_id ?? null,
+    studioId: row.studio_id ?? detailId(row, "studio_id"),
+    clientId: row.client_id ?? detailId(row, "client_id"),
     appointmentId: row.appointment_id ?? null,
     stripePaymentIntentId: row.stripe_payment_intent_id ?? null,
     route: row.route ?? null,
   };
+}
+
+function detailId(row: ReviewAlertRow, key: "studio_id" | "client_id"): string | null {
+  const v = row.safe_details?.[key];
+  return typeof v === "string" && v.length > 0 ? v : null;
 }
 
 // Keep ONLY unresolved (resolved_at IS NULL) CRITICAL alerts whose event is a

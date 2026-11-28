@@ -288,7 +288,10 @@ describe("browser selection is UNCHANGED by the timeout-margin fix", () => {
     // above. It is REQUIRED, not opt-in. Cost, to be MEASURED on an owned stack and recorded in the pull request: three cases in the chromium project
     // (desktop, a 390px iPhone-sized emulation, and the rollout-off toggle check), each a seeded studio and a login; the iPhone WebKit case runs only in the
     // non-required `webkit-iphone-visit` project and skips everywhere else.
-    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(72);
+    // Now 73 (production alone: 72): HON-131's calendar-find-time-window.spec.ts joined `calendar` (Find time's 7-day window: stated, checked beside the field, weeks two to
+    // six searchable, selections kept, nothing booked). RECORDED AS A DECISION per the note above. It is REQUIRED, not opt-in: one case, a seeded studio, a member, a rebook
+    // visit and a login, then eight read-only searches. Cost to be MEASURED on an owned stack and recorded in the pull request.
+    expect(specsForGroups(["calendar", "sessions", "smoke"])).toHaveLength(73);
   });
 
   it("ONE unattributable app file forces extended, even when another file attributes a group", () => {
