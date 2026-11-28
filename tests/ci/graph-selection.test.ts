@@ -155,14 +155,18 @@ describe("FAIL-SAFE: anything the graph cannot prove still runs the extended sui
 });
 
 // -- the route audit, proved from the specs' own URLs -----------------------------------------------------------------------------------
+// The ONE payment-lane spec allowed to open an audited route outside BROWSER_GROUPS (see the known gap below). Any other e2e-payment spec that
+// visits an audited route fails the audit, so a new one cannot slip past it.
+const PAYMENT_LANE_EXEMPT = ["e2e-payment/split-money-three-screens.spec.ts"];
+
 describe("VERIFIED_ROUTES: every spec that visits an audited route is in a group its path rule selects", () => {
   const specFiles = readdirSync(ROOT, { withFileTypes: true })
-    // e2e-payment specs are excluded because the payment lane is selected separately (the `payment` path rule), not through BROWSER_GROUPS.
-    // KNOWN GAP: a payment spec can also open an audited screen (split-money-three-screens.spec.ts drives /financials/analytics), and a change
+    // Payment-lane specs are selected separately (the `payment` path rule), not through BROWSER_GROUPS; only the one named spec is exempt.
+    // KNOWN GAP: that spec (split-money-three-screens.spec.ts) also drives /financials/analytics, and a change
     // to an analytics file selects owner_admin and smoke, never the payment lane, so that spec does not run for it. It predates the route
     // audit, which only surfaced it. Follow-up: Machines (assigned by OPS).
-    .filter((d) => d.isDirectory() && /^e2e(-[\w]+)?$/.test(d.name) && d.name !== "e2e-payment")
-    .flatMap((d) => readdirSync(path.join(ROOT, d.name)).filter((f) => f.endsWith(".spec.ts")).map((f) => ({ f, text: readFileSync(path.join(ROOT, d.name, f), "utf8") })));
+    .filter((d) => d.isDirectory() && /^e2e(-[\w]+)?$/.test(d.name))
+    .flatMap((d) => readdirSync(path.join(ROOT, d.name)).filter((f) => f.endsWith(".spec.ts")).filter((f) => !PAYMENT_LANE_EXEMPT.includes(`${d.name}/${f}`)).map((f) => ({ f, text: readFileSync(path.join(ROOT, d.name, f), "utf8") })));
   const groupsOfSpec = (spec: string) => Object.entries(BROWSER_GROUPS as Record<string, { specs: string[] }>).filter(([, d]) => d.specs.includes(spec)).map(([g]) => g);
   const audit = (urlRe: RegExp, allowed: string[]) => {
     const visitors = specFiles.filter((x) => urlRe.test(x.text));
@@ -170,6 +174,10 @@ describe("VERIFIED_ROUTES: every spec that visits an audited route is in a group
     for (const v of visitors) expect(groupsOfSpec(v.f).some((g) => allowed.includes(g)), `${v.f} visits ${urlRe} but sits in ${groupsOfSpec(v.f)}`).toBe(true);
   };
   it("/financials/analytics is visited only by owner_admin specs", () => audit(/\/financials\/analytics/, ["owner_admin"]));
+  it("the exemption is exactly one spec, and it still visits an audited route (a stale exemption fails)", () => {
+    expect(PAYMENT_LANE_EXEMPT).toEqual(["e2e-payment/split-money-three-screens.spec.ts"]);
+    expect(readFileSync(path.join(ROOT, PAYMENT_LANE_EXEMPT[0]), "utf8")).toMatch(/\/financials\/analytics/);
+  });
   it("/desk is visited only by calendar or booking specs", () => audit(/["'`]\/desk["'`/?]/, ["calendar", "booking"]));
 });
 
