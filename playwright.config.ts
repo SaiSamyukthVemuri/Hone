@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
 import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "./e2e/helpers/local-env";
 
@@ -14,6 +15,15 @@ import { E2E_APP_ORIGIN, E2E_WEB_SERVER_ENV } from "./e2e/helpers/local-env";
 // suite assumes a DISPOSABLE local database (seeded rows are unique
 // per run and are not cleaned up; reset wipes them), which also
 // respects the 0087 clinical delete hardening: no hard deletes.
+// Generate disposable studio IDs before Playwright forks workers. The app and
+// the seed fixture must agree at server startup. A retry gets fresh data.
+const portalPilotStudios = process.env.HONE_E2E_PORTAL_PILOT_STUDIOS ??= [
+  randomUUID(), randomUUID(),
+].join(",");
+
+// Only this synthetic mailbox exposes a portal URL to the recovery journey.
+const recoveryMailbox = process.env.HONE_E2E_PORTAL_RECOVERY_MAILBOX ??= `success+portal-${randomUUID()}@harness.local`;
+
 export default defineConfig({
   // E2E SCHEMA PREFLIGHT. Refuses to run when the local Supabase stack's applied
   // migrations do not match the migrations THIS checkout defines. Every browser
@@ -97,7 +107,11 @@ export default defineConfig({
     // With no .next present `next start` exits and the run fails loudly.
     command: process.env.HONE_E2E_REUSE_BUILD === "1" ? "npm run start" : "npm run e2e:server",
     url: E2E_APP_ORIGIN,
-    env: E2E_WEB_SERVER_ENV,
+    env: {
+      ...E2E_WEB_SERVER_ENV,
+      HONE_PORTAL_REDESIGN_STUDIO_IDS: portalPilotStudios,
+      HONE_E2E_PORTAL_RECOVERY_MAILBOX: recoveryMailbox,
+    },
     // TEST-PORT-01. This was `!process.env.CI`, i.e. TRUE locally, which is how
     // a run started in one worktree attached to another worktree's server on the
     // shared port 3111 and reported green about code it never loaded. Hone

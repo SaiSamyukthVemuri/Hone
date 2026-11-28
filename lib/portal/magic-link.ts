@@ -34,7 +34,7 @@ export async function issuePortalMagicLink(
     studioId: string;
     clientId: string;
     email: string;
-    studioName: string;
+    studioName?: string;
     createdIpHash?: string | null;
     userAgentHash?: string | null;
     ttlMs?: number;
@@ -80,7 +80,7 @@ export async function issuePortalMagicLink(
     return { ok: false, error: "Could not create the portal link. Please try again." };
   }
 
-  const studioName = input.studioName.trim() || "your studio";
+  const studioName = input.studioName?.trim() || access.studioName?.trim() || "your studio";
   // The raw token is embedded in the URL that is emailed to the client. It is
   // NEVER logged and NEVER returned from this function.
   const magicLink = `${getRequiredAppOrigin()}/portal/verify/${rawToken}`;

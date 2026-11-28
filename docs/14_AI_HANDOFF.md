@@ -851,3 +851,7 @@ Where a doc references a behavior, the citation is the PR number and the migrati
 ## 2026-11-24 · Receptionist appointment booking
 
 The desk can look up a service opening and confirm it through migration 0376. Apply the reviewed migration before enabling this workflow. The existing desk feature switch controls application access.
+
+### 2026-11-27 — Client portal rollout implementation
+
+The owner-published layout uses the same portal identity and operational records as classic. Migration 0398 supplies the optional presentation row. Completing release requires an isolated client journey and a Willow-only activation. Follow the [pilot and rollback procedure](./11_RUNBOOK.md#client-portal-pilot-and-rollback) and record actual deployment evidence separately.

@@ -349,10 +349,9 @@ describe("privileges: service_role only", () => {
 
     it(`${role} still cannot read any lead`, async () => {
       await recordDemo();
-      const demo = await asRole(role, (q) => q("select count(*) n from public.demo_requests"));
-      const early = await asRole(role, (q) => q("select count(*) n from public.waitlist"));
-      expect(Number(demo.rows[0].n)).toBe(0);
-      expect(Number(early.rows[0].n)).toBe(0);
+      // 0391 revoked every table privilege on the two lead tables from anon and authenticated, so the read is refused outright (it used to return zero rows under RLS).
+      await expect(asRole(role, (q) => q("select count(*) n from public.demo_requests")), "demo_requests").rejects.toMatchObject({ code: "42501" });
+      await expect(asRole(role, (q) => q("select count(*) n from public.waitlist")), "waitlist").rejects.toMatchObject({ code: "42501" });
     });
   }
 
