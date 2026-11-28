@@ -23,6 +23,7 @@ const db = vi.hoisted(() => ({
   selects: [] as string[],
   role: "owner",
   rpcNoRow: false,
+  rpcId: null as string | null,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -38,7 +39,7 @@ vi.mock("@/lib/supabase/server", () => ({
     // 0281: the edit is one function call; record its patch where the old chain recorded `.update(row)`.
     rpc: async (_name: string, args: { p_client_id: string; p_patch: Record<string, unknown> }) => {
       db.updates.push(JSON.parse(JSON.stringify(args.p_patch)));
-      return { data: db.rpcNoRow ? null : args.p_client_id, error: null };
+      return { data: db.rpcNoRow ? null : (db.rpcId ?? args.p_client_id), error: null };
     },
     from: (table: string) => {
       expect(table).toBe("clients");
@@ -119,7 +120,7 @@ async function run(fields: Record<string, string>, inline: boolean, baseline: un
 }
 
 beforeEach(() => {
-  db.rows = [JANE, BOB]; db.updates = []; db.failMatcher = false; db.failStored = false; db.selects = []; db.role = "owner"; db.rpcNoRow = false; revalidated.length = 0;
+  db.rows = [JANE, BOB]; db.updates = []; db.failMatcher = false; db.failStored = false; db.selects = []; db.role = "owner"; db.rpcNoRow = false; db.rpcId = null; revalidated.length = 0;
 });
 
 // Every REFUSAL must render exactly as today: the same object, with or without the flag, and nothing written.
@@ -174,10 +175,17 @@ describe("HON-109: a SAVED edit", () => {
     expect(await run({}, true)).toEqual({ result: { ok: true, redirectTo: "/clients/client-bob" }, redirected: null });
     expect(db.updates).toHaveLength(0);
   });
-  it("the returned address is built from the validated client id, never from the request", async () => {
+  it("the returned address comes from the database's id, not from a value the form echoed (a mismatching echo is not trusted)", async () => {
+    // The update reports the id it changed; make it differ from the form's echo and the address must follow the database.
+    db.rows = [JANE, BOB];
     const fd = new FormData();
-    fd.set("client_id", "client-bob"); fd.set("name", "Bob Lee"); fd.set("saved_inline", "1"); fd.set("redirectTo", "https://evil.example/x"); fd.set("baseline", JSON.stringify(BASE));
+    fd.set("client_id", "client-bob"); fd.set("name", "Bob Lee"); fd.set("allergies", "latex"); fd.set("saved_inline", "1"); fd.set("redirectTo", "https://evil.example/x"); fd.set("baseline", JSON.stringify(BASE));
+    db.rpcId = "client-bob-stored";
     const r = (await updateClientAction(fd)) as { ok: true; redirectTo: string };
-    expect(r.redirectTo).toBe("/clients/client-bob");
+    expect(r.redirectTo).toBe("/clients/client-bob-stored");
+    db.rpcId = null;
+    const fd2 = new FormData();
+    fd2.set("client_id", "client-bob"); fd2.set("name", "Bob Lee"); fd2.set("saved_inline", "1"); fd2.set("redirectTo", "https://evil.example/x"); fd2.set("baseline", JSON.stringify(BASE));
+    expect(((await updateClientAction(fd2)) as { redirectTo: string }).redirectTo).toBe("/clients/client-bob");
   });
 });

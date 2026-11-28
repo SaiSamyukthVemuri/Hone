@@ -90,4 +90,60 @@ test.describe("client form soft save", () => {
     const [row] = await sql<{ email: string | null }>(`select email from public.clients where id = $1`, [id]);
     expect(row.email).not.toBe("other.synthetic@example.test");
   });
+
+  // P3-b: the inline path no longer revalidates, so prove the router does not hand back a STALE edit form after Back: the form shows the value just
+  // saved, and saving the SAME field again succeeds with no false version conflict and stores the second value.
+  test("save, Back to the edit page, change the same field, save again: no false conflict, second value stored", async ({ page }) => {
+    test.setTimeout(120_000);
+    const seed = await seedE2eStudio();
+    const id = await clientOf(seed);
+    await openEdit(page, seed, id);
+    const first = `first synthetic ${Date.now()}`;
+    const second = `second synthetic ${Date.now()}`;
+    await allergies(page).fill(first);
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
+    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible({ timeout: T });
+
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}/edit$`), { timeout: T });
+    await expect(page.getByRole("heading", { name: "Edit client" })).toBeVisible({ timeout: T });
+    await page.waitForLoadState("networkidle");
+    await expect(allergies(page), "Back must not restore the form as it was BEFORE the first save").toHaveValue(first, { timeout: T });
+
+    await allergies(page).fill(second);
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
+    // (The page always carries one EMPTY role=alert, the route announcer; a conflict or failure would put TEXT on the page.)
+    await expect(page.getByText(/changed by someone else|Couldn't save|could not save|try again/i)).toHaveCount(0);
+    const [row] = await sql<{ n: string; stale: string }>(
+      `select count(*) filter (where to_jsonb(c)::text like '%' || $2 || '%')::text as n, count(*) filter (where to_jsonb(c)::text like '%' || $3 || '%')::text as stale from public.clients c where c.id = $1`,
+      [id, second, first],
+    );
+    expect(row.n, "the second value is stored").toBe("1");
+    expect(row.stale, "and replaced the first").toBe("0");
+  });
+
+  // P3-c: no revalidatePath on the inline path, so a renamed client must still appear in the directory on the next visit (soft navigation, no reload).
+  test("after an inline save the clients list shows the new name on the next visit", async ({ page }) => {
+    test.setTimeout(120_000);
+    const seed = await seedE2eStudio();
+    const id = await clientOf(seed);
+    await openEdit(page, seed, id);
+    // Warm the directory in the router first, so a stale cached copy would be the thing that fails this test.
+    await page.goto("/clients");
+    await expect(page.getByText(seed.clientName).first()).toBeVisible({ timeout: T });
+    await page.goto(`/clients/${id}/edit`);
+    await page.waitForLoadState("networkidle");
+    const renamed = `Renamed Synthetic ${Date.now() % 100000}`;
+    await page.getByRole("textbox", { name: "Name*", exact: true }).fill(renamed);
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/clients/${id}$`), { timeout: T });
+    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible({ timeout: T });
+    // Soft navigation to the directory (no document load).
+    await page.locator('a[href="/clients"]').first().click();
+    await expect(page).toHaveURL(/\/clients(\?.*)?$/, { timeout: T });
+    await expect(page.getByText(renamed).first()).toBeVisible({ timeout: T });
+    await expect(page.getByText(seed.clientName), "the old name is gone from the list").toHaveCount(0);
+  });
 });
