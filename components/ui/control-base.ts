@@ -102,6 +102,12 @@ export const NAV_ROW_FEEDBACK = cx(
   NAV_ROW_FOCUS,
 );
 
+/** NAV_ROW_FEEDBACK for a row that sits on a DARK bar (the admin header): the same hover, pressed and focus steps, as lighter fills on the dark ground. The shared focus ring (--color-focus-ring) is neutral-900, the colour of that bar, so it would be invisible there; this row draws a white inset ring instead. */
+export const NAV_ROW_FEEDBACK_ON_DARK = cx(
+  "hover:bg-neutral-800 hover:text-white active:bg-neutral-700 active:text-white",
+  "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-inset",
+);
+
 /** The same three steps for a small text link (a footer link): a hover underline as well as the colour, so the cue is not colour alone. */
 export const TEXT_LINK_FEEDBACK = cx(
   "rounded-sm hover:text-neutral-900 hover:underline active:text-neutral-950 dark:hover:text-neutral-100 dark:active:text-white",
@@ -109,6 +115,12 @@ export const TEXT_LINK_FEEDBACK = cx(
 );
 
 export const PRESS_TRANSITION = "hone-transition-press";
+
+/**
+ * A whole logbook row that is a disclosure (<summary>): a mouse hover tints it, a press darkens it, and a keyboard focus draws an inset ring. The ring is INSET because
+ * these rows sit in an `overflow-hidden` rounded card, which would clip an outer ring.
+ */
+export const DISCLOSURE_ROW_FEEDBACK = cx("hover:bg-surface-sunken active:bg-line", NAV_ROW_FOCUS, PRESS_TRANSITION);
 export const UI_TRANSITION = "hone-transition-ui";
 
 /** Disabled/pending look, spelled once. 168 of 191 existing sites use opacity-50. */
