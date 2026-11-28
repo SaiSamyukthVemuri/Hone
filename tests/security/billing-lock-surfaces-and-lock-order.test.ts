@@ -108,7 +108,8 @@ describe("DB suites that flip the front_desk rollout refuse a rehearsal or non-p
     .filter((f) => f.endsWith(".db.test.ts"))
     .filter((f) => /platform_rollouts\s+set\s+mode\s*=\s*'pilot'/.test(readFileSync(`tests/db/${f}`, "utf8")))
     // The rollout-control suite owns that table and has its own pristine/restore contract.
-    .filter((f) => f !== "platform-rollout-control.db.test.ts");
+    // The Front Desk seats suite (0390) likewise owns the switch and its seats and restores them itself.
+    .filter((f) => f !== "platform-rollout-control.db.test.ts" && f !== "front-desk-seats.db.test.ts");
 
   it("finds the suites that flip it", () => {
     expect(flippers.length).toBeGreaterThanOrEqual(2);
